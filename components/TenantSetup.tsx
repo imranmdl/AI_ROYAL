@@ -101,6 +101,20 @@ const TenantSetup: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     await loadTenants();
   };
 
+  const deleteTenant = async (t: TenantRecord) => {
+    if (!confirm(`DELETE "${t.name}" permanently? This removes all shop data. Cannot be undone.`)) return;
+    await fetch(`${base}/api/superadmin/tenants/${t.id}`, {
+      method: 'DELETE',
+      headers: { 'x-super-admin-key': superKey },
+    });
+    await loadTenants();
+  };
+
+  const copyUrl = (text: string) => {
+    navigator.clipboard?.writeText(text);
+    alert('Copied: ' + text);
+  };
+
   const inp = "w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400 transition-all";
   const lbl = "text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1.5";
 
@@ -186,10 +200,18 @@ const TenantSetup: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                           <span>📋 {t.plan}</span>
                           <span>📅 {new Date(t.created_at).toLocaleDateString('en-IN')}</span>
                         </div>
-                        <div className="mt-1">
-                          <code className="text-[8px] bg-slate-100 px-2 py-0.5 rounded font-mono text-slate-600">
-                            Login slug: {t.slug} · URL: /?tenant={t.slug}
-                          </code>
+                        <div className="mt-1.5 space-y-1">
+                          <div
+                            onClick={() => copyUrl(`${window.location.origin}/?tenant=${t.slug}`)}
+                            className="cursor-pointer flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5 hover:bg-emerald-100 transition-all">
+                            <i className="fas fa-copy text-emerald-500 text-[9px]"></i>
+                            <code className="text-[10px] font-black text-emerald-700">
+                              {window.location.origin}/?tenant={t.slug}
+                            </code>
+                          </div>
+                          <div className="text-[8px] text-slate-400 font-bold px-1">
+                            Shop ID: <span className="font-mono text-slate-600">{t.id}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -200,6 +222,10 @@ const TenantSetup: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                       <button onClick={() => toggleStatus(t)}
                         className={`px-4 py-2 rounded-xl font-black text-[9px] uppercase transition-all ${t.status === 'active' ? 'bg-rose-50 text-rose-600 hover:bg-rose-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}`}>
                         {t.status === 'active' ? 'Suspend' : 'Activate'}
+                      </button>
+                      <button onClick={() => deleteTenant(t)}
+                        className="px-4 py-2 rounded-xl font-black text-[9px] uppercase bg-slate-100 text-slate-500 hover:bg-rose-100 hover:text-rose-600 transition-all">
+                        Delete
                       </button>
                     </div>
                   </div>

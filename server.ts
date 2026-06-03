@@ -2610,8 +2610,10 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       let tenantId  = tenantSlug ? '' : (process.env.DEFAULT_TENANT_ID || 'default');
       if (pool && dbHealthy) {
         if (tenantSlug) {
+          // Accept BOTH the slug (mudhol-a3b4) AND the full tenantId (mudhol-a3b4c5d6)
           const [tr]: any = await pool.query(
-            'SELECT t.id FROM tenants t WHERE t.slug=? AND t.status="active"', [tenantSlug]);
+            'SELECT id FROM tenants WHERE (slug=? OR id=?) AND status="active"',
+            [tenantSlug, tenantSlug]);
           if (!tr.length) return res.status(401).json({ error:'Shop not found or inactive' });
           tenantId = tr[0].id;
         }
@@ -2666,6 +2668,24 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       if (c) tenantCache.set(req.params.id, { ...c, status: req.body.status });
       res.json({ success:true });
     } catch (err: any) { res.status(500).json({ error:err.message }); }
+  });
+
+  /** DELETE /api/superadmin/tenants/:id — remove a shop and its users permanently */
+  app.delete('/api/superadmin/tenants/:id', async (req: Request, res: Response) => {
+    if (req.headers['x-super-admin-key'] !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Unauthorized' });
+    const id = req.params.id;
+    try {
+      if (pool && dbHealthy) {
+        const conn = await pool.getConnection();
+        try {
+          await conn.query('DELETE FROM users WHERE tenant_id=?', [id]);
+          await conn.query('DELETE FROM system_persistence WHERE tenant_id=?', [id]);
+          await conn.query('DELETE FROM tenants WHERE id=? OR slug=?', [id, id]);
+        } finally { conn.release(); }
+      }
+      tenantCache.delete(id);
+      res.json({ success: true, message: `Shop ${id} deleted` });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   // Load all active tenants into cache after DB connects
