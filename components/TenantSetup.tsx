@@ -40,14 +40,27 @@ const TenantSetup: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const authenticate = async () => {
     setLoading(true); setError('');
     try {
+      // First check the server has tenant API at all
+      const pingRes = await fetch(`${base}/api/superadmin/ping`);
+      if (!pingRes.ok) {
+        setError(`Server does not have the tenant API yet (HTTP ${pingRes.status}). Please redeploy the latest code from GitHub.`);
+        return;
+      }
+
       const res = await fetch(`${base}/api/superadmin/tenants`, {
         headers: { 'x-super-admin-key': superKey }
       });
-      if (!res.ok) { setError('Invalid Super Admin Key'); return; }
+
+      if (res.status === 403) { setError('Wrong Super Admin Key. Check server env: SUPER_ADMIN_KEY'); return; }
+      if (res.status === 404) { setError('Tenant API not found — server needs redeployment from latest GitHub code.'); return; }
+      if (!res.ok) { setError(`Server error ${res.status} — ${await res.text()}`); return; }
+
       const data = await res.json();
       setTenants(data.tenants || []);
       setAuthenticated(true);
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) {
+      setError(`Network error: ${e.message}. Check server URL and that the backend is running.`);
+    }
     finally { setLoading(false); }
   };
 

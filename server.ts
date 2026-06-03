@@ -86,7 +86,7 @@ declare global {
 const tenantMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   const open = [
     '/api/tenant/login', '/api/tenant/register', '/api/superadmin',
-    '/api/health', '/api/ping',
+    '/api/health', '/api/ping', '/api/superadmin/ping',
   ];
   if (open.some(p => req.path.startsWith(p)) || !req.path.startsWith('/api/')) {
     return next();
@@ -2534,6 +2534,16 @@ app.post('/api/sync', async (req: Request, res: Response) => {
   // ════════════════════════════════════════════════════════════════════
   //  TENANT MANAGEMENT APIs
   // ════════════════════════════════════════════════════════════════════
+
+  /** GET /api/superadmin/ping — no auth needed, confirms tenant API is active */
+  app.get('/api/superadmin/ping', (_req: Request, res: Response) => {
+    res.json({
+      ok: true,
+      tenantApiActive: true,
+      serverVersion: '3.2.0-multitenant',
+      keyHint: 'Set SUPER_ADMIN_KEY env var on Railway, or use default: test',
+    });
+  });
 
   /** POST /api/superadmin/tenants — create new shop */
   app.post('/api/superadmin/tenants', async (req: Request, res: Response) => {
