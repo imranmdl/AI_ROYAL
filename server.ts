@@ -2543,8 +2543,9 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     if (!shopName || !ownerEmail || !password)
       return res.status(400).json({ error: 'shopName, ownerEmail and password are required' });
 
-    const slug     = shopName.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 32);
-    const tenantId = `${slug}-${crypto.randomBytes(4).toString('hex')}`;
+    const baseSlug  = shopName.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 28);
+    const slug      = `${baseSlug}-${crypto.randomBytes(2).toString('hex')}`; // always unique
+    const tenantId  = `${baseSlug}-${crypto.randomBytes(4).toString('hex')}`;
     const now      = Date.now();
 
     const defaultSettings = {
@@ -2595,7 +2596,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       console.log(`[TENANT] Created: ${tenantId} (${shopName})`);
       res.json({ success:true, tenant:{id:tenantId,name:shopName,slug}, loginUrl:`/?tenant=${slug}`, message:`Shop created. Login: ${ownerEmail} / ${password}` });
     } catch (err: any) {
-      if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error:'Shop name already exists' });
+      if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A shop with a very similar name already exists. Try adding your city name — e.g. "Royal Tiles Kadapa".' });
       res.status(500).json({ error: err.message });
     }
   });
