@@ -1,0 +1,7 @@
+{
+  "name": "Royal Tiles and Granites ERP",
+  "description": "A comprehensive Tile & Granite Inventory, Sales, and Commission Management System tailored for the Indian market, featuring role-based access, GST-compliant billing, and detailed P&L reporting.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

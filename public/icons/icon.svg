@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="80" fill="#0f172a"/>
+  <rect x="60"  y="60"  width="170" height="170" rx="20" fill="#d97706"/>
+  <rect x="282" y="60"  width="170" height="170" rx="20" fill="#d97706" opacity=".7"/>
+  <rect x="60"  y="282" width="170" height="170" rx="20" fill="#d97706" opacity=".7"/>
+  <rect x="282" y="282" width="170" height="170" rx="20" fill="#d97706" opacity=".5"/>
+  <text x="256" y="290" font-family="Arial Black,sans-serif" font-size="90" font-weight="900"
+        text-anchor="middle" fill="white" opacity=".15">ERP</text>
+</svg>

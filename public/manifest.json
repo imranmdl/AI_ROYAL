@@ -1,0 +1,16 @@
+{
+  "name":             "Royal ERP — Tiles & Granites",
+  "short_name":       "Royal ERP",
+  "description":      "Inventory, Sales, Quotation & P&L for Royal Tiles & Granites",
+  "start_url":        "/",
+  "display":          "standalone",
+  "orientation":      "portrait",
+  "background_color": "#0f172a",
+  "theme_color":      "#0f172a",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "categories":       ["business", "productivity"],
+  "lang":             "en-IN"
+}
