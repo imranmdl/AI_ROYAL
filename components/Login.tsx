@@ -30,6 +30,9 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, onPublicGallery }) => {
   }, []);
 
   const branding = store.settings.systemBranding || 'ROYAL ERP';
+  const tenantSlug = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('tenant') || ''
+    : '';
 
   const handleUpdateUrl = () => {
     store.updateSettings({ backendUrl });
@@ -110,6 +113,11 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, onPublicGallery }) => {
             <div>
               <h1 className="text-3xl font-black text-white tracking-tighter uppercase">{branding}</h1>
               <p className="text-slate-500 font-bold uppercase tracking-[0.2em] text-[9px] mt-1">Tiles & Granite Management System</p>
+              {tenantSlug && (
+                <div className="mt-2 px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-full inline-block">
+                  <span className="text-[9px] font-black text-amber-400 uppercase tracking-widest">Shop: {tenantSlug}</span>
+                </div>
+              )}
             </div>
           </div>
 

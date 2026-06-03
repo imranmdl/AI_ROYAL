@@ -2615,20 +2615,34 @@ app.post('/api/sync', async (req: Request, res: Response) => {
           if (!tr.length) return res.status(401).json({ error:'Shop not found or inactive' });
           tenantId = tr[0].id;
         }
-        const [ur]: any = await pool.query(
-          'SELECT id,name,email,role,status,data,tenant_id FROM users WHERE email=? AND tenant_id=?',
-          [email.trim().toLowerCase(), tenantId]);
+        // Try with tenant_id filter first, fall back to email only if column missing
+        let ur: any[] = [];
+        try {
+          const [rows]: any = await pool.query(
+            'SELECT id,name,email,role,status,data,tenant_id FROM users WHERE email=? AND tenant_id=?',
+            [email.trim().toLowerCase(), tenantId]);
+          ur = rows;
+        } catch {
+          // tenant_id column may not exist yet — find by email only
+          const [rows]: any = await pool.query(
+            'SELECT id,name,email,role,status,data FROM users WHERE email=?',
+            [email.trim().toLowerCase()]);
+          ur = rows;
+        }
         if (ur.length) {
           const u = ur[0]; const d = parseData(u.data);
-          user = { id:u.id, name:u.name, email:u.email, role:u.role, status:u.status, tenantId:u.tenant_id, ...d };
+          user = { id:u.id, name:u.name, email:u.email, role:u.role, status:u.status,
+                   tenantId: u.tenant_id || tenantId, ...d };
         }
       }
       if (!user) return res.status(401).json({ error:'User not found' });
       if (user.status === 'Suspended') return res.status(403).json({ error:'Account suspended' });
       if (user.password !== password) return res.status(401).json({ error:'Incorrect password' });
-      const token = signToken({ tenantId:user.tenantId, userId:user.id, role:user.role });
-      res.json({ success:true, token, user:{id:user.id,name:user.name,email:user.email,role:user.role,tenantId:user.tenantId}, expiresAt: new Date(Date.now()+30*86400*1000).toISOString() });
-    } catch (err: any) { res.status(500).json({ error:err.message }); }
+      const token = signToken({ tenantId: user.tenantId, userId: user.id, role: user.role });
+      res.json({ success:true, token,
+        user: { id:user.id, name:user.name, email:user.email, role:user.role, tenantId:user.tenantId },
+        expiresAt: new Date(Date.now()+30*86400*1000).toISOString() });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   /** GET /api/superadmin/tenants — list all shops */

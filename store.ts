@@ -355,27 +355,60 @@ class DataStore {
   async loginAsync(email: string, pass: string): Promise<User> {
     const normalizedEmail = email.trim().toLowerCase();
 
-    // 1. Try server fetch first (fast — just users, not full sync)
+    // Read tenant slug from URL (?tenant=mdl-05a7)
+    const tenantSlug = typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('tenant') || ''
+      : '';
+
+    // ── Multi-tenant path: use /api/tenant/login ──────────────────────────
+    if (tenantSlug) {
+      const r = await fetch(this.getApiUrl('/api/tenant/login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: normalizedEmail, password: pass, tenantSlug }),
+        cache: 'no-store',
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        const msg = data.error || '';
+        if (msg.toLowerCase().includes('password')) throw new Error('WRONG_PASSWORD');
+        if (msg.toLowerCase().includes('suspend'))  throw new Error('ACCOUNT_SUSPENDED');
+        if (msg.toLowerCase().includes('shop'))     throw new Error('SHOP_NOT_FOUND');
+        throw new Error('EMAIL_NOT_FOUND');
+      }
+      // Store JWT token for subsequent API calls
+      if (data.token) {
+        localStorage.setItem('royal_jwt', data.token);
+        localStorage.setItem('royal_tenant_slug', tenantSlug);
+        localStorage.setItem('royal_tenant_id', data.user?.tenantId || '');
+      }
+      const u = data.user as User;
+      this.currentUser = u;
+      this.logActivity('Users', 'Login', 'Session started');
+      if (!this.isInitialSyncDone) {
+        this.refreshFromServer(true).then(() => { this.isInitialSyncDone = true; this.notify(); });
+      }
+      return u;
+    }
+
+    // ── Single-tenant path: existing flow ────────────────────────────────
     try {
       const r = await fetch(this.getApiUrl('/api/users'), { cache: 'no-store' });
       if (r.ok) {
         const data = await r.json();
         const serverUsers: User[] = data.users || [];
         if (serverUsers.length > 0) {
-          // Merge server users into memory — preserves any extra fields from full sync
           serverUsers.forEach(su => {
             const idx = this.users.findIndex(u => u.id === su.id);
             if (idx >= 0) this.users[idx] = { ...this.users[idx], ...su };
             else this.users.push(su);
           });
-          console.log('[LOGIN] Users loaded from server:', serverUsers.length);
         }
       }
     } catch (e) {
-      console.warn('[LOGIN] Could not fetch users from server, using in-memory:', (e as any).message);
+      console.warn('[LOGIN] Could not fetch users:', (e as any).message);
     }
 
-    // 2. Now authenticate against merged users (server + in-memory)
     const u = this.users.find(u =>
       u.email.toLowerCase() === normalizedEmail && u.password === pass
     );
@@ -387,7 +420,6 @@ class DataStore {
     if (u.status === 'Suspended') throw new Error('ACCOUNT_SUSPENDED');
     this.currentUser = u;
     this.logActivity('Users', 'Login', 'Session started');
-    // Kick off background sync without blocking login
     if (!this.isInitialSyncDone) {
       this.refreshFromServer(true).then(() => { this.isInitialSyncDone = true; this.notify(); });
     }
