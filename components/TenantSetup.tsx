@@ -11,7 +11,6 @@
  */
 
 import React, { useState } from 'react';
-import { store } from '../store';
 
 const INR = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 
@@ -35,7 +34,8 @@ const TenantSetup: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   });
   const setF = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
 
-  const base = store.getApiUrl('');
+  // Always call the API on the same server that served this page
+  const base = window.location.origin;
 
   const authenticate = async () => {
     setLoading(true); setError('');

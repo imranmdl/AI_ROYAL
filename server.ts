@@ -45,7 +45,7 @@ const parseData = (d: any) => {
 // ════════════════════════════════════════════════════════════════
 
 const JWT_SECRET = process.env.JWT_SECRET || 'royal-erp-jwt-secret-change-in-production';
-const SUPER_ADMIN_KEY = process.env.SUPER_ADMIN_KEY || 'royalerp-superadmin-2024';
+const SUPER_ADMIN_KEY = process.env.SUPER_ADMIN_KEY || 'test';
 
 // Simple JWT implementation (no external lib needed)
 const signToken = (payload: any, expiresInDays = 30): string => {
