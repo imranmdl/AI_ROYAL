@@ -2534,6 +2534,43 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     });
   });
 
+  /**
+   * GET /api/superadmin/debug?key=test&email=admin@mudhol.com
+   * Shows exactly what tenants and users exist in the DB.
+   * Use this to diagnose login issues.
+   */
+  app.get('/api/superadmin/debug', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error: 'Wrong key' });
+    const email = (req.query.email as string || '').toLowerCase().trim();
+    try {
+      const result: any = { dbHealthy, inMemoryUsers: 0 };
+
+      if (pool && dbHealthy) {
+        // All tenants
+        const [tenants]: any = await pool.query('SELECT id, name, slug, status FROM tenants');
+        result.tenants = tenants;
+
+        // All users (or filter by email)
+        const [users]: any = email
+          ? await pool.query('SELECT id, name, email, role, status, tenant_id FROM users WHERE LOWER(email)=?', [email])
+          : await pool.query('SELECT id, name, email, role, status, tenant_id FROM users LIMIT 20');
+        result.users = users;
+
+        // Check if tenant_id column exists on users table
+        const [cols]: any = await pool.query(
+          'SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME="users" AND TABLE_SCHEMA=DATABASE()');
+        result.userTableColumns = cols.map((c: any) => c.COLUMN_NAME);
+      } else {
+        result.inMemoryUsers = inMemoryDb?.users?.length || 0;
+        result.note = 'DB not connected — using in-memory';
+      }
+
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   /** POST /api/superadmin/tenants — create new shop */
   app.post('/api/superadmin/tenants', async (req: Request, res: Response) => {
     const key = req.headers['x-super-admin-key'] || req.body.superAdminKey;
@@ -2604,47 +2641,75 @@ app.post('/api/sync', async (req: Request, res: Response) => {
   /** POST /api/tenant/login — returns JWT with tenantId */
   app.post('/api/tenant/login', async (req: Request, res: Response) => {
     const { email, password, tenantSlug } = req.body;
+    console.log('[LOGIN] attempt — email:', email, '| slug:', tenantSlug, '| dbHealthy:', dbHealthy);
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
     try {
       let user: any = null;
       let tenantId  = tenantSlug ? '' : (process.env.DEFAULT_TENANT_ID || 'default');
+
       if (pool && dbHealthy) {
+        // ── Step 1: resolve tenantId from slug/id ──────────────────────────
         if (tenantSlug) {
-          // Accept BOTH the slug (mudhol-a3b4) AND the full tenantId (mudhol-a3b4c5d6)
           const [tr]: any = await pool.query(
-            'SELECT id FROM tenants WHERE (slug=? OR id=?) AND status="active"',
+            'SELECT id, slug FROM tenants WHERE (slug=? OR id=?)',
             [tenantSlug, tenantSlug]);
-          if (!tr.length) return res.status(401).json({ error:'Shop not found or inactive' });
+          console.log('[LOGIN] tenants found:', tr.length, tr.map((r:any)=>r.id));
+          if (!tr.length) {
+            return res.status(401).json({ error: 'Shop not found. URL should be /?tenant=your-shop-slug' });
+          }
           tenantId = tr[0].id;
         }
-        // Try with tenant_id filter first, fall back to email only if column missing
+
+        // ── Step 2: find user by email (with or without tenant filter) ──────
+        // First try: WITH tenant_id column
         let ur: any[] = [];
         try {
           const [rows]: any = await pool.query(
-            'SELECT id,name,email,role,status,data,tenant_id FROM users WHERE email=? AND tenant_id=?',
-            [email.trim().toLowerCase(), tenantId]);
-          ur = rows;
-        } catch {
-          // tenant_id column may not exist yet — find by email only
+            'SELECT id,name,email,role,status,data,tenant_id FROM users WHERE LOWER(email)=LOWER(?)',
+            [email.trim()]);
+          console.log('[LOGIN] all users with this email:', rows.length,
+            rows.map((r:any) => ({ email: r.email, tenant_id: r.tenant_id })));
+          // Filter by tenantId if we have one
+          ur = tenantId ? rows.filter((r:any) => r.tenant_id === tenantId) : rows;
+          console.log('[LOGIN] after tenant filter (tenantId=' + tenantId + '):', ur.length);
+        } catch (colErr: any) {
+          console.warn('[LOGIN] tenant_id col missing, fallback:', colErr.message);
           const [rows]: any = await pool.query(
-            'SELECT id,name,email,role,status,data FROM users WHERE email=?',
-            [email.trim().toLowerCase()]);
+            'SELECT id,name,email,role,status,data FROM users WHERE LOWER(email)=LOWER(?)',
+            [email.trim()]);
           ur = rows;
         }
+
         if (ur.length) {
-          const u = ur[0]; const d = parseData(u.data);
-          user = { id:u.id, name:u.name, email:u.email, role:u.role, status:u.status,
-                   tenantId: u.tenant_id || tenantId, ...d };
+          const u = ur[0];
+          const d = parseData(u.data);
+          user = { id:u.id, name:u.name, email:u.email, role:u.role,
+                   status:u.status, tenantId: u.tenant_id || tenantId, ...d };
+          console.log('[LOGIN] user found — stored password length:', (user.password||'').length);
+        } else {
+          console.warn('[LOGIN] no user found for email:', email.trim(), 'tenantId:', tenantId);
         }
+      } else {
+        console.warn('[LOGIN] DB not healthy — in-memory only');
       }
-      if (!user) return res.status(401).json({ error:'User not found' });
+
+      if (!user) return res.status(401).json({
+        error: 'Email not found',
+        debug: { tenantId, email: email.trim(), dbHealthy }
+      });
       if (user.status === 'Suspended') return res.status(403).json({ error:'Account suspended' });
       if (user.password !== password) return res.status(401).json({ error:'Incorrect password' });
+
       const token = signToken({ tenantId: user.tenantId, userId: user.id, role: user.role });
-      res.json({ success:true, token,
+      res.json({
+        success: true, token,
         user: { id:user.id, name:user.name, email:user.email, role:user.role, tenantId:user.tenantId },
-        expiresAt: new Date(Date.now()+30*86400*1000).toISOString() });
-    } catch (err: any) { res.status(500).json({ error: err.message }); }
+        expiresAt: new Date(Date.now() + 30*86400*1000).toISOString()
+      });
+    } catch (err: any) {
+      console.error('[LOGIN] error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   /** GET /api/superadmin/tenants — list all shops */
