@@ -2520,17 +2520,6 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     });
     app.use(vite.middlewares);
   } else {
-    // Production: Serve static files from dist
-    const distPath = path.join(__dirname, 'dist');
-    app.use(express.static(distPath));
-    
-    // SPA fallback for production
-    app.get('*', (req, res) => {
-      if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Endpoint not found' });
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
-
   // ════════════════════════════════════════════════════════════════════
   //  TENANT MANAGEMENT APIs
   // ════════════════════════════════════════════════════════════════════
@@ -2673,6 +2662,18 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       console.log(`[TENANT] ${rows.length} active tenants loaded`);
     } catch {}
   }, 3000);
+
+      // Production: Serve static files from dist
+    const distPath = path.join(__dirname, 'dist');
+    app.use(express.static(distPath));
+    
+    // SPA fallback for production
+    app.get('*', (req, res) => {
+      if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Endpoint not found' });
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 REAL-WORLD ERP ENGINE ACTIVE ON PORT ${PORT}`);
