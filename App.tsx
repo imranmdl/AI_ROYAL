@@ -32,13 +32,13 @@ import { store } from './store';
 const SubscriptionPortalLazy  = lazy(() => import('./components/SubscriptionPortal'));
 
 const App: React.FC = () => {
-  // ── Tenant auto-config (QR scan + browser persistence) ──────────────────
+  // ── Tenant auto-config (QR scan + mobile persistence) ──────────────────
   React.useEffect(() => {
-    const params  = new URLSearchParams(window.location.search);
-    const tenant  = params.get('tenant');
+    const params    = new URLSearchParams(window.location.search);
+    const tenant    = params.get('tenant');
     const configure = params.get('configure');
 
-    // ?tenant=mudhol&configure=1 → store permanently on this device
+    // ?tenant=mudhol&configure=1 → store permanently on this device (QR scan)
     if (tenant && configure === '1') {
       localStorage.setItem('royal_app_tenant', tenant);
       localStorage.setItem('royal_jwt', ''); // clear old JWT so fresh login required
@@ -47,18 +47,24 @@ const App: React.FC = () => {
       return;
     }
 
-    // ?tenant=mudhol → remember for next time (browser bookmark support)
+    // ?tenant=mudhol (explicit URL) → remember for this session
     if (tenant && configure !== '1') {
       localStorage.setItem('royal_app_tenant', tenant);
     }
 
-    // No tenant in URL → restore last used tenant automatically
-    const storedTenant = localStorage.getItem('royal_app_tenant');
-    if (storedTenant && !tenant &&
-        !window.location.search.includes('sub-admin') &&
-        !window.location.search.includes('setup')) {
-      window.history.replaceState({}, '', `/?tenant=${storedTenant}`);
+    // ── Auto-restore stored tenant — ONLY on Capacitor mobile app ────────────
+    // NEVER on desktop/browser — to protect the default admin login at base URL
+    const isCapacitorApp = !!(window as any).Capacitor ||
+      navigator.userAgent.includes('RoyalERP-Android') ||
+      navigator.userAgent.includes('RoyalERP-iOS');
+
+    if (isCapacitorApp) {
+      const storedTenant = localStorage.getItem('royal_app_tenant');
+      if (storedTenant && !tenant) {
+        window.history.replaceState({}, '', `/?tenant=${storedTenant}`);
+      }
     }
+    // On browser: base URL always shows the default admin shop — never redirects
   }, []);
 
   // Login Bypass: Initializing as false
