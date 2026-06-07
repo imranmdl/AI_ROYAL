@@ -86,7 +86,7 @@ declare global {
 const tenantMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   const open = [
     '/api/tenant/login', '/api/tenant/register', '/api/superadmin',
-    '/api/health', '/api/ping', '/api/superadmin/ping',
+    '/api/health', '/api/ping', '/api/superadmin/ping', '/api/public/',
   ];
   if (open.some(p => req.path.startsWith(p)) || !req.path.startsWith('/api/')) {
     return next();
@@ -2523,6 +2523,74 @@ app.post('/api/sync', async (req: Request, res: Response) => {
   // ════════════════════════════════════════════════════════════════════
   //  TENANT MANAGEMENT APIs
   // ════════════════════════════════════════════════════════════════════
+
+  /**
+   * GET /api/public/gallery?tenant=slug-or-id
+   * Public endpoint — no auth needed.
+   * Returns products marked showInGallery=true for a given tenant.
+   * Used by the WebGallery component for public visitors.
+   */
+  app.get('/api/public/gallery', async (req: Request, res: Response) => {
+    const tenantParam = (req.query.tenant as string || '').trim();
+    try {
+      let products: any[] = [];
+      let shopSettings: any = {};
+      let tenantId = tenantParam;
+
+      if (pool && dbHealthy) {
+        // Resolve tenantId from slug or id
+        if (tenantParam) {
+          const [tr]: any = await pool.query(
+            'SELECT id, name, settings FROM tenants WHERE (slug=? OR id=?) AND status="active"',
+            [tenantParam, tenantParam]);
+          if (tr.length) {
+            tenantId    = tr[0].id;
+            shopSettings = parseData(tr[0].settings);
+          }
+        }
+
+        // Fetch products for this tenant
+        const [rows]: any = await pool.query(
+          'SELECT id, name, category, brand, data, selling_price, stock_boxes, status FROM products WHERE tenant_id=? AND status="Active"',
+          [tenantId || 'default']);
+
+        products = rows.map((p: any) => {
+          const d = parseData(p.data);
+          return {
+            ...d,
+            id:           p.id,
+            name:         p.name,
+            category:     p.category,
+            brand:        p.brand,
+            sellingPrice: parseFloat(p.selling_price) || d.sellingPrice || 0,
+            stockBoxes:   p.stock_boxes || d.stockBoxes || 0,
+            status:       p.status,
+          };
+        }).filter((p: any) => p.showInGallery !== false);
+      } else {
+        // In-memory fallback
+        products = inMemoryDb?.products?.filter((p: any) =>
+          p.status === 'Active' && p.showInGallery !== false &&
+          (!tenantId || tenantId === 'default' || p.tenantId === tenantId)
+        ) || [];
+        shopSettings = inMemoryDb?.settings || {};
+      }
+
+      res.json({
+        products,
+        settings: {
+          showroomName:    shopSettings.showroomName    || shopSettings.systemBranding || 'Royal ERP',
+          showroomPhone:   shopSettings.showroomPhone   || '',
+          showroomAddress: shopSettings.showroomAddress || '',
+          categories:      shopSettings.categories      || [],
+          whatsappNumber:  shopSettings.whatsappNumber  || shopSettings.showroomPhone || '',
+        },
+      });
+    } catch (err: any) {
+      console.error('[PUBLIC GALLERY]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   /** GET /api/superadmin/ping — no auth needed, confirms tenant API is active */
   app.get('/api/superadmin/ping', (_req: Request, res: Response) => {

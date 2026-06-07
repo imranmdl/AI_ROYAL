@@ -48,7 +48,25 @@ const WebGallery: React.FC<WebGalleryProps> = ({ initialProductId, onAdminAccess
   const [settings, setSettings]   = useState(store.settings);
   const [offers, setOffers]       = useState(store.offers);
 
+  // ── Public mode: fetch from API when no user is logged in ──────────────────
   useEffect(() => {
+    const tenantSlug = new URLSearchParams(window.location.search).get('tenant') || '';
+    const isPublic   = !store.currentUser;
+
+    if (isPublic) {
+      // Build the URL — always use same origin
+      const apiUrl = `${window.location.origin}/api/public/gallery${tenantSlug ? '?tenant=' + tenantSlug : ''}`;
+      fetch(apiUrl)
+        .then(r => r.json())
+        .then(data => {
+          if (data.products) setProds(data.products);
+          if (data.settings) setSettings(prev => ({ ...prev, ...data.settings }));
+        })
+        .catch(e => console.warn('[Gallery] Could not load public products:', e.message));
+      return; // don't subscribe to store
+    }
+
+    // Logged in — use store subscription as before
     const unsub = store.subscribe(() => {
       setProds([...store.products]);
       setSettings({ ...store.settings });
