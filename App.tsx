@@ -28,6 +28,9 @@ const IdleLogout = lazy(() => import('./components/IdleLogout'));
 import { UserRole, Quotation, GalleryLead } from './types';
 import { store } from './store';
 
+// Lazy imports at module level — never inside conditionals or components
+const TenantSetupLazy = lazy(() => import('./components/TenantSetup'));
+
 const App: React.FC = () => {
   // Login Bypass: Initializing as false
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -39,6 +42,10 @@ const App: React.FC = () => {
   const [convQuotation, setConvQuotation] = useState<Quotation | null>(null);
   const [convLead, setConvLead] = useState<GalleryLead | null>(null);
   const [externalProductId, setExternalProductId] = useState<string | null>(null);
+  // Super Admin Setup Panel — must be with all other hooks, never after an early return
+  const [showSetup, setShowSetup] = useState(
+    typeof window !== 'undefined' && window.location.search.includes('setup=true')
+  );
 
   useEffect(() => {
     const unsub = store.subscribe(() => {
@@ -155,13 +162,7 @@ const App: React.FC = () => {
     );
   }
 
-  // ── Super Admin Setup Panel (?setup=true in URL) ─────────────────────────
-  const [showSetup, setShowSetup] = useState(
-    typeof window !== 'undefined' && window.location.search.includes('setup=true')
-  );
-
   if (showSetup) {
-    const TenantSetupLazy = lazy(() => import('./components/TenantSetup'));
     return (
       <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center"><div className="w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div></div>}>
         <TenantSetupLazy onClose={() => {
