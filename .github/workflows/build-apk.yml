@@ -3,7 +3,10 @@ name: Build Royal ERP APK
 on:
   push:
     branches: [main]
-  workflow_dispatch:    # also allows manual trigger from GitHub UI
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build-android:
@@ -11,80 +14,68 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Checkout code ──────────────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── 2. Setup Node.js ──────────────────────────────────────────────────────
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
-      # ── 3. Install dependencies ───────────────────────────────────────────────
       - name: Install dependencies
         run: npm ci
 
-      # ── 4. Build the web app ──────────────────────────────────────────────────
       - name: Build web app
         run: npm run build
 
-      # ── 5. Setup Java ─────────────────────────────────────────────────────────
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # ── 6. Setup Android SDK ──────────────────────────────────────────────────
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y wget unzip
+          # Download command line tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
+          mkdir -p $HOME/android-sdk/cmdline-tools
+          unzip -q cmdline-tools.zip -d $HOME/android-sdk/cmdline-tools
+          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+          # Accept licenses and install SDK components
+          yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" > /dev/null 2>&1
 
-      # ── 7. Sync Capacitor to Android ──────────────────────────────────────────
-      - name: Sync Capacitor
+      - name: Sync Capacitor to Android
         run: npx cap sync android
 
-      # ── 8. Build debug APK (for testing) ──────────────────────────────────────
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
       - name: Build Debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-      # ── 9. Rename APK with date + commit ──────────────────────────────────────
-      - name: Rename APK
+      - name: Rename and Upload APK
         run: |
           DATE=$(date +%Y%m%d)
-          SHA="${{ github.sha }}"
-          SHORT_SHA="${SHA:0:7}"
-          cp android/app/build/outputs/apk/debug/app-debug.apk \
-             "RoyalERP-v1.0-${DATE}-${SHORT_SHA}.apk"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          APK_NAME="RoyalERP-v1.0-${DATE}-${SHORT_SHA}.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$APK_NAME"
+          echo "APK_NAME=$APK_NAME" >> $GITHUB_ENV
 
-      # ── 10. Upload APK as artifact (downloadable for 30 days) ─────────────────
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: RoyalERP-APK
           path: RoyalERP-*.apk
           retention-days: 30
-
-      # ── 11. Create GitHub Release if tagged ───────────────────────────────────
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: RoyalERP-*.apk
-          name: Royal ERP ${{ github.ref_name }}
-          body: |
-            ## Royal ERP Mobile App
-            
-            ### Installation
-            1. Download `RoyalERP-*.apk` below
-            2. On your Android phone: Settings → Security → Allow Unknown Sources
-            3. Open the downloaded APK and install
-            4. Scan your shop QR code to configure
-            
-            ### What's included
-            - Full ERP: Inventory, Sales, Quotations, P&L
-            - Kadapa & Granite Manager
-            - Public Gallery
-            - Multi-tenant with QR configuration
