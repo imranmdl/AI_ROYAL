@@ -29,7 +29,8 @@ import { UserRole, Quotation, GalleryLead } from './types';
 import { store } from './store';
 
 // Lazy imports at module level — never inside conditionals or components
-const TenantSetupLazy = lazy(() => import('./components/TenantSetup'));
+const TenantSetupLazy        = lazy(() => import('./components/TenantSetup'));
+const SubscriptionManagerLazy = lazy(() => import('./components/SubscriptionManager'));
 
 const App: React.FC = () => {
   // Login Bypass: Initializing as false

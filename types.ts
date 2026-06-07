@@ -531,6 +531,92 @@ export interface PurchaseItem {
   rate: number;
 }
 
+// ════════════════════════════════════════════════════════════
+//  SUBSCRIPTION SYSTEM
+// ════════════════════════════════════════════════════════════
+
+export type PlanId = 'classic' | 'growth' | 'pro';
+
+export interface PlanFeature {
+  id:          string;
+  name:        string;
+  description: string;
+  category:    string;
+}
+
+export interface Plan {
+  id:          PlanId;
+  name:        string;
+  tagline:     string;
+  price:       number;          // monthly ₹
+  yearlyPrice: number;          // yearly ₹ (discounted)
+  color:       string;
+  features:    string[];        // feature ids included
+  limits: {
+    products:  number;          // -1 = unlimited
+    users:     number;
+    locations: number;
+  };
+}
+
+export interface Subscription {
+  tenantId:      string;
+  planId:        PlanId;
+  status:        'active' | 'trial' | 'expired' | 'suspended' | 'cancelled';
+  billingCycle:  'monthly' | 'yearly';
+  startDate:     string;        // ISO
+  endDate:       string;        // ISO
+  trialEndsAt?:  string;
+  // Feature overrides — admin can enable/disable individual features per tenant
+  featureOverrides: Record<string, boolean>;
+  // Custom price if negotiated
+  customPrice?:  number;
+  lastPayment?:  PaymentRecord;
+  token?:        string;        // access token
+  autoRenew:     boolean;
+  notes?:        string;
+}
+
+export interface PaymentRecord {
+  id:         string;
+  tenantId:   string;
+  tenantName: string;
+  amount:     number;
+  currency:   'INR';
+  method:     'cash' | 'upi' | 'bank_transfer' | 'cheque' | 'online';
+  reference?: string;          // UPI ref / cheque no
+  planId:     PlanId;
+  period:     string;          // e.g. "Jun 2026"
+  date:       string;
+  status:     'paid' | 'pending' | 'overdue' | 'refunded';
+  notes?:     string;
+  recordedBy: string;
+}
+
+export interface SupportTicket {
+  id:         string;
+  tenantId:   string;
+  tenantName: string;
+  subject:    string;
+  description:string;
+  category:   'billing' | 'feature_request' | 'bug' | 'upgrade' | 'general';
+  priority:   'low' | 'medium' | 'high' | 'critical';
+  status:     'open' | 'in_progress' | 'resolved' | 'closed';
+  createdAt:  string;
+  updatedAt:  string;
+  responses:  { by: string; message: string; at: string }[];
+}
+
+export interface UsageMetrics {
+  tenantId:   string;
+  products:   number;
+  sales:      number;
+  quotations: number;
+  users:      number;
+  lastActive: string;
+  storageKb:  number;
+}
+
 export interface SaleItem {
   productId: string;
   productName: string;

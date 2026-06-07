@@ -10,7 +10,8 @@
  *  - JWT-based sessions — data never leaks between shops
  */
 
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
+const SubscriptionManagerLazy = lazy(() => import('./SubscriptionManager'));
 
 const INR = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 
@@ -162,7 +163,7 @@ const TenantSetup: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
           {/* Tabs */}
           <div className="flex border-b border-slate-200">
-            {[{id:'list',label:'All Shops'},{id:'add',label:'+ Add New Shop'}].map(t => (
+            {[{id:'list',label:'All Shops'},{id:'add',label:'+ Add New Shop'},{id:'subscriptions',label:'Subscriptions'}].map(t => (
               <button key={t.id} onClick={() => setActiveTab(t.id as any)}
                 className={`px-6 py-3 font-black text-[10px] uppercase tracking-widest transition-all border-b-2 ${activeTab === t.id ? 'border-amber-600 text-amber-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
                 {t.label}
@@ -230,6 +231,15 @@ const TenantSetup: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* ── Subscriptions ── */}
+            {activeTab === 'subscriptions' && (
+              <div className="-mx-6 -mb-6">
+                <Suspense fallback={<div className="py-20 text-center"><div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto"></div></div>}>
+                  <SubscriptionManagerLazy superKey={superKey} />
+                </Suspense>
               </div>
             )}
 
