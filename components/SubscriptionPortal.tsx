@@ -224,6 +224,25 @@ const SubscriptionPortal: React.FC<{ onClose?: () => void }> = ({ onClose }) => 
     setModal(null); setPAmt(0); setPRef(''); setPNote('');
   };
 
+  // ── QR Code modal ────────────────────────────────────────────────────────────
+  const [qrTenant, setQrTenant] = useState<TenantRow|null>(null);
+  const [qrCanvas,  setQrCanvas]  = useState<string>('');
+
+  const showQR = async (t: TenantRow) => {
+    setQrTenant(t);
+    // Build the configure URL — scanning this installs the shop config permanently
+    const configUrl = `${BASE}/?tenant=${t.slug}&configure=1`;
+    // Draw QR with inline SVG-based grid (no external lib needed)
+    try {
+      const QRCode = await import('qrcode');
+      const url = await QRCode.toDataURL(configUrl, { width:280, margin:2, color:{ dark:'#0f172a', light:'#ffffff' } });
+      setQrCanvas(url);
+    } catch {
+      // Fallback: show the URL as text
+      setQrCanvas('');
+    }
+  };
+
   // ── Ticket form ──────────────────────────────────────────────────────────────
   const [tSubj, setTSubj] = useState('');
   const [tDesc, setTDesc] = useState('');
@@ -549,6 +568,10 @@ const SubscriptionPortal: React.FC<{ onClose?: () => void }> = ({ onClose }) => 
                       <button onClick={()=>{setSel(t);setModal('ticket');}}
                         className={`${btn} bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100`}>
                         <i className="fas fa-ticket-alt text-[9px] mr-1"></i>Ticket
+                      </button>
+                      <button onClick={()=>showQR(t)}
+                        className={`${btn} bg-slate-900 text-white hover:bg-amber-600`}>
+                        <i className="fas fa-qrcode text-[9px] mr-1"></i>QR
                       </button>
                     </div>
                   </div>
@@ -1001,6 +1024,61 @@ const SubscriptionPortal: React.FC<{ onClose?: () => void }> = ({ onClose }) => 
                 className={`w-full py-4 bg-emerald-700 text-white rounded-xl font-black text-[10px] uppercase hover:bg-emerald-800 transition-all disabled:opacity-40`}>
                 Record {pAmt?INR(pAmt):''} Payment
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ QR CODE MODAL ══ */}
+      {qrTenant && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onClick={()=>setQrTenant(null)}>
+          <div className="bg-white rounded-[28px] w-full max-w-sm shadow-2xl" onClick={e=>e.stopPropagation()}>
+            <div className="bg-slate-900 text-white px-6 py-5 rounded-t-[28px] flex items-center justify-between">
+              <div>
+                <div className="font-black text-lg">App QR Code</div>
+                <div className="text-slate-400 font-bold text-[10px]">{qrTenant.name}</div>
+              </div>
+              <button onClick={()=>setQrTenant(null)} className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center hover:bg-white/20">✕</button>
+            </div>
+            <div className="p-6 text-center space-y-4">
+              {/* QR Code */}
+              {qrCanvas ? (
+                <div className="flex items-center justify-center">
+                  <img src={qrCanvas} alt="QR Code" className="w-56 h-56 rounded-2xl border-4 border-slate-100"/>
+                </div>
+              ) : (
+                <div className="w-56 h-56 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto">
+                  <i className="fas fa-qrcode text-6xl text-slate-300"></i>
+                </div>
+              )}
+
+              {/* Instructions */}
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-left space-y-2">
+                <div className="font-black text-amber-800 text-sm">How to use this QR:</div>
+                <div className="text-[10px] font-bold text-amber-700 space-y-1.5">
+                  <div className="flex items-start gap-2"><span className="font-black text-amber-900 shrink-0">1.</span><span>Install the Royal ERP app on your phone</span></div>
+                  <div className="flex items-start gap-2"><span className="font-black text-amber-900 shrink-0">2.</span><span>Open the app once — tap <b>"Scan QR to Configure"</b> button</span></div>
+                  <div className="flex items-start gap-2"><span className="font-black text-amber-900 shrink-0">3.</span><span>Point camera at this QR code</span></div>
+                  <div className="flex items-start gap-2"><span className="font-black text-amber-900 shrink-0">4.</span><span>App permanently configures for <b>{qrTenant.name}</b></span></div>
+                  <div className="flex items-start gap-2"><span className="font-black text-amber-900 shrink-0">5.</span><span>Login with shop credentials — done!</span></div>
+                </div>
+              </div>
+
+              {/* Config URL */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                <div className="text-[8px] font-black text-slate-400 uppercase mb-1">Configure URL</div>
+                <div className="font-mono text-[9px] text-slate-700 break-all">
+                  {BASE}/?tenant={qrTenant.slug}&configure=1
+                </div>
+              </div>
+
+              {/* Download QR */}
+              {qrCanvas && (
+                <a href={qrCanvas} download={`royal-erp-qr-${qrTenant.slug}.png`}
+                  className="flex items-center justify-center gap-2 w-full py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase hover:bg-amber-600 transition-all">
+                  <i className="fas fa-download text-xs"></i> Download QR Image
+                </a>
+              )}
             </div>
           </div>
         </div>

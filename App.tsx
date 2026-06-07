@@ -32,6 +32,30 @@ import { store } from './store';
 const SubscriptionPortalLazy  = lazy(() => import('./components/SubscriptionPortal'));
 
 const App: React.FC = () => {
+  // ── QR / URL auto-config (runs once on launch) ───────────────────────────
+  // When user scans QR code, URL has ?tenant=slug&configure=1
+  // App stores tenant permanently → every future launch pre-loads that shop
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tenant = params.get('tenant');
+    const configure = params.get('configure');
+
+    if (tenant && configure === '1') {
+      // Store permanently for this device/install
+      localStorage.setItem('royal_app_tenant', tenant);
+      // Clean URL and reload with just the tenant param
+      window.history.replaceState({}, '', `/?tenant=${tenant}`);
+      window.location.reload();
+      return;
+    }
+
+    // On every launch: if this device has a stored tenant, add it to URL
+    const storedTenant = localStorage.getItem('royal_app_tenant');
+    if (storedTenant && !tenant && !window.location.search.includes('setup')) {
+      window.history.replaceState({}, '', `/?tenant=${storedTenant}`);
+    }
+  }, []);
+
   // Login Bypass: Initializing as false
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isPublicMode, setIsPublicMode] = useState(false);

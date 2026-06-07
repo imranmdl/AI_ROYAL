@@ -5,20 +5,19 @@ const config: CapacitorConfig = {
   appName: 'Royal ERP',
   webDir:  'dist',
   server: {
+    // Points to your live Railway server — app always uses this
+    url:           'https://pretty-stillness-production-cf79.up.railway.app',
     androidScheme: 'https',
-    // During local development, point to your local server:
-    // url: 'http://192.168.1.100:3000',
-    // For production, remove the url line — app uses the Config screen URL
-    allowNavigation: ['*'],
+    allowNavigation: ['*.up.railway.app', 'railway.app'],
   },
   plugins: {
     SplashScreen: {
-      launchShowDuration:          2000,
-      launchAutoHide:              true,
-      backgroundColor:             '#0f172a',
-      androidSplashResourceName:   'splash',
-      androidScaleType:            'CENTER_CROP',
-      showSpinner:                 false,
+      launchShowDuration:        2500,
+      launchAutoHide:            true,
+      backgroundColor:           '#0f172a',
+      androidSplashResourceName: 'splash',
+      androidScaleType:          'CENTER_CROP',
+      showSpinner:               false,
     },
     StatusBar: {
       style:           'DARK',
@@ -27,14 +26,16 @@ const config: CapacitorConfig = {
     },
   },
   android: {
-    allowMixedContent:            true,
-    captureInput:                 true,
-    webContentsDebuggingEnabled:  true,   // set false before publishing to Play Store
+    allowMixedContent:           false,
+    captureInput:                true,
+    webContentsDebuggingEnabled: false,
+    // Deep link: when user scans QR and opens royalerp:// link, app handles it
+    appendUserAgent: 'RoyalERP-Android/1.0',
   },
   ios: {
     contentInset:  'always',
     scrollEnabled: true,
-    limitsNavigationsToAppBoundDomains: false,
+    appendUserAgent: 'RoyalERP-iOS/1.0',
   },
 };
 
