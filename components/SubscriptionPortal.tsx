@@ -1,0 +1,902 @@
+/**
+ * SubscriptionPortal.tsx
+ * Standalone Subscription Admin Portal
+ * Access: /?sub-admin=true
+ *
+ * Features:
+ *  - Own login with admin user management
+ *  - Beautiful sidebar navigation
+ *  - Dashboard · Subscribers · Plans · Payments · Tickets · Admins · Analytics
+ */
+
+import React, { useState, useEffect, useMemo } from 'react';
+import { PLANS, FEATURES, PLAN_MAP, daysRemaining, makeSubscriptionToken } from '../subscription';
+import type { Plan, PlanId, Subscription, PaymentRecord, SupportTicket } from '../types';
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const INR    = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
+const today  = () => new Date().toISOString().split('T')[0];
+const addM   = (n: number) => { const d = new Date(); d.setMonth(d.getMonth()+n); return d.toISOString().split('T')[0]; };
+const addD   = (s: string, n: number) => new Date(new Date(s).getTime()+n*86400000).toISOString().split('T')[0];
+const fmtDate = (s: string) => new Date(s).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+const BASE   = window.location.origin;
+const SK     = 'test'; // super admin key
+
+// ── Storage helpers ───────────────────────────────────────────────────────────
+const load  = <T,>(k: string, def: T): T => { try { return JSON.parse(localStorage.getItem(k)||'null') ?? def; } catch { return def; } };
+const save  = (k: string, v: any) => localStorage.setItem(k, JSON.stringify(v));
+
+// ── Admin users ───────────────────────────────────────────────────────────────
+interface AdminUser { id: string; name: string; email: string; password: string; role: 'super'|'admin'|'support'; createdAt: string }
+const defaultAdmins: AdminUser[] = [
+  { id:'sa-001', name:'Super Admin', email:'superadmin@royalerp.in', password:'admin@123', role:'super', createdAt: today() }
+];
+
+// ── Sidebar nav ───────────────────────────────────────────────────────────────
+const NAV = [
+  { id:'dashboard',    label:'Dashboard',     icon:'fa-th-large' },
+  { id:'subscribers',  label:'Subscribers',   icon:'fa-store' },
+  { id:'plans',        label:'Plans & Features',icon:'fa-layer-group' },
+  { id:'payments',     label:'Payments',      icon:'fa-rupee-sign' },
+  { id:'tickets',      label:'Support Tickets',icon:'fa-ticket-alt' },
+  { id:'admins',       label:'Admin Users',   icon:'fa-user-shield' },
+  { id:'analytics',    label:'Analytics',     icon:'fa-chart-pie' },
+];
+
+const STATUS_COLOR: Record<string,string> = {
+  active:   'bg-emerald-100 text-emerald-700 border-emerald-200',
+  trial:    'bg-blue-100 text-blue-700 border-blue-200',
+  expired:  'bg-rose-100 text-rose-600 border-rose-200',
+  suspended:'bg-amber-100 text-amber-700 border-amber-200',
+  cancelled:'bg-slate-100 text-slate-500 border-slate-200',
+};
+const PLAN_COLOR: Record<PlanId,{ bg:string; text:string; border:string; dot:string }> = {
+  classic: { bg:'bg-slate-100', text:'text-slate-600', border:'border-slate-300', dot:'#64748b' },
+  growth:  { bg:'bg-amber-100', text:'text-amber-700', border:'border-amber-300', dot:'#d97706' },
+  pro:     { bg:'bg-purple-100', text:'text-purple-700', border:'border-purple-300', dot:'#7c3aed' },
+};
+
+interface Tenant { id:string; name:string; slug:string; owner_email:string; owner_phone:string; status:string; created_at:number }
+interface TenantRow extends Tenant { sub: Subscription }
+
+// ════════════════════════════════════════════════════════════
+const SubscriptionPortal: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
+
+  // ── Auth ────────────────────────────────────────────────────────────────────
+  const [admins,    setAdmins]    = useState<AdminUser[]>(() => load('royal_sub_admins', defaultAdmins));
+  const [me,        setMe]        = useState<AdminUser | null>(() => load('royal_sub_session', null));
+  const [loginEmail,setLoginEmail]= useState('');
+  const [loginPass, setLoginPass] = useState('');
+  const [loginErr,  setLoginErr]  = useState('');
+  const saveAdmins  = (a: AdminUser[]) => { setAdmins(a); save('royal_sub_admins', a); };
+
+  const doLogin = () => {
+    const u = admins.find(a => a.email.toLowerCase() === loginEmail.toLowerCase() && a.password === loginPass);
+    if (!u) { setLoginErr('Invalid email or password'); return; }
+    setMe(u); save('royal_sub_session', u);
+  };
+  const doLogout = () => { setMe(null); save('royal_sub_session', null); };
+
+  // ── Nav ─────────────────────────────────────────────────────────────────────
+  const [page,      setPage]      = useState('dashboard');
+  const [sideOpen,  setSideOpen]  = useState(true);
+
+  // ── Data ────────────────────────────────────────────────────────────────────
+  const [tenants,   setTenants]   = useState<TenantRow[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [payments,  setPayments]  = useState<PaymentRecord[]>(() => load('royal_payments', []));
+  const [tickets,   setTickets]   = useState<SupportTicket[]>(() => load('royal_tickets', []));
+  const savePay = (p: PaymentRecord[]) => { setPayments(p); save('royal_payments', p); };
+  const saveTix = (t: SupportTicket[]) => { setTickets(t);  save('royal_tickets', t);  };
+
+  const defaultSub = (tenantId: string): Subscription => ({
+    tenantId, planId:'growth', status:'trial', billingCycle:'monthly',
+    startDate:today(), endDate:addD(today(),14), trialEndsAt:addD(today(),14),
+    featureOverrides:{}, autoRenew:false,
+  });
+
+  const loadTenants = () => {
+    setLoading(true);
+    fetch(`${BASE}/api/superadmin/tenants`, { headers: { 'x-super-admin-key': SK } })
+      .then(r => r.json())
+      .then(data => {
+        const subs: Record<string,Subscription> = load('royal_subscriptions', {});
+        setTenants((data.tenants||[]).map((t: Tenant) => ({
+          ...t, sub: subs[t.id] || defaultSub(t.id)
+        })));
+      })
+      .catch(()=>{})
+      .finally(()=>setLoading(false));
+  };
+
+  useEffect(() => { if (me) loadTenants(); }, [me]);
+
+  const saveSubs = (rows: TenantRow[]) => {
+    const map: Record<string,Subscription> = {};
+    rows.forEach(r => { map[r.id] = r.sub; });
+    save('royal_subscriptions', map);
+    setTenants(rows);
+  };
+
+  // ── Selected tenant for modals ───────────────────────────────────────────────
+  const [sel,       setSel]       = useState<TenantRow|null>(null);
+  const [modal,     setModal]     = useState<'edit'|'pay'|'ticket'|null>(null);
+
+  // ── Edit subscription form ───────────────────────────────────────────────────
+  const [ePlan,     setEPlan]     = useState<PlanId>('growth');
+  const [eStatus,   setEStatus]   = useState<Subscription['status']>('active');
+  const [eCycle,    setECycle]    = useState<'monthly'|'yearly'>('monthly');
+  const [eEnd,      setEEnd]      = useState(addM(1));
+  const [ePrice,    setEPrice]    = useState(0);
+  const [eNotes,    setENotes]    = useState('');
+  const [eOver,     setEOver]     = useState<Record<string,boolean>>({});
+
+  const openEdit = (t: TenantRow) => {
+    setSel(t);
+    setEPlan(t.sub.planId); setEStatus(t.sub.status); setECycle(t.sub.billingCycle);
+    setEEnd(t.sub.endDate); setEPrice(t.sub.customPrice||PLAN_MAP[t.sub.planId]?.price||0);
+    setENotes(t.sub.notes||''); setEOver({...t.sub.featureOverrides}); setModal('edit');
+  };
+
+  const saveEdit = () => {
+    if (!sel) return;
+    const token = makeSubscriptionToken(sel.id, ePlan, eEnd);
+    const sub: Subscription = {
+      tenantId:sel.id, planId:ePlan, status:eStatus, billingCycle:eCycle,
+      startDate:today(), endDate:eEnd, featureOverrides:eOver, autoRenew:false,
+      customPrice: ePrice!==PLAN_MAP[ePlan]?.price ? ePrice : undefined,
+      notes:eNotes, token,
+    };
+    saveSubs(tenants.map(t => t.id===sel.id ? {...t,sub} : t));
+    setModal(null);
+  };
+
+  // ── Payment form ─────────────────────────────────────────────────────────────
+  const [pAmt,  setPAmt]  = useState(0);
+  const [pMeth, setPMeth] = useState<'upi'|'cash'|'bank_transfer'|'cheque'|'online'>('upi');
+  const [pRef,  setPRef]  = useState('');
+  const [pNote, setPNote] = useState('');
+
+  const recordPay = () => {
+    if (!sel||!pAmt) return;
+    const p: PaymentRecord = {
+      id:`pay-${Date.now()}`, tenantId:sel.id, tenantName:sel.name,
+      amount:pAmt, currency:'INR', method:pMeth, reference:pRef,
+      planId:sel.sub.planId,
+      period:new Date().toLocaleDateString('en-IN',{month:'short',year:'numeric'}),
+      date:today(), status:'paid', notes:pNote, recordedBy:me?.name||'Admin',
+    };
+    savePay([p,...payments]);
+    saveSubs(tenants.map(t => t.id===sel.id ? {...t, sub:{...t.sub,status:'active' as const, endDate:addM(eCycle==='yearly'?12:1), lastPayment:p}} : t));
+    setModal(null); setPAmt(0); setPRef(''); setPNote('');
+  };
+
+  // ── Ticket form ──────────────────────────────────────────────────────────────
+  const [tSubj, setTSubj] = useState('');
+  const [tDesc, setTDesc] = useState('');
+  const [tCat,  setTCat]  = useState<SupportTicket['category']>('general');
+  const [tPri,  setTPri]  = useState<SupportTicket['priority']>('medium');
+
+  const raiseTix = () => {
+    if (!sel||!tSubj) return;
+    const t: SupportTicket = {
+      id:`tix-${Date.now()}`, tenantId:sel.id, tenantName:sel.name,
+      subject:tSubj, description:tDesc, category:tCat, priority:tPri,
+      status:'open', createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), responses:[],
+    };
+    saveTix([t,...tickets]);
+    setModal(null); setTSubj(''); setTDesc('');
+  };
+
+  // ── Admin users form ─────────────────────────────────────────────────────────
+  const [aName, setAName] = useState('');
+  const [aEmail,setAEmail]= useState('');
+  const [aPass, setAPass] = useState('');
+  const [aRole, setARole] = useState<AdminUser['role']>('admin');
+
+  const addAdmin = () => {
+    if (!aName||!aEmail||!aPass) return;
+    const u: AdminUser = { id:`adm-${Date.now()}`, name:aName, email:aEmail, password:aPass, role:aRole, createdAt:today() };
+    saveAdmins([...admins, u]);
+    setAName(''); setAEmail(''); setAPass('');
+  };
+
+  // ── Stats ────────────────────────────────────────────────────────────────────
+  const stats = useMemo(() => ({
+    total:   tenants.length,
+    active:  tenants.filter(t=>t.sub.status==='active').length,
+    trial:   tenants.filter(t=>t.sub.status==='trial').length,
+    expired: tenants.filter(t=>daysRemaining(t.sub)<=0&&t.sub.status!=='active').length,
+    mrr:     tenants.filter(t=>t.sub.status==='active').reduce((s,t)=>s+(t.sub.customPrice||PLAN_MAP[t.sub.planId]?.price||0),0),
+    collected:payments.filter(p=>p.status==='paid').reduce((s,p)=>s+p.amount,0),
+    openTix: tickets.filter(t=>t.status==='open').length,
+    byPlan:  PLANS.map(p=>({ plan:p, count:tenants.filter(t=>t.sub.planId===p.id&&t.sub.status==='active').length })),
+  }), [tenants, payments, tickets]);
+
+  // ── Styles ───────────────────────────────────────────────────────────────────
+  const inp  = "w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-amber-400 focus:bg-white transition-all";
+  const lbl  = "text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5";
+  const btn  = "px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wide transition-all active:scale-95";
+
+  // ════════════════════════════════════════════════════════════
+  // LOGIN PAGE
+  // ════════════════════════════════════════════════════════════
+  if (!me) return (
+    <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center z-50 p-4">
+      {onClose && <button onClick={onClose} className="absolute top-6 right-6 w-9 h-9 bg-white/10 text-white rounded-xl flex items-center justify-center hover:bg-white/20 font-black">✕</button>}
+
+      <div className="w-full max-w-sm">
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-amber-900/40">
+            <i className="fas fa-crown text-white text-2xl"></i>
+          </div>
+          <h1 className="text-white font-black text-2xl tracking-tight">Royal ERP</h1>
+          <p className="text-slate-400 font-bold text-sm mt-1">Subscription Admin Portal</p>
+        </div>
+
+        {/* Card */}
+        <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-[28px] p-8 shadow-2xl">
+          <h2 className="text-white font-black text-xl mb-6">Sign In</h2>
+
+          <div className="space-y-4">
+            <div>
+              <label className="text-slate-400 font-bold text-xs block mb-1.5">Email Address</label>
+              <input type="email" autoFocus
+                className="w-full px-4 py-3.5 bg-white/10 border border-white/20 rounded-xl text-white font-medium outline-none focus:border-amber-400 focus:bg-white/15 transition-all placeholder:text-slate-500 text-sm"
+                placeholder="admin@royalerp.in"
+                value={loginEmail} onChange={e=>setLoginEmail(e.target.value)}
+                onKeyDown={e=>e.key==='Enter'&&doLogin()} />
+            </div>
+            <div>
+              <label className="text-slate-400 font-bold text-xs block mb-1.5">Password</label>
+              <input type="password"
+                className="w-full px-4 py-3.5 bg-white/10 border border-white/20 rounded-xl text-white font-medium outline-none focus:border-amber-400 focus:bg-white/15 transition-all placeholder:text-slate-500 text-sm"
+                placeholder="••••••••"
+                value={loginPass} onChange={e=>setLoginPass(e.target.value)}
+                onKeyDown={e=>e.key==='Enter'&&doLogin()} />
+            </div>
+            {loginErr && <div className="text-rose-400 font-bold text-sm bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-2.5">{loginErr}</div>}
+            <button onClick={doLogin}
+              className="w-full py-4 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-xl font-black text-[11px] uppercase tracking-widest hover:from-amber-600 hover:to-orange-600 transition-all shadow-lg shadow-amber-900/30 active:scale-98">
+              Sign In to Portal
+            </button>
+          </div>
+
+          <div className="mt-6 pt-6 border-t border-white/10 text-center">
+            <p className="text-slate-500 text-[10px] font-bold">Default: superadmin@royalerp.in / admin@123</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ════════════════════════════════════════════════════════════
+  // MAIN PORTAL
+  // ════════════════════════════════════════════════════════════
+  const curNav = NAV.find(n=>n.id===page)!;
+  const openTixCount = tickets.filter(t=>t.status==='open').length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex bg-slate-100 overflow-hidden">
+
+      {/* ── SIDEBAR ── */}
+      <aside className={`${sideOpen?'w-64':'w-16'} bg-slate-900 flex flex-col transition-all duration-300 shrink-0 overflow-hidden`}>
+
+        {/* Logo */}
+        <div className="flex items-center gap-3 px-4 py-5 border-b border-slate-800">
+          <div className="w-9 h-9 bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl flex items-center justify-center shrink-0 shadow-lg">
+            <i className="fas fa-crown text-white text-sm"></i>
+          </div>
+          {sideOpen && (
+            <div className="min-w-0">
+              <div className="text-white font-black text-sm truncate">Royal ERP</div>
+              <div className="text-slate-500 font-bold text-[9px] uppercase tracking-widest">Admin Portal</div>
+            </div>
+          )}
+        </div>
+
+        {/* Nav items */}
+        <nav className="flex-1 py-4 space-y-1 px-2 overflow-y-auto">
+          {NAV.map(n => {
+            const isActive = page === n.id;
+            const badge = n.id==='tickets' && openTixCount > 0 ? openTixCount : 0;
+            return (
+              <button key={n.id} onClick={()=>setPage(n.id)}
+                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all group relative ${
+                  isActive ? 'bg-amber-500 text-white shadow-lg shadow-amber-900/40' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                }`}>
+                <i className={`fas ${n.icon} text-sm shrink-0 ${isActive?'text-white':'text-slate-500 group-hover:text-slate-300'}`}></i>
+                {sideOpen && <span className="font-black text-[11px] uppercase tracking-wide truncate">{n.label}</span>}
+                {badge > 0 && (
+                  <span className={`ml-auto shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black ${isActive?'bg-white text-amber-600':'bg-rose-500 text-white'}`}>{badge}</span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* User + collapse */}
+        <div className="border-t border-slate-800 p-3 space-y-2">
+          {sideOpen && (
+            <div className="flex items-center gap-2.5 px-2 py-2">
+              <div className="w-8 h-8 bg-amber-500 rounded-lg flex items-center justify-center font-black text-white text-sm shrink-0">{me.name[0]}</div>
+              <div className="min-w-0">
+                <div className="text-white font-black text-[11px] truncate">{me.name}</div>
+                <div className="text-slate-500 text-[9px] font-bold capitalize">{me.role}</div>
+              </div>
+            </div>
+          )}
+          <button onClick={doLogout}
+            className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-slate-500 hover:bg-slate-800 hover:text-white transition-all ${sideOpen?'':'justify-center'}`}>
+            <i className="fas fa-sign-out-alt text-sm shrink-0"></i>
+            {sideOpen && <span className="font-bold text-[10px] uppercase">Sign Out</span>}
+          </button>
+          <button onClick={()=>setSideOpen(v=>!v)}
+            className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-slate-500 hover:bg-slate-800 hover:text-white transition-all ${sideOpen?'':'justify-center'}`}>
+            <i className={`fas fa-chevron-${sideOpen?'left':'right'} text-sm shrink-0`}></i>
+            {sideOpen && <span className="font-bold text-[10px] uppercase">Collapse</span>}
+          </button>
+        </div>
+      </aside>
+
+      {/* ── MAIN CONTENT ── */}
+      <main className="flex-1 flex flex-col overflow-hidden">
+
+        {/* Top bar */}
+        <div className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shrink-0 shadow-sm">
+          <div>
+            <h1 className="font-black text-slate-900 text-xl">{curNav.label}</h1>
+            <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mt-0.5">
+              {page==='dashboard' && `${stats.total} shops · ${INR(stats.mrr)}/mo MRR`}
+              {page==='subscribers' && `${stats.active} active · ${stats.trial} trial · ${stats.expired} expired`}
+              {page==='payments' && `${INR(stats.collected)} total collected`}
+              {page==='tickets' && `${stats.openTix} open tickets`}
+              {page==='admins' && `${admins.length} admin users`}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            {onClose && <button onClick={onClose} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-xl font-black text-[10px] uppercase hover:bg-slate-200">✕ Close</button>}
+          </div>
+        </div>
+
+        {/* Page content */}
+        <div className="flex-1 overflow-y-auto p-6">
+
+          {/* ══ DASHBOARD ══ */}
+          {page==='dashboard' && (
+            <div className="space-y-6">
+              {/* KPI cards */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                {[
+                  { label:'Total Shops',   value:stats.total,        icon:'fa-store',        color:'bg-slate-900',   text:'text-white' },
+                  { label:'Active',        value:stats.active,       icon:'fa-check-circle', color:'bg-emerald-500', text:'text-white' },
+                  { label:'Monthly MRR',   value:INR(stats.mrr),    icon:'fa-rupee-sign',   color:'bg-amber-500',   text:'text-white' },
+                  { label:'Open Tickets',  value:stats.openTix,     icon:'fa-ticket-alt',   color:'bg-purple-600',  text:'text-white' },
+                ].map(k => (
+                  <div key={k.label} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex items-center gap-4">
+                    <div className={`w-12 h-12 ${k.color} rounded-xl flex items-center justify-center shrink-0 shadow-md`}>
+                      <i className={`fas ${k.icon} ${k.text} text-lg`}></i>
+                    </div>
+                    <div>
+                      <div className="font-black text-slate-900 text-2xl">{k.value}</div>
+                      <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{k.label}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Plan distribution */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {stats.byPlan.map(({plan,count}) => {
+                  const pc = PLAN_COLOR[plan.id];
+                  return (
+                    <div key={plan.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm" style={{borderTop:`3px solid ${plan.color}`}}>
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <div className="font-black text-slate-900 text-lg">{plan.name}</div>
+                          <div className="text-slate-400 font-bold text-[10px]">{plan.tagline}</div>
+                        </div>
+                        <div className={`text-3xl font-black`} style={{color:plan.color}}>{count}</div>
+                      </div>
+                      <div className="space-y-1 text-[10px] font-bold text-slate-500">
+                        <div className="flex justify-between"><span>Price</span><span className="font-black text-slate-900">{INR(plan.price)}/mo</span></div>
+                        <div className="flex justify-between"><span>Revenue</span><span className="font-black text-emerald-700">{INR(count*plan.price)}/mo</span></div>
+                        <div className="flex justify-between"><span>Features</span><span>{plan.features.length}</span></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Recent activity */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                  <div className="font-black text-slate-700 mb-4">Recent Payments</div>
+                  {payments.slice(0,5).length===0 ? <p className="text-slate-400 font-bold text-sm">No payments yet</p> :
+                    payments.slice(0,5).map(p=>(
+                      <div key={p.id} className="flex items-center justify-between py-2.5 border-b border-slate-50 last:border-0">
+                        <div>
+                          <div className="font-black text-slate-800 text-sm">{p.tenantName}</div>
+                          <div className="text-[9px] text-slate-400 font-bold">{p.date} · {p.method}</div>
+                        </div>
+                        <div className="font-black text-emerald-700">{INR(p.amount)}</div>
+                      </div>
+                    ))
+                  }
+                </div>
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                  <div className="font-black text-slate-700 mb-4">Recent Tickets</div>
+                  {tickets.slice(0,5).length===0 ? <p className="text-slate-400 font-bold text-sm">No tickets yet</p> :
+                    tickets.slice(0,5).map(t=>(
+                      <div key={t.id} className="flex items-center justify-between py-2.5 border-b border-slate-50 last:border-0">
+                        <div>
+                          <div className="font-black text-slate-800 text-sm truncate max-w-[200px]">{t.subject}</div>
+                          <div className="text-[9px] text-slate-400 font-bold">{t.tenantName}</div>
+                        </div>
+                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full border ${t.priority==='critical'?'bg-rose-100 text-rose-600 border-rose-200':t.priority==='high'?'bg-amber-100 text-amber-700 border-amber-200':'bg-slate-100 text-slate-500 border-slate-200'}`}>{t.priority}</span>
+                      </div>
+                    ))
+                  }
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ══ SUBSCRIBERS ══ */}
+          {page==='subscribers' && (
+            <div className="space-y-3">
+              {loading ? (
+                <div className="flex items-center justify-center py-24"><div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div></div>
+              ) : tenants.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-slate-200 py-24 text-center">
+                  <i className="fas fa-store text-4xl text-slate-200 mb-3 block"></i>
+                  <div className="font-black text-slate-400 text-lg">No shops registered</div>
+                  <div className="text-slate-400 font-bold text-sm mt-1">Go to Setup panel to add shops</div>
+                </div>
+              ) : tenants.map(t => {
+                const plan  = PLAN_MAP[t.sub.planId];
+                const days  = daysRemaining(t.sub);
+                const pc    = PLAN_COLOR[t.sub.planId];
+                const isWarn = days<=7 && days>0 && t.sub.status!=='expired';
+                return (
+                  <div key={t.id} className={`bg-white rounded-2xl border p-4 flex flex-wrap items-center justify-between gap-4 shadow-sm hover:shadow-md transition-all ${isWarn?'border-amber-200':t.sub.status==='expired'?'border-rose-200':'border-slate-200'}`}>
+                    <div className="flex items-center gap-4 flex-1 min-w-0">
+                      <div className="w-11 h-11 rounded-xl flex items-center justify-center font-black text-lg shrink-0" style={{background:plan?.color+'20', color:plan?.color}}>
+                        {t.name[0]}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-black text-slate-900">{t.name}</span>
+                          <span className={`text-[8px] font-black px-2 py-0.5 rounded-full border ${pc.bg} ${pc.text} ${pc.border}`}>{plan?.name||t.sub.planId}</span>
+                          <span className={`text-[8px] font-black px-2 py-0.5 rounded-full border ${STATUS_COLOR[t.sub.status]||'bg-slate-100 text-slate-500 border-slate-200'}`}>{t.sub.status.toUpperCase()}</span>
+                          {isWarn && <span className="text-[8px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">⚠ {days}d left</span>}
+                        </div>
+                        <div className="text-[9px] text-slate-400 font-bold mt-0.5 flex gap-3 flex-wrap">
+                          <span><i className="fas fa-envelope text-[8px] mr-1"></i>{t.owner_email}</span>
+                          {t.owner_phone && <span><i className="fas fa-phone text-[8px] mr-1"></i>{t.owner_phone}</span>}
+                          <span><i className="fas fa-calendar text-[8px] mr-1"></i>Expires {fmtDate(t.sub.endDate)}</span>
+                          {t.sub.token && <span className="font-mono text-[8px] text-slate-400"><i className="fas fa-key text-[8px] mr-1"></i>{t.sub.token.slice(0,20)}…</span>}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right hidden sm:block">
+                        <div className="font-black text-slate-900">{INR(t.sub.customPrice||plan?.price||0)}</div>
+                        <div className="text-[8px] text-slate-400 font-bold">/month</div>
+                      </div>
+                      <button onClick={()=>{setSel(t);setModal('pay');}}
+                        className={`${btn} bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100`}>
+                        <i className="fas fa-rupee-sign text-[9px] mr-1"></i>Pay
+                      </button>
+                      <button onClick={()=>openEdit(t)}
+                        className={`${btn} bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100`}>
+                        <i className="fas fa-cog text-[9px] mr-1"></i>Manage
+                      </button>
+                      <button onClick={()=>{setSel(t);setModal('ticket');}}
+                        className={`${btn} bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100`}>
+                        <i className="fas fa-ticket-alt text-[9px] mr-1"></i>Ticket
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ══ PLANS ══ */}
+          {page==='plans' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                {PLANS.map(p => {
+                  const pc = PLAN_COLOR[p.id];
+                  return (
+                    <div key={p.id} className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm" style={{borderTop:`4px solid ${p.color}`}}>
+                      <div className="p-5 border-b border-slate-100">
+                        <div className="flex justify-between items-start">
+                          <div><div className="font-black text-slate-900 text-xl">{p.name}</div><div className="text-slate-400 font-bold text-[10px] mt-0.5">{p.tagline}</div></div>
+                          <div className="text-right">
+                            <div className="font-black text-2xl" style={{color:p.color}}>{INR(p.price)}</div>
+                            <div className="text-[8px] text-slate-400 font-bold">/month</div>
+                            <div className="text-[8px] text-emerald-600 font-bold">{INR(p.yearlyPrice)}/year</div>
+                          </div>
+                        </div>
+                        <div className="flex gap-4 mt-3 text-[9px] font-black text-slate-500">
+                          <span>👥 {p.limits.users===-1?'∞':p.limits.users} users</span>
+                          <span>📦 {p.limits.products===-1?'∞':p.limits.products} products</span>
+                          <span>🏪 {p.limits.locations===-1?'∞':p.limits.locations} locations</span>
+                        </div>
+                      </div>
+                      <div className="p-4 max-h-56 overflow-y-auto space-y-1">
+                        {p.features.map(fid => {
+                          const f = FEATURES.find(x=>x.id===fid);
+                          return f ? <div key={fid} className="flex items-center gap-1.5 text-[10px] font-bold text-slate-600"><i className="fas fa-check text-emerald-500 text-[8px]"></i>{f.name}</div> : null;
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Feature matrix */}
+              <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                <div className="px-5 py-3.5 border-b border-slate-100 font-black text-slate-700">Complete Feature Matrix</div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs min-w-[500px]">
+                    <thead><tr className="bg-slate-50 border-b border-slate-100">
+                      <th className="px-5 py-3 text-left font-black text-[9px] text-slate-400 uppercase w-52">Feature</th>
+                      {PLANS.map(p=><th key={p.id} className="px-4 py-3 text-center font-black text-[10px] uppercase" style={{color:p.color}}>{p.name}</th>)}
+                    </tr></thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {Object.entries(FEATURES.reduce((g,f)=>{(g[f.category]=g[f.category]||[]).push(f);return g;},{} as Record<string,typeof FEATURES>)).map(([cat,feats])=>(
+                        <React.Fragment key={cat}>
+                          <tr className="bg-slate-50/70"><td colSpan={4} className="px-5 py-2 font-black text-[8px] text-slate-400 uppercase tracking-widest">{cat}</td></tr>
+                          {feats.map(f=>(
+                            <tr key={f.id} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-5 py-2.5"><div className="font-bold text-slate-700 text-[11px]">{f.name}</div><div className="text-[8px] text-slate-400">{f.description}</div></td>
+                              {PLANS.map(p=>(
+                                <td key={p.id} className="px-4 py-2.5 text-center">
+                                  {p.features.includes(f.id)
+                                    ? <i className="fas fa-check-circle text-lg" style={{color:p.color+'99'}}></i>
+                                    : <i className="fas fa-times text-slate-200 text-base"></i>}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </React.Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ══ PAYMENTS ══ */}
+          {page==='payments' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                {[
+                  { label:'Total Collected', value:INR(stats.collected),                    color:'text-emerald-700', bg:'bg-emerald-50' },
+                  { label:'This Month',      value:INR(payments.filter(p=>p.date.startsWith(today().slice(0,7))).reduce((s,p)=>s+p.amount,0)), color:'text-amber-700', bg:'bg-amber-50' },
+                  { label:'Transactions',    value:payments.length,                          color:'text-slate-900',   bg:'bg-white' },
+                  { label:'Pending',         value:payments.filter(p=>p.status==='pending').length, color:'text-rose-600', bg:'bg-rose-50' },
+                ].map(k=>(
+                  <div key={k.label} className={`${k.bg} border border-slate-200 rounded-2xl p-4 shadow-sm`}>
+                    <div className={`font-black text-2xl ${k.color}`}>{k.value}</div>
+                    <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-0.5">{k.label}</div>
+                  </div>
+                ))}
+              </div>
+              {payments.length===0 ? (
+                <div className="bg-white rounded-2xl border border-slate-200 py-20 text-center"><i className="fas fa-rupee-sign text-4xl text-slate-200 block mb-3"></i><div className="font-black text-slate-400">No payments recorded</div></div>
+              ) : (
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs min-w-[640px]">
+                      <thead><tr className="bg-slate-50 border-b border-slate-200">
+                        {['Date','Shop','Plan','Amount','Method','Reference','Period','Status'].map(h=>(
+                          <th key={h} className="px-4 py-3 text-left font-black text-[8px] text-slate-400 uppercase tracking-widest">{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {payments.map(p=>{
+                          const pc = PLAN_COLOR[p.planId];
+                          return (
+                            <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-4 py-3 font-bold text-slate-600 whitespace-nowrap">{fmtDate(p.date)}</td>
+                              <td className="px-4 py-3 font-black text-slate-900">{p.tenantName}</td>
+                              <td className="px-4 py-3"><span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${pc.bg} ${pc.text}`}>{PLAN_MAP[p.planId]?.name||p.planId}</span></td>
+                              <td className="px-4 py-3 font-black text-emerald-700">{INR(p.amount)}</td>
+                              <td className="px-4 py-3 font-bold text-slate-600 capitalize">{p.method.replace('_',' ')}</td>
+                              <td className="px-4 py-3 font-mono text-slate-500 text-[9px]">{p.reference||'—'}</td>
+                              <td className="px-4 py-3 font-bold text-slate-600">{p.period}</td>
+                              <td className="px-4 py-3"><span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${p.status==='paid'?'bg-emerald-100 text-emerald-700':p.status==='pending'?'bg-amber-100 text-amber-700':'bg-rose-100 text-rose-600'}`}>{p.status}</span></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══ TICKETS ══ */}
+          {page==='tickets' && (
+            <div className="space-y-3">
+              {tickets.length===0 ? (
+                <div className="bg-white rounded-2xl border border-slate-200 py-20 text-center"><i className="fas fa-ticket-alt text-4xl text-slate-200 block mb-3"></i><div className="font-black text-slate-400">No support tickets yet</div></div>
+              ) : tickets.map(t=>(
+                <div key={t.id} className={`bg-white rounded-2xl border p-4 shadow-sm ${t.priority==='critical'?'border-rose-300 bg-rose-50/30':t.priority==='high'?'border-amber-200':'border-slate-200'}`}>
+                  <div className="flex items-start justify-between gap-4 flex-wrap">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-slate-900">{t.subject}</span>
+                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full border ${t.priority==='critical'?'bg-rose-100 text-rose-600 border-rose-200':t.priority==='high'?'bg-amber-100 text-amber-700 border-amber-200':t.priority==='medium'?'bg-blue-100 text-blue-700 border-blue-200':'bg-slate-100 text-slate-500 border-slate-200'}`}>{t.priority}</span>
+                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full border ${t.status==='open'?'bg-emerald-100 text-emerald-700 border-emerald-200':t.status==='in_progress'?'bg-blue-100 text-blue-700 border-blue-200':'bg-slate-100 text-slate-500 border-slate-200'}`}>{t.status.replace('_',' ')}</span>
+                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-200`}>{t.category.replace('_',' ')}</span>
+                      </div>
+                      <div className="text-[9px] text-slate-400 font-bold mt-1">{t.tenantName} · {fmtDate(t.createdAt)}</div>
+                      {t.description && <p className="text-sm text-slate-600 font-medium mt-2 leading-relaxed">{t.description}</p>}
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      {t.status==='open' && <button onClick={()=>saveTix(tickets.map(x=>x.id===t.id?{...x,status:'in_progress' as const,updatedAt:new Date().toISOString()}:x))} className={`${btn} bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100`}>In Progress</button>}
+                      {t.status!=='resolved' && <button onClick={()=>saveTix(tickets.map(x=>x.id===t.id?{...x,status:'resolved' as const,updatedAt:new Date().toISOString()}:x))} className={`${btn} bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100`}>Resolve</button>}
+                      <button onClick={()=>saveTix(tickets.filter(x=>x.id!==t.id))} className={`${btn} bg-slate-100 text-slate-500 hover:bg-slate-200`}>Delete</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ══ ADMIN USERS ══ */}
+          {page==='admins' && (
+            <div className="space-y-5">
+              {/* Add admin form */}
+              {me.role==='super' && (
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                  <div className="font-black text-slate-700 mb-4">Add Admin User</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div><label className={lbl}>Full Name</label><input className={inp} placeholder="John Doe" value={aName} onChange={e=>setAName(e.target.value)}/></div>
+                    <div><label className={lbl}>Email</label><input type="email" className={inp} placeholder="john@example.com" value={aEmail} onChange={e=>setAEmail(e.target.value)}/></div>
+                    <div><label className={lbl}>Password</label><input type="text" className={inp} placeholder="Set password" value={aPass} onChange={e=>setAPass(e.target.value)}/></div>
+                    <div>
+                      <label className={lbl}>Role</label>
+                      <select className={inp} value={aRole} onChange={e=>setARole(e.target.value as any)}>
+                        <option value="admin">Admin</option>
+                        <option value="support">Support</option>
+                        <option value="super">Super Admin</option>
+                      </select>
+                    </div>
+                  </div>
+                  <button onClick={addAdmin} disabled={!aName||!aEmail||!aPass}
+                    className={`mt-3 ${btn} bg-slate-900 text-white hover:bg-amber-600 disabled:opacity-40`}>
+                    <i className="fas fa-plus text-[9px] mr-1"></i>Add Admin User
+                  </button>
+                </div>
+              )}
+              {/* Admin list */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <table className="w-full text-xs min-w-[480px]">
+                  <thead><tr className="bg-slate-50 border-b border-slate-200">
+                    {['Name','Email','Role','Created','Actions'].map(h=>(
+                      <th key={h} className="px-5 py-3 text-left font-black text-[8px] text-slate-400 uppercase tracking-widest">{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {admins.map(a=>(
+                      <tr key={a.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-lg bg-amber-500 flex items-center justify-center font-black text-white text-sm">{a.name[0]}</div>
+                            <span className="font-black text-slate-900">{a.name}</span>
+                            {a.id===me.id && <span className="text-[7px] font-black px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full">You</span>}
+                          </div>
+                        </td>
+                        <td className="px-5 py-3.5 font-bold text-slate-600">{a.email}</td>
+                        <td className="px-5 py-3.5">
+                          <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${a.role==='super'?'bg-purple-100 text-purple-700':a.role==='admin'?'bg-amber-100 text-amber-700':'bg-slate-100 text-slate-500'}`}>{a.role}</span>
+                        </td>
+                        <td className="px-5 py-3.5 font-bold text-slate-500">{fmtDate(a.createdAt)}</td>
+                        <td className="px-5 py-3.5">
+                          {a.id!==me.id && me.role==='super' && (
+                            <button onClick={()=>saveAdmins(admins.filter(x=>x.id!==a.id))}
+                              className="text-rose-400 hover:text-rose-600 font-black text-[9px] uppercase hover:underline">Remove</button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ══ ANALYTICS ══ */}
+          {page==='analytics' && (
+            <div className="space-y-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {PLANS.map(p=>{
+                  const active = tenants.filter(t=>t.sub.planId===p.id&&t.sub.status==='active').length;
+                  const trial  = tenants.filter(t=>t.sub.planId===p.id&&t.sub.status==='trial').length;
+                  const rev    = active*(p.price);
+                  return (
+                    <div key={p.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm" style={{borderLeft:`4px solid ${p.color}`}}>
+                      <div className="font-black text-slate-900 text-lg">{p.name}</div>
+                      <div className="mt-4 space-y-2">
+                        <div className="flex justify-between text-sm"><span className="font-bold text-slate-500">Active</span><span className="font-black text-emerald-700">{active}</span></div>
+                        <div className="flex justify-between text-sm"><span className="font-bold text-slate-500">Trial</span><span className="font-black text-blue-700">{trial}</span></div>
+                        <div className="flex justify-between text-sm"><span className="font-bold text-slate-500">Monthly Revenue</span><span className="font-black text-slate-900">{INR(rev)}</span></div>
+                        <div className="flex justify-between text-sm"><span className="font-bold text-slate-500">Annual Revenue</span><span className="font-black text-amber-700">{INR(rev*12)}</span></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                <div className="font-black text-slate-700 mb-5">Status Distribution</div>
+                <div className="space-y-3">
+                  {Object.entries(tenants.reduce((m,t)=>{const s=t.sub.status;m[s]=(m[s]||0)+1;return m;},{} as Record<string,number>)).map(([status,count])=>(
+                    <div key={status} className="flex items-center gap-4">
+                      <div className="w-24 text-[10px] font-black text-slate-500 uppercase text-right">{status}</div>
+                      <div className="flex-1 bg-slate-100 rounded-full h-4 overflow-hidden">
+                        <div className="h-4 rounded-full transition-all duration-700" style={{
+                          width:`${(count/Math.max(tenants.length,1))*100}%`,
+                          background: status==='active'?'#10b981':status==='trial'?'#3b82f6':status==='expired'?'#ef4444':'#94a3b8'
+                        }}></div>
+                      </div>
+                      <div className="w-8 font-black text-slate-900 text-sm">{count}</div>
+                      <div className="w-10 text-[9px] font-bold text-slate-400">{Math.round(count/Math.max(tenants.length,1)*100)}%</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* ══ EDIT SUBSCRIPTION MODAL ══ */}
+      {modal==='edit' && sel && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[28px] w-full max-w-2xl max-h-[92vh] overflow-y-auto shadow-2xl">
+            <div className="bg-slate-900 text-white px-6 py-5 rounded-t-[28px] flex items-center justify-between">
+              <div>
+                <div className="font-black text-lg">Manage Subscription</div>
+                <div className="text-slate-400 font-bold text-[10px]">{sel.name} · {sel.owner_email}</div>
+              </div>
+              <button onClick={()=>setModal(null)} className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center hover:bg-white/20">✕</button>
+            </div>
+            <div className="p-6 space-y-5">
+              <div className="grid grid-cols-3 gap-3">
+                {PLANS.map(p=>(
+                  <button key={p.id} type="button" onClick={()=>{setEPlan(p.id);setEPrice(p.price);}}
+                    className={`border-2 rounded-2xl p-4 text-left transition-all ${ePlan===p.id?'border-amber-500 bg-amber-50 shadow-md':'border-slate-200 hover:border-amber-200'}`}>
+                    <div className="font-black text-slate-900">{p.name}</div>
+                    <div className="font-black text-amber-600 text-lg mt-0.5">{INR(p.price)}<span className="text-[10px] text-amber-400 font-bold">/mo</span></div>
+                    {ePlan===p.id && <div className="text-[8px] font-black text-amber-500 mt-1">● Selected</div>}
+                  </button>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className={lbl}>Status</label>
+                  <select className={inp} value={eStatus} onChange={e=>setEStatus(e.target.value as any)}>
+                    {['active','trial','suspended','cancelled','expired'].map(s=><option key={s} value={s}>{s.charAt(0).toUpperCase()+s.slice(1)}</option>)}
+                  </select>
+                </div>
+                <div><label className={lbl}>Billing Cycle</label>
+                  <select className={inp} value={eCycle} onChange={e=>setECycle(e.target.value as any)}>
+                    <option value="monthly">Monthly</option><option value="yearly">Yearly</option>
+                  </select>
+                </div>
+                <div><label className={lbl}>Subscription Ends</label><input type="date" className={inp} value={eEnd} onChange={e=>setEEnd(e.target.value)}/></div>
+                <div>
+                  <label className={lbl}>Custom Price / Month (₹) <span className="text-slate-300 normal-case">Standard: {INR(PLAN_MAP[ePlan]?.price||0)}</span></label>
+                  <input type="number" className={inp} value={ePrice} onChange={e=>setEPrice(parseFloat(e.target.value||'0'))}/>
+                </div>
+              </div>
+              <div>
+                <label className={lbl}>Feature Overrides <span className="text-slate-300 normal-case font-bold">— per-tenant exceptions</span></label>
+                <div className="border border-slate-200 rounded-xl max-h-52 overflow-y-auto divide-y divide-slate-50">
+                  {FEATURES.map(f=>{
+                    const inPlan=PLAN_MAP[ePlan]?.features.includes(f.id);
+                    const ov=eOver[f.id];
+                    return (
+                      <div key={f.id} className="flex items-center justify-between px-3 py-2 hover:bg-slate-50">
+                        <div className="flex-1">
+                          <span className="text-[10px] font-bold text-slate-700">{f.name}</span>
+                          {inPlan && <span className="ml-1.5 text-[7px] font-black text-emerald-500 bg-emerald-50 px-1 rounded">in plan</span>}
+                        </div>
+                        <div className="flex gap-1">
+                          {([['default',undefined,'bg-slate-700'],['ON',true,'bg-emerald-600'],['OFF',false,'bg-rose-600']] as const).map(([label,val,active])=>(
+                            <button key={String(label)} onClick={()=>{
+                              if(val===undefined){const n={...eOver};delete n[f.id];setEOver(n);}
+                              else setEOver(o=>({...o,[f.id]:val as boolean}));
+                            }} className={`px-1.5 py-0.5 text-[7px] font-black rounded text-white transition-all ${(ov===val||(val===undefined&&ov===undefined))?active:'bg-slate-200 text-slate-500'}`}>{label}</button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div><label className={lbl}>Admin Notes</label><textarea className={`${inp} resize-none`} rows={2} value={eNotes} onChange={e=>setENotes(e.target.value)} placeholder="Internal notes…"/></div>
+              <div className="flex gap-3">
+                <button onClick={saveEdit} className={`flex-1 py-3.5 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase hover:bg-amber-600 transition-all`}>Save Changes</button>
+                <button onClick={()=>setModal(null)} className={`px-5 py-3.5 bg-slate-100 text-slate-500 rounded-xl font-black text-[10px] uppercase hover:bg-slate-200`}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ PAYMENT MODAL ══ */}
+      {modal==='pay' && sel && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[28px] w-full max-w-md shadow-2xl">
+            <div className="bg-emerald-800 text-white px-6 py-5 rounded-t-[28px] flex items-center justify-between">
+              <div><div className="font-black text-lg">Record Payment</div><div className="text-emerald-300 font-bold text-[10px]">{sel.name}</div></div>
+              <button onClick={()=>setModal(null)} className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center hover:bg-white/20">✕</button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div><label className={lbl}>Amount (₹)</label>
+                <input type="number" className={inp} placeholder={String(sel.sub.customPrice||PLAN_MAP[sel.sub.planId]?.price||0)}
+                  value={pAmt||''} onChange={e=>setPAmt(parseFloat(e.target.value||'0'))}/></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className={lbl}>Method</label>
+                  <select className={inp} value={pMeth} onChange={e=>setPMeth(e.target.value as any)}>
+                    <option value="upi">UPI</option><option value="cash">Cash</option>
+                    <option value="bank_transfer">Bank Transfer</option><option value="cheque">Cheque</option><option value="online">Online</option>
+                  </select>
+                </div>
+                <div><label className={lbl}>Reference / UTR</label><input className={inp} placeholder="Ref no." value={pRef} onChange={e=>setPRef(e.target.value)}/></div>
+              </div>
+              <div><label className={lbl}>Notes</label><input className={inp} placeholder="Optional" value={pNote} onChange={e=>setPNote(e.target.value)}/></div>
+              <button onClick={recordPay} disabled={!pAmt}
+                className={`w-full py-4 bg-emerald-700 text-white rounded-xl font-black text-[10px] uppercase hover:bg-emerald-800 transition-all disabled:opacity-40`}>
+                Record {pAmt?INR(pAmt):''} Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ TICKET MODAL ══ */}
+      {modal==='ticket' && sel && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[28px] w-full max-w-md shadow-2xl">
+            <div className="bg-purple-800 text-white px-6 py-5 rounded-t-[28px] flex items-center justify-between">
+              <div><div className="font-black text-lg">Support Ticket</div><div className="text-purple-300 font-bold text-[10px]">{sel.name}</div></div>
+              <button onClick={()=>setModal(null)} className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center hover:bg-white/20">✕</button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div><label className={lbl}>Subject</label><input className={inp} placeholder="Brief issue description" value={tSubj} onChange={e=>setTSubj(e.target.value)}/></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className={lbl}>Category</label>
+                  <select className={inp} value={tCat} onChange={e=>setTCat(e.target.value as any)}>
+                    <option value="billing">Billing</option><option value="feature_request">Feature Request</option>
+                    <option value="bug">Bug</option><option value="upgrade">Upgrade</option><option value="general">General</option>
+                  </select>
+                </div>
+                <div><label className={lbl}>Priority</label>
+                  <select className={inp} value={tPri} onChange={e=>setTPri(e.target.value as any)}>
+                    <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option>
+                  </select>
+                </div>
+              </div>
+              <div><label className={lbl}>Description</label><textarea className={`${inp} resize-none`} rows={3} placeholder="Details…" value={tDesc} onChange={e=>setTDesc(e.target.value)}/></div>
+              <button onClick={raiseTix} disabled={!tSubj}
+                className={`w-full py-4 bg-purple-700 text-white rounded-xl font-black text-[10px] uppercase hover:bg-purple-800 transition-all disabled:opacity-40`}>
+                Raise Ticket
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default SubscriptionPortal;
