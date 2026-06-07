@@ -2535,44 +2535,58 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     try {
       let products: any[] = [];
       let shopSettings: any = {};
-      let tenantId = tenantParam;
+      // Default to 'default' when no tenant specified — existing single-shop setup
+      let tenantId = tenantParam || 'default';
 
       if (pool && dbHealthy) {
-        // Resolve tenantId from slug or id
+        // Resolve tenantId from slug or id if tenant param given
         if (tenantParam) {
           const [tr]: any = await pool.query(
             'SELECT id, name, settings FROM tenants WHERE (slug=? OR id=?) AND status="active"',
             [tenantParam, tenantParam]);
           if (tr.length) {
-            tenantId    = tr[0].id;
+            tenantId     = tr[0].id;
             shopSettings = parseData(tr[0].settings);
           }
+        } else {
+          // No tenant param — load default shop settings from system_persistence
+          try {
+            const [sp]: any = await pool.query(
+              'SELECT payload FROM system_persistence WHERE tenant_id="default" OR tenant_id IS NULL LIMIT 1');
+            if (sp.length) {
+              const data = parseData(sp[0].payload);
+              shopSettings = data.settings || {};
+            }
+          } catch {}
         }
 
-        // Fetch products for this tenant
-        const [rows]: any = await pool.query(
-          'SELECT id, name, category, brand, data, selling_price, stock_boxes, status FROM products WHERE tenant_id=? AND status="Active"',
-          [tenantId || 'default']);
-
-        products = rows.map((p: any) => {
-          const d = parseData(p.data);
-          return {
-            ...d,
-            id:           p.id,
-            name:         p.name,
-            category:     p.category,
-            brand:        p.brand,
-            sellingPrice: parseFloat(p.selling_price) || d.sellingPrice || 0,
-            stockBoxes:   p.stock_boxes || d.stockBoxes || 0,
-            status:       p.status,
-          };
-        }).filter((p: any) => p.showInGallery !== false);
+        // Try fetching with tenant_id filter
+        try {
+          const [rows]: any = await pool.query(
+            'SELECT id,name,category,brand,data,selling_price,stock_boxes,status FROM products WHERE (tenant_id=? OR tenant_id IS NULL OR tenant_id="") AND status="Active"',
+            [tenantId]);
+          products = rows.map((p: any) => {
+            const d = parseData(p.data);
+            return { ...d, id: p.id, name: p.name, category: p.category, brand: p.brand,
+              sellingPrice: parseFloat(p.selling_price) || d.sellingPrice || 0,
+              stockBoxes: p.stock_boxes || d.stockBoxes || 0, status: p.status };
+          }).filter((p: any) => p.showInGallery !== false);
+        } catch {
+          // tenant_id column may not exist yet — return all active products
+          const [rows]: any = await pool.query(
+            'SELECT id,name,category,brand,data,selling_price,stock_boxes,status FROM products WHERE status="Active"');
+          products = rows.map((p: any) => {
+            const d = parseData(p.data);
+            return { ...d, id: p.id, name: p.name, category: p.category, brand: p.brand,
+              sellingPrice: parseFloat(p.selling_price) || d.sellingPrice || 0,
+              stockBoxes: p.stock_boxes || d.stockBoxes || 0, status: p.status };
+          }).filter((p: any) => p.showInGallery !== false);
+        }
       } else {
         // In-memory fallback
-        products = inMemoryDb?.products?.filter((p: any) =>
+        products = (inMemoryDb?.products || []).filter((p: any) =>
           p.status === 'Active' && p.showInGallery !== false &&
-          (!tenantId || tenantId === 'default' || p.tenantId === tenantId)
-        ) || [];
+          (!tenantParam || p.tenantId === tenantId));
         shopSettings = inMemoryDb?.settings || {};
       }
 
