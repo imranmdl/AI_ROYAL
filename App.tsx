@@ -32,26 +32,31 @@ import { store } from './store';
 const SubscriptionPortalLazy  = lazy(() => import('./components/SubscriptionPortal'));
 
 const App: React.FC = () => {
-  // ── QR / URL auto-config (runs once on launch) ───────────────────────────
-  // When user scans QR code, URL has ?tenant=slug&configure=1
-  // App stores tenant permanently → every future launch pre-loads that shop
+  // ── Tenant auto-config (QR scan + browser persistence) ──────────────────
   React.useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const tenant = params.get('tenant');
+    const params  = new URLSearchParams(window.location.search);
+    const tenant  = params.get('tenant');
     const configure = params.get('configure');
 
+    // ?tenant=mudhol&configure=1 → store permanently on this device
     if (tenant && configure === '1') {
-      // Store permanently for this device/install
       localStorage.setItem('royal_app_tenant', tenant);
-      // Clean URL and reload with just the tenant param
+      localStorage.setItem('royal_jwt', ''); // clear old JWT so fresh login required
       window.history.replaceState({}, '', `/?tenant=${tenant}`);
       window.location.reload();
       return;
     }
 
-    // On every launch: if this device has a stored tenant, add it to URL
+    // ?tenant=mudhol → remember for next time (browser bookmark support)
+    if (tenant && configure !== '1') {
+      localStorage.setItem('royal_app_tenant', tenant);
+    }
+
+    // No tenant in URL → restore last used tenant automatically
     const storedTenant = localStorage.getItem('royal_app_tenant');
-    if (storedTenant && !tenant && !window.location.search.includes('setup')) {
+    if (storedTenant && !tenant &&
+        !window.location.search.includes('sub-admin') &&
+        !window.location.search.includes('setup')) {
       window.history.replaceState({}, '', `/?tenant=${storedTenant}`);
     }
   }, []);

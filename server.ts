@@ -1759,15 +1759,62 @@ app.get('/api/sync/version', async (req: Request, res: Response) => {
 
   app.get('/api/sync', async (req: Request, res: Response) => {
   const since = parseInt(req.query.since as string) || 0;
-  
+
+  // ── Tenant-scoped sync ───────────────────────────────────────────────────────
+  // Read tenantId from JWT if present — filters all data to that tenant only
+  const tenantId = req.tenantId || 'default';
+  const isDefaultTenant = !req.tenantId || req.tenantId === 'default';
+
   // If we are warming up and have NO products (empty state), wait for it
   const hasNoData = !inMemoryDb || (inMemoryDb.products?.length === 0 && inMemoryDb.sales?.length === 0);
   if (isWarmingUp && hasNoData && warmupPromise) {
     await warmupPromise;
   }
 
-  const data = inMemoryDb || await readFromDb();
-  if (!data) return res.status(503).json({ error: "Storage node offline", details: dbError });
+  // ── If tenant is set, load fresh from DB to get tenant-scoped data ──────────
+  let rawData = inMemoryDb || await readFromDb();
+  if (!rawData) return res.status(503).json({ error: "Storage node offline", details: dbError });
+
+  // Scope data to the tenant — filter every collection
+  let data: any;
+  if (!isDefaultTenant && pool && dbHealthy) {
+    try {
+      // Load tenant-specific data directly from DB
+      const [spRows]: any = await pool.query(
+        'SELECT payload FROM system_persistence WHERE tenant_id=? ORDER BY updated_at DESC LIMIT 1',
+        [tenantId]
+      );
+      if (spRows.length) {
+        const tenantData = parseData(spRows[0].payload);
+        // Also fetch products/sales for this tenant from their tables
+        const [prodRows]: any = await pool.query(
+          'SELECT id,name,category,brand,data,selling_price,stock_boxes,stock_loose,status,updated_at FROM products WHERE tenant_id=?',
+          [tenantId]
+        );
+        const [saleRows]: any = await pool.query(
+          'SELECT id,data,invoice_no,customer_name,date,total_amount,updated_at FROM sales WHERE tenant_id=?',
+          [tenantId]
+        );
+        tenantData.products = prodRows.map((p: any) => ({
+          ...parseData(p.data), id:p.id, name:p.name, category:p.category, brand:p.brand,
+          sellingPrice:parseFloat(p.selling_price)||0, stockBoxes:p.stock_boxes||0,
+          stockLoose:p.stock_loose||0, status:p.status, updatedAt:p.updated_at
+        }));
+        tenantData.sales = saleRows.map((s: any) => ({
+          ...parseData(s.data), id:s.id, invoiceNo:s.invoice_no,
+          customerName:s.customer_name, date:s.date,
+          totalAmount:parseFloat(s.total_amount)||0, updatedAt:s.updated_at
+        }));
+        data = tenantData;
+      } else {
+        data = rawData; // fallback
+      }
+    } catch(e) {
+      data = rawData; // DB error fallback
+    }
+  } else {
+    data = rawData;
+  }
   
   // If 'since' is provided, we can send a delta
   if (since > 0) {
