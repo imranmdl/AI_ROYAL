@@ -26,6 +26,18 @@ const SK     = 'test'; // super admin key
 const load  = <T,>(k: string, def: T): T => { try { return JSON.parse(localStorage.getItem(k)||'null') ?? def; } catch { return def; } };
 const save  = (k: string, v: any) => localStorage.setItem(k, JSON.stringify(v));
 
+// ── Plan feature config (editable by admin, stored per plan) ──────────────────
+// Shape: { planId: Set<featureId> }  — overrides the static PLANS defaults
+// Shop-level featureOverrides on Subscription always take priority over this.
+const loadPlanFeatures = (): Record<PlanId, string[]> => {
+  const stored = load<Record<PlanId,string[]>>('royal_plan_features', {} as any);
+  return {
+    classic: stored.classic ?? PLANS[0].features,
+    growth:  stored.growth  ?? PLANS[1].features,
+    pro:     stored.pro     ?? PLANS[2].features,
+  };
+};
+
 // ── Admin users ───────────────────────────────────────────────────────────────
 interface AdminUser { id: string; name: string; email: string; password: string; role: 'super'|'admin'|'support'; createdAt: string }
 const defaultAdmins: AdminUser[] = [
@@ -34,13 +46,14 @@ const defaultAdmins: AdminUser[] = [
 
 // ── Sidebar nav ───────────────────────────────────────────────────────────────
 const NAV = [
-  { id:'dashboard',    label:'Dashboard',     icon:'fa-th-large' },
-  { id:'subscribers',  label:'Subscribers',   icon:'fa-store' },
+  { id:'dashboard',    label:'Dashboard',       icon:'fa-th-large' },
+  { id:'subscribers',  label:'Subscribers',     icon:'fa-store' },
+  { id:'add_shop',     label:'Add New Shop',    icon:'fa-plus-circle' },
   { id:'plans',        label:'Plans & Features',icon:'fa-layer-group' },
-  { id:'payments',     label:'Payments',      icon:'fa-rupee-sign' },
-  { id:'tickets',      label:'Support Tickets',icon:'fa-ticket-alt' },
-  { id:'admins',       label:'Admin Users',   icon:'fa-user-shield' },
-  { id:'analytics',    label:'Analytics',     icon:'fa-chart-pie' },
+  { id:'payments',     label:'Payments',        icon:'fa-rupee-sign' },
+  { id:'tickets',      label:'Support Tickets', icon:'fa-ticket-alt' },
+  { id:'admins',       label:'Admin Users',     icon:'fa-user-shield' },
+  { id:'analytics',    label:'Analytics',       icon:'fa-chart-pie' },
 ];
 
 const STATUS_COLOR: Record<string,string> = {
@@ -61,6 +74,46 @@ interface TenantRow extends Tenant { sub: Subscription }
 
 // ════════════════════════════════════════════════════════════
 const SubscriptionPortal: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
+
+  // ── Plan feature config (operational matrix) ─────────────────────────────────
+  const [planFeatures, setPlanFeatures] = useState<Record<PlanId,string[]>>(loadPlanFeatures);
+  const savePlanFeatures = (pf: Record<PlanId,string[]>) => { setPlanFeatures(pf); save('royal_plan_features', pf); };
+
+  const togglePlanFeature = (planId: PlanId, featureId: string) => {
+    const cur  = planFeatures[planId] || [];
+    const next = cur.includes(featureId) ? cur.filter(f=>f!==featureId) : [...cur, featureId];
+    savePlanFeatures({ ...planFeatures, [planId]: next });
+  };
+
+  // ── Add Shop form ──────────────────────────────────────────────────────────
+  const [addShopOpen,  setAddShopOpen]  = useState(false);
+  const [sName,        setSName]        = useState('');
+  const [sEmail,       setSEmail]       = useState('');
+  const [sPass,        setSPass]        = useState('');
+  const [sPhone,       setSPhone]       = useState('');
+  const [sAddress,     setSAddress]     = useState('');
+  const [sGst,         setSGst]         = useState('');
+  const [sPlan,        setSPlan]        = useState<PlanId>('growth');
+  const [sLoading,     setSLoading]     = useState(false);
+  const [sMsg,         setSMsg]         = useState('');
+
+  const createShop = async () => {
+    if (!sName||!sEmail||!sPass) return;
+    setSLoading(true); setSMsg('');
+    try {
+      const res = await fetch(`${BASE}/api/superadmin/tenants`, {
+        method:'POST', headers:{'Content-Type':'application/json','x-super-admin-key':SK},
+        body: JSON.stringify({ shopName:sName, ownerEmail:sEmail, password:sPass, phone:sPhone, address:sAddress, gst:sGst, plan:sPlan }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setSMsg(data.error||'Failed'); return; }
+      setSMsg(`✓ Shop "${sName}" created! Login: /?tenant=${data.tenant?.slug}`);
+      setSName(''); setSEmail(''); setSPass(''); setSPhone(''); setSAddress(''); setSGst('');
+      setAddShopOpen(false);
+      loadTenants();
+    } catch(e:any) { setSMsg(e.message); }
+    finally { setSLoading(false); }
+  };
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   const [admins,    setAdmins]    = useState<AdminUser[]>(() => load('royal_sub_admins', defaultAdmins));
@@ -504,67 +557,157 @@ const SubscriptionPortal: React.FC<{ onClose?: () => void }> = ({ onClose }) => 
             </div>
           )}
 
-          {/* ══ PLANS ══ */}
+          {/* ══ ADD SHOP ══ */}
+          {page==='add_shop' && (
+            <div className="max-w-2xl space-y-5">
+              {sMsg && <div className={`rounded-2xl px-5 py-3.5 font-bold text-sm border ${sMsg.startsWith('✓')?'bg-emerald-50 text-emerald-700 border-emerald-200':'bg-rose-50 text-rose-600 border-rose-200'}`}>{sMsg}</div>}
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-5">
+                <div>
+                  <div className="font-black text-slate-900 text-xl">Add New Shop</div>
+                  <div className="text-slate-400 font-bold text-sm mt-1">Creates isolated data space, admin user and login URL</div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2"><label className={lbl}>Shop / Showroom Name *</label><input className={inp} placeholder="e.g. Royal Tiles & Granites, Kadapa" value={sName} onChange={e=>setSName(e.target.value)}/></div>
+                  <div><label className={lbl}>Admin Email *</label><input type="email" className={inp} placeholder="admin@shop.com" value={sEmail} onChange={e=>setSEmail(e.target.value)}/></div>
+                  <div><label className={lbl}>Admin Password *</label><input type="text" className={inp} placeholder="Set a strong password" value={sPass} onChange={e=>setSPass(e.target.value)}/></div>
+                  <div><label className={lbl}>Phone</label><input className={inp} placeholder="9876543210" value={sPhone} onChange={e=>setSPhone(e.target.value)}/></div>
+                  <div><label className={lbl}>GST Number</label><input className={inp} placeholder="29XXXXX1234Z1Z5" value={sGst} onChange={e=>setSGst(e.target.value)}/></div>
+                  <div className="col-span-2"><label className={lbl}>Address</label><input className={inp} placeholder="Full showroom address" value={sAddress} onChange={e=>setSAddress(e.target.value)}/></div>
+                  <div className="col-span-2">
+                    <label className={lbl}>Starting Plan</label>
+                    <div className="grid grid-cols-3 gap-3">
+                      {PLANS.map(p=>(
+                        <button key={p.id} type="button" onClick={()=>setSPlan(p.id)}
+                          className={`border-2 rounded-xl p-3 text-left transition-all ${sPlan===p.id?'border-amber-500 bg-amber-50':'border-slate-200 hover:border-amber-200'}`}>
+                          <div className="font-black text-slate-900 text-sm">{p.name}</div>
+                          <div className="font-black text-amber-600">{INR(p.price)}/mo</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <button onClick={createShop} disabled={sLoading||!sName||!sEmail||!sPass}
+                  className="w-full py-4 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase hover:bg-amber-600 transition-all disabled:opacity-40 flex items-center justify-center gap-2">
+                  {sLoading ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>Creating…</> : <><i className="fas fa-plus-circle text-xs"></i>Create Shop</>}
+                </button>
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4 text-[10px] font-bold text-amber-700 space-y-1">
+                <div className="font-black text-sm mb-2">What gets created automatically:</div>
+                <div>✓ Unique shop ID and login slug</div>
+                <div>✓ Isolated data space — data never mixes with other shops</div>
+                <div>✓ Admin user account with the credentials you set</div>
+                <div>✓ Default categories, settings and subscription (trial 14 days)</div>
+                <div>✓ Login URL: <code className="bg-amber-100 px-1 rounded">yourapp.com/?tenant=shop-slug</code></div>
+              </div>
+            </div>
+          )}
+
+          {/* ══ PLANS & OPERATIONAL FEATURE MATRIX ══ */}
           {page==='plans' && (
             <div className="space-y-6">
+              {/* Plan summary cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 {PLANS.map(p => {
-                  const pc = PLAN_COLOR[p.id];
+                  const enabledCount = (planFeatures[p.id]||[]).length;
                   return (
                     <div key={p.id} className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm" style={{borderTop:`4px solid ${p.color}`}}>
-                      <div className="p-5 border-b border-slate-100">
+                      <div className="p-5">
                         <div className="flex justify-between items-start">
                           <div><div className="font-black text-slate-900 text-xl">{p.name}</div><div className="text-slate-400 font-bold text-[10px] mt-0.5">{p.tagline}</div></div>
                           <div className="text-right">
                             <div className="font-black text-2xl" style={{color:p.color}}>{INR(p.price)}</div>
                             <div className="text-[8px] text-slate-400 font-bold">/month</div>
-                            <div className="text-[8px] text-emerald-600 font-bold">{INR(p.yearlyPrice)}/year</div>
                           </div>
                         </div>
-                        <div className="flex gap-4 mt-3 text-[9px] font-black text-slate-500">
+                        <div className="flex gap-3 mt-3 text-[9px] font-black text-slate-500">
                           <span>👥 {p.limits.users===-1?'∞':p.limits.users} users</span>
                           <span>📦 {p.limits.products===-1?'∞':p.limits.products} products</span>
                           <span>🏪 {p.limits.locations===-1?'∞':p.limits.locations} locations</span>
                         </div>
-                      </div>
-                      <div className="p-4 max-h-56 overflow-y-auto space-y-1">
-                        {p.features.map(fid => {
-                          const f = FEATURES.find(x=>x.id===fid);
-                          return f ? <div key={fid} className="flex items-center gap-1.5 text-[10px] font-bold text-slate-600"><i className="fas fa-check text-emerald-500 text-[8px]"></i>{f.name}</div> : null;
-                        })}
+                        <div className="mt-3 pt-3 border-t border-slate-100">
+                          <span className="font-black text-slate-900">{enabledCount}</span>
+                          <span className="text-[9px] font-bold text-slate-400"> / {FEATURES.length} features enabled</span>
+                        </div>
                       </div>
                     </div>
                   );
                 })}
               </div>
-              {/* Feature matrix */}
+
+              {/* Operational Feature Matrix */}
               <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-                <div className="px-5 py-3.5 border-b border-slate-100 font-black text-slate-700">Complete Feature Matrix</div>
+                <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <div className="font-black text-slate-900">Feature Matrix — Operational</div>
+                    <div className="text-[9px] font-bold text-slate-400 mt-0.5">
+                      Click any checkbox to enable/disable per plan ·
+                      <span className="text-amber-600"> Shop-level admin overrides are never affected</span>
+                    </div>
+                  </div>
+                  <button onClick={()=>savePlanFeatures({classic:PLANS[0].features,growth:PLANS[1].features,pro:PLANS[2].features})}
+                    className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg font-black text-[9px] uppercase hover:bg-slate-200">
+                    Reset to Defaults
+                  </button>
+                </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-xs min-w-[500px]">
-                    <thead><tr className="bg-slate-50 border-b border-slate-100">
-                      <th className="px-5 py-3 text-left font-black text-[9px] text-slate-400 uppercase w-52">Feature</th>
-                      {PLANS.map(p=><th key={p.id} className="px-4 py-3 text-center font-black text-[10px] uppercase" style={{color:p.color}}>{p.name}</th>)}
-                    </tr></thead>
-                    <tbody className="divide-y divide-slate-50">
+                  <table className="w-full text-xs min-w-[560px]">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        <th className="px-5 py-3 text-left font-black text-[9px] text-slate-400 uppercase tracking-widest w-56">Feature</th>
+                        {PLANS.map(p=>(
+                          <th key={p.id} className="px-4 py-3 text-center w-32">
+                            <div className="font-black text-[11px] uppercase" style={{color:p.color}}>{p.name}</div>
+                            <div className="text-[8px] font-bold text-slate-400">{(planFeatures[p.id]||[]).length} enabled</div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
                       {Object.entries(FEATURES.reduce((g,f)=>{(g[f.category]=g[f.category]||[]).push(f);return g;},{} as Record<string,typeof FEATURES>)).map(([cat,feats])=>(
                         <React.Fragment key={cat}>
-                          <tr className="bg-slate-50/70"><td colSpan={4} className="px-5 py-2 font-black text-[8px] text-slate-400 uppercase tracking-widest">{cat}</td></tr>
+                          <tr className="bg-slate-50">
+                            <td colSpan={4} className="px-5 py-2 font-black text-[8px] text-slate-400 uppercase tracking-widest">{cat}</td>
+                          </tr>
                           {feats.map(f=>(
-                            <tr key={f.id} className="hover:bg-slate-50 transition-colors">
-                              <td className="px-5 py-2.5"><div className="font-bold text-slate-700 text-[11px]">{f.name}</div><div className="text-[8px] text-slate-400">{f.description}</div></td>
-                              {PLANS.map(p=>(
-                                <td key={p.id} className="px-4 py-2.5 text-center">
-                                  {p.features.includes(f.id)
-                                    ? <i className="fas fa-check-circle text-lg" style={{color:p.color+'99'}}></i>
-                                    : <i className="fas fa-times text-slate-200 text-base"></i>}
-                                </td>
-                              ))}
+                            <tr key={f.id} className="border-b border-slate-50 hover:bg-amber-50/30 transition-colors">
+                              <td className="px-5 py-3">
+                                <div className="font-bold text-slate-800 text-[11px]">{f.name}</div>
+                                <div className="text-[8px] text-slate-400 mt-0.5">{f.description}</div>
+                              </td>
+                              {PLANS.map(p=>{
+                                const enabled = (planFeatures[p.id]||[]).includes(f.id);
+                                return (
+                                  <td key={p.id} className="px-4 py-3 text-center">
+                                    <button type="button"
+                                      onClick={()=>togglePlanFeature(p.id,f.id)}
+                                      title={enabled ? `Disable for ${p.name}` : `Enable for ${p.name}`}
+                                      className={`w-8 h-8 rounded-xl border-2 flex items-center justify-center mx-auto transition-all active:scale-90 hover:scale-110 ${
+                                        enabled
+                                          ? 'border-transparent text-white shadow-md'
+                                          : 'border-slate-200 bg-white text-slate-300 hover:border-slate-400'
+                                      }`}
+                                      style={enabled ? {background: p.color, borderColor: p.color} : {}}>
+                                      <i className={`fas ${enabled?'fa-check':'fa-times'} text-[10px]`}></i>
+                                    </button>
+                                  </td>
+                                );
+                              })}
                             </tr>
                           ))}
                         </React.Fragment>
                       ))}
                     </tbody>
+                    <tfoot>
+                      <tr className="bg-slate-50 border-t-2 border-slate-200">
+                        <td className="px-5 py-3 font-black text-[9px] text-slate-500 uppercase">Totals</td>
+                        {PLANS.map(p=>(
+                          <td key={p.id} className="px-4 py-3 text-center">
+                            <span className="font-black text-slate-900">{(planFeatures[p.id]||[]).length}</span>
+                            <span className="text-[8px] text-slate-400 font-bold"> / {FEATURES.length}</span>
+                          </td>
+                        ))}
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               </div>

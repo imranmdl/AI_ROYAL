@@ -111,15 +111,26 @@ export const PLAN_MAP: Record<PlanId, Plan> = {
 
 // ── Feature check helpers ─────────────────────────────────────────────────────
 
-/** Check if a feature is available given a subscription */
+/** Check if a feature is available given a subscription
+ *  Priority order (highest first):
+ *  1. Tenant-level featureOverride (set by admin per-shop) — NEVER affected by plan changes
+ *  2. Admin-configured plan features (from localStorage royal_plan_features)
+ *  3. Default plan features (from PLANS constant)
+ */
 export function hasFeature(sub: Subscription | null | undefined, featureId: string): boolean {
-  if (!sub) return true; // No subscription info = legacy mode, allow all
+  if (!sub) return true; // No subscription = legacy/single-shop mode, allow all
   if (sub.status === 'suspended' || sub.status === 'cancelled') return false;
 
-  // Check per-tenant override first
-  if (featureId in sub.featureOverrides) return sub.featureOverrides[featureId];
+  // 1. Shop-level admin override — highest priority, never touched by plan changes
+  if (featureId in (sub.featureOverrides || {})) return sub.featureOverrides[featureId];
 
-  // Check plan
+  // 2. Admin-configured plan features (operational matrix)
+  try {
+    const stored = JSON.parse(localStorage.getItem('royal_plan_features') || 'null');
+    if (stored && stored[sub.planId]) return (stored[sub.planId] as string[]).includes(featureId);
+  } catch {}
+
+  // 3. Default plan definition
   const plan = PLAN_MAP[sub.planId];
   return plan ? plan.features.includes(featureId) : true;
 }

@@ -29,8 +29,6 @@ import { UserRole, Quotation, GalleryLead } from './types';
 import { store } from './store';
 
 // Lazy imports at module level — never inside conditionals or components
-const TenantSetupLazy        = lazy(() => import('./components/TenantSetup'));
-const SubscriptionManagerLazy = lazy(() => import('./components/SubscriptionManager'));
 const SubscriptionPortalLazy  = lazy(() => import('./components/SubscriptionPortal'));
 
 const App: React.FC = () => {
@@ -45,9 +43,7 @@ const App: React.FC = () => {
   const [convLead, setConvLead] = useState<GalleryLead | null>(null);
   const [externalProductId, setExternalProductId] = useState<string | null>(null);
   // Super Admin Setup Panel — must be with all other hooks, never after an early return
-  const [showSetup, setShowSetup] = useState(
-    typeof window !== 'undefined' && window.location.search.includes('setup=true')
-  );
+
   const [showSubAdmin, setShowSubAdmin] = useState(
     typeof window !== 'undefined' && window.location.search.includes('sub-admin=true')
   );
@@ -172,18 +168,6 @@ const App: React.FC = () => {
       <Suspense fallback={<div className="min-h-screen bg-slate-900 flex items-center justify-center"><div className="w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div></div>}>
         <SubscriptionPortalLazy onClose={() => {
           setShowSubAdmin(false);
-          window.history.replaceState({}, '', window.location.pathname);
-        }} />
-      </Suspense>
-    );
-  }
-
-  if (showSetup) {
-    return (
-      <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center"><div className="w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div></div>}>
-        <TenantSetupLazy onClose={() => {
-          setShowSetup(false);
-          // Remove ?setup=true from URL without reload
           window.history.replaceState({}, '', window.location.pathname);
         }} />
       </Suspense>
