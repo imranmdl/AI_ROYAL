@@ -7,7 +7,6 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  JAVA_HOME: /usr/lib/jvm/temurin-17-amd64
 
 jobs:
   build-android:
@@ -30,10 +29,10 @@ jobs:
       - name: Build web app
         run: npm run build
 
-      - name: Setup Java 17
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
       - name: Install Android SDK (compileSdk 36 + build-tools 36)
