@@ -193,9 +193,21 @@ const Dashboard: React.FC = () => {
            <h1 className="text-4xl font-black text-slate-900 tracking-tighter uppercase leading-none italic">Executive Insights</h1>
            <p className="text-slate-500 font-bold mt-2 uppercase text-[10px] tracking-[0.2em]">Commercial Ledger • Live Performance • ROI Audit</p>
         </div>
-        <div className="bg-white px-6 py-3 rounded-2xl border shadow-sm flex items-center gap-3">
-           <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></div>
-           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Node User: {currentUser?.name}</span>
+        <div className="flex items-center gap-3">
+          {/* Manual refresh button */}
+          <button
+            onClick={() => store.refreshFromServer(true)}
+            disabled={store.isSyncing}
+            className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 rounded-2xl shadow-sm hover:bg-slate-50 transition-all active:scale-95 disabled:opacity-50">
+            <i className={`fas fa-sync text-sm text-slate-500 ${store.isSyncing ? 'animate-spin' : ''}`}></i>
+            <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+              {store.isSyncing ? 'Syncing…' : 'Refresh'}
+            </span>
+          </button>
+          <div className="bg-white px-6 py-3 rounded-2xl border shadow-sm flex items-center gap-3">
+             <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></div>
+             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Node User: {currentUser?.name}</span>
+          </div>
         </div>
       </header>
 

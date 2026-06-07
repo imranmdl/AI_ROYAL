@@ -63,6 +63,15 @@ const App: React.FC = () => {
   const [hasData, setHasData] = useState(store.products.length > 0);
   const [publicDoc, setPublicDoc] = useState<{ type: 'invoice' | 'quotation', id: string } | null>(null);
   const [activeTab, setActiveTab] = useState('dashboard');
+
+  // Force sync whenever user switches to a data-heavy tab
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    // Immediately fetch latest data when switching to reports/sales/quotations
+    if (['reports','sales','quotations','inventory'].includes(tab)) {
+      store.refreshFromServer(true);
+    }
+  };
   const [convQuotation, setConvQuotation] = useState<Quotation | null>(null);
   const [convLead, setConvLead] = useState<GalleryLead | null>(null);
   const [externalProductId, setExternalProductId] = useState<string | null>(null);

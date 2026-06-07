@@ -189,8 +189,18 @@ class DataStore {
     this.checkDbHealth();
     const useDelta = this.lastUpdated > 0 && this.products.length > 0;
     this.refreshFromServer(!useDelta).then(() => { this.isInitialSyncDone = true; this.notify(); });
-    setInterval(() => this.refreshFromServer(), 60_000);
-    setInterval(() => this.checkDbHealth(), 15_000);
+    // Sync every 20s (was 60s) — keeps dashboard/reports fresh
+    setInterval(() => this.refreshFromServer(), 20_000);
+    setInterval(() => this.checkDbHealth(), 10_000);
+
+    // Force full sync when tab becomes visible again (mobile app resume)
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          this.refreshFromServer(true);   // force = true, ignores lastUpdated
+        }
+      });
+    }
   }
 
   private getApiUrl(path: string) {
@@ -252,8 +262,11 @@ class DataStore {
     if (this.isSyncing && !force) return;
     try {
       this.isSyncing = true; this.syncError = null;
+      const jwt = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+      const headers: Record<string,string> = { 'Accept-Encoding': 'gzip' };
+      if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
       const r = await fetch(this.getApiUrl(`${SYNC_URL}?since=${force ? 0 : this.lastUpdated}&pulse=${Date.now()}`),
-        { cache: 'no-store', headers: { 'Accept-Encoding': 'gzip' } });
+        { cache: 'no-store', headers });
       if (r.ok) {
         const data = await r.json();
         if (data.changed === false) { this.isOnline = true; return; }
