@@ -157,14 +157,17 @@ class DataStore {
       const data = JSON.parse(cached);
 
       // ── Tenant safety check ───────────────────────────────────────────────
-      // If cache was saved for a different tenant, discard it completely
-      // This prevents mudhol's ₹30.90L showing on the default admin's screen
+      // If cache was saved for a different tenant AND we're on a browser (not mobile),
+      // discard it. On Capacitor mobile we NEVER discard — it causes blank screen.
+      const isCapacitorApp = !!(window as any).Capacitor ||
+        navigator.userAgent.includes('RoyalERP-Android') ||
+        navigator.userAgent.includes('RoyalERP-iOS');
       const currentTenant = new URLSearchParams(window.location.search).get('tenant') || 'default';
       const cachedTenant  = data._tenant || 'default';
-      if (cachedTenant !== currentTenant) {
+      if (!isCapacitorApp && cachedTenant !== currentTenant) {
         console.log(`[STORE] Cache tenant mismatch (cached=${cachedTenant}, current=${currentTenant}) — discarding cache`);
         localStorage.removeItem('royal_erp_cache');
-        return; // start fresh — boot() will fetch from server
+        return;
       }
       // Preserve passwords from cache — they were set during sync from DB (data JSON column contains password)
       // Fall back to in-memory defaults only for users not in cache at all
@@ -200,27 +203,23 @@ class DataStore {
 
   private async boot() {
     // ── Tenant guard: runs BEFORE first sync ─────────────────────────────────
-    // If URL has no ?tenant= (default admin at base URL):
-    //   → wipe any leftover tenant JWT so server returns default data
-    // This must happen before refreshFromServer() is called
     const rawUrlTenant = new URLSearchParams(window.location.search).get('tenant') || '';
-    const urlTenant = rawUrlTenant === 'default' ? '' : rawUrlTenant; // 'default' = no tenant
+    const urlTenant = rawUrlTenant === 'default' ? '' : rawUrlTenant;
     const storedJwt = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+    const isCapacitorApp = !!(window as any).Capacitor ||
+      navigator.userAgent.includes('RoyalERP-Android') ||
+      navigator.userAgent.includes('RoyalERP-iOS');
 
-    if (!urlTenant && storedJwt) {
-      // Decode JWT without verifying — just check which tenant it was for
+    if (!urlTenant && storedJwt && !isCapacitorApp) {
+      // Browser at base URL: clear wrong-tenant JWT (but never clear on mobile)
       try {
         const payload = JSON.parse(atob(storedJwt.split('.')[1]));
         if (payload.tenantId && payload.tenantId !== 'default') {
-          // JWT is for a different tenant — clear it so default data is returned
-          console.log('[STORE] Clearing cross-tenant JWT:', payload.tenantId, '→ loading default shop data');
+          console.log('[STORE] Browser: clearing cross-tenant JWT →', payload.tenantId);
           localStorage.setItem('royal_jwt', '');
-          localStorage.removeItem('royal_erp_cache'); // also clear stale cache
-          this.products = []; this.sales = []; this.quotations = [];
-          this.purchases = []; this.lastUpdated = 0;
-          this.notify();
+          // Don't clear products — let sync overwrite with correct data
         }
-      } catch { /* invalid JWT, clear it anyway */ localStorage.setItem('royal_jwt', ''); }
+      } catch { localStorage.setItem('royal_jwt', ''); }
     }
 
     this.checkDbHealth();
