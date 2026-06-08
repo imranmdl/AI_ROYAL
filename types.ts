@@ -793,6 +793,7 @@ export interface SystemSettings {
   printShowCompanyGst: boolean;    // show/hide company GST on printed docs
   printShowCustomerGst: boolean;   // show/hide customer GST on printed docs
   allowItemImagesInDocs: boolean;  // admin master switch: allow item images in quotations/invoices
+  allowProductPhotos:   boolean;   // admin switch: allow staff to upload product photos via camera
   kadapaItemTypes?: KadapaItemType[];
   messageTemplates?: MessageTemplate[]; // Admin-managed finish types with rates
   categoryUnitMap?: Record<string, { defaultUnit: UnitType; allowedUnits: UnitType[]; hasVariants: boolean }>; // per-category unit config

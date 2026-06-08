@@ -700,6 +700,7 @@ const SystemControl: React.FC = () => {
               { key: 'printShowCompanyGst' as const, icon: 'fa-building', label: 'Show Company GST on Print', sub: 'Your GST number appears on quotations & invoices' },
               { key: 'printShowCustomerGst' as const, icon: 'fa-user', label: 'Show Customer GST on Print', sub: 'Customer GST shown if entered in the form' },
               { key: 'allowItemImagesInDocs' as const, icon: 'fa-image', label: 'Allow Item Images in Quotations & Invoices', sub: 'Master switch — lets creators toggle images per document. Images help customers identify selected products' },
+              { key: 'allowProductPhotos' as const, icon: 'fa-camera', label: 'Allow Product Photo Upload', sub: 'Staff can capture or upload photos against inventory items using camera or gallery' },
             ].map(({ key, icon, label, sub }) => (
               <div key={key} className="flex items-center justify-between p-4 rounded-2xl bg-slate-50/50 hover:bg-amber-50 transition-colors group">
                 <div className="flex items-center gap-4">

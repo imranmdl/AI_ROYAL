@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom';
+import { useCamera } from '../hooks/useCamera';
 import { store } from '../store';
 import StockLedger from './StockLedger';
 import { Product, Purchase, PurchaseItem, Category, UnitType, UserRole, TransportCostType, TransportBasis, TileGrade, VendorOrder, Slab } from '../types';
@@ -19,12 +20,12 @@ interface InventoryProps {
 
 // ── Collapsed action menu ─────────────────────────────────────────────────────
 const ActionMenu: React.FC<{
-  product: any; currentRole: string;
-  onLedger:()=>void; onAddStock:()=>void; onHistory:()=>void;
+  product: any; currentRole: string; allowPhotos: boolean;
+  onPhoto:()=>void; onLedger:()=>void; onAddStock:()=>void; onHistory:()=>void;
   onAdjust:()=>void; onQR:()=>void; onGallery:()=>void;
   onStatus:()=>void; onEdit:()=>void;
   showInGallery:boolean; status:string;
-}> = ({ currentRole, onLedger, onAddStock, onHistory, onAdjust, onQR, onGallery, onStatus, onEdit, showInGallery, status }) => {
+}> = ({ currentRole, allowPhotos, onPhoto, onLedger, onAddStock, onHistory, onAdjust, onQR, onGallery, onStatus, onEdit, showInGallery, status }) => {
   const [open, setOpen] = React.useState(false);
   const [pos,  setPos]  = React.useState({ top: 0, right: 0 });
   const btnRef = React.useRef<HTMLButtonElement>(null);
@@ -48,6 +49,7 @@ const ActionMenu: React.FC<{
 
   const isAdmin = currentRole === UserRole.ADMIN;
   const actions = [
+    ...(allowPhotos ? [{ label:'📷 Upload Photo', fn: onPhoto, color: 'text-pink-700 hover:bg-pink-50' }] : []),
     { label:'📊 Stock Ledger',  fn: onLedger,   color: 'text-indigo-700 hover:bg-indigo-50' },
     { label:'➕ Add Inward',    fn: onAddStock, color: 'text-emerald-700 hover:bg-emerald-50' },
     { label:'🕑 History',       fn: onHistory,  color: 'text-blue-700 hover:bg-blue-50' },
@@ -95,6 +97,11 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showImportExport, setShowImportExport] = useState(false);
   const [ledgerProduct, setLedgerProduct]         = useState<Product | null>(null);
+  const [photoProduct,  setPhotoProduct]          = useState<Product | null>(null);
+  const { takePhoto, loading: camLoading }         = useCamera();
+
+  // Admin setting: allow staff to upload product photos
+  const allowProductPhotos = store.settings.allowProductPhotos !== false; // default true
   const [editProduct, setEditProduct] = useState<Product | null>(null);
   const [showGallery, setShowGallery] = useState<Product | null>(null);
   const [showQR, setShowQR] = useState<Product | null>(null);
@@ -851,6 +858,8 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                       <ActionMenu
                         product={p}
                         currentRole={currentRole}
+                        allowPhotos={allowProductPhotos}
+                        onPhoto={() => setPhotoProduct(p)}
                         onLedger={() => setLedgerProduct(p)}
                         onAddStock={() => {
                           if (!newPurchase.items) return;
@@ -1895,6 +1904,79 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
           </div>
         </div>
       )}
+      {/* Photo Upload Modal */}
+      {photoProduct && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-white w-full sm:rounded-[28px] sm:max-w-sm shadow-2xl overflow-hidden">
+            <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+              <div>
+                <div className="font-black text-base">Upload Product Photo</div>
+                <div className="text-[9px] text-slate-400 font-bold mt-0.5 truncate max-w-[220px]">{photoProduct.name}</div>
+              </div>
+              <button onClick={() => setPhotoProduct(null)} className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center hover:bg-white/20">✕</button>
+            </div>
+            <div className="p-6 space-y-4">
+              {/* Current photo */}
+              {photoProduct.images?.[0] && (
+                <div className="relative">
+                  <img src={photoProduct.images[0]} alt={photoProduct.name}
+                    className="w-full h-48 object-cover rounded-2xl border border-slate-100"/>
+                  <button
+                    onClick={() => {
+                      if (!confirm('Remove current photo?')) return;
+                      store.updateProduct(photoProduct.id, { images: [] });
+                      setPhotoProduct({ ...photoProduct, images: [] });
+                    }}
+                    className="absolute top-2 right-2 w-8 h-8 bg-rose-500 text-white rounded-xl flex items-center justify-center text-[10px] font-black hover:bg-rose-600">
+                    <i className="fas fa-trash-alt"></i>
+                  </button>
+                </div>
+              )}
+              {!photoProduct.images?.[0] && (
+                <div className="w-full h-40 bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center text-slate-300">
+                  <i className="fas fa-image text-4xl mb-2"></i>
+                  <span className="text-[9px] font-black uppercase tracking-widest">No photo yet</span>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  disabled={camLoading}
+                  onClick={async () => {
+                    const photo = await takePhoto('camera');
+                    if (!photo) return;
+                    const images = [photo.dataUrl, ...(photoProduct.images || []).slice(0, 3)];
+                    store.updateProduct(photoProduct.id, { images });
+                    setPhotoProduct({ ...photoProduct, images });
+                  }}
+                  className="flex flex-col items-center gap-2 py-5 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-wide hover:bg-amber-600 transition-all disabled:opacity-40 active:scale-95">
+                  {camLoading
+                    ? <><i className="fas fa-spinner fa-spin text-lg"></i><span>Opening…</span></>
+                    : <><i className="fas fa-camera text-2xl"></i><span>Take Photo</span></>}
+                </button>
+                <button
+                  disabled={camLoading}
+                  onClick={async () => {
+                    const photo = await takePhoto('gallery');
+                    if (!photo) return;
+                    const images = [photo.dataUrl, ...(photoProduct.images || []).slice(0, 3)];
+                    store.updateProduct(photoProduct.id, { images });
+                    setPhotoProduct({ ...photoProduct, images });
+                  }}
+                  className="flex flex-col items-center gap-2 py-5 bg-indigo-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-wide hover:bg-indigo-700 transition-all disabled:opacity-40 active:scale-95">
+                  <i className="fas fa-images text-2xl"></i>
+                  <span>Choose Photo</span>
+                </button>
+              </div>
+              <div className="text-[9px] text-slate-400 font-bold text-center">
+                Photos are compressed to 1024px · Max 4 photos per product
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Stock Ledger Modal */}
       {ledgerProduct && (
         <StockLedger
