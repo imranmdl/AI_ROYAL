@@ -5,11 +5,12 @@ import { store } from '../store';
 import { UserRole } from '../types';
 
 const ProfileSettings: React.FC = () => {
-  const user = store.currentUser;
-  const [oldPass, setOldPass] = useState('');
-  const [newPass, setNewPass] = useState('');
+  const user = store.currentUser as any;
+  const [oldPass, setOldPass]     = useState('');
+  const [newPass, setNewPass]     = useState('');
   const [confirmPass, setConfirmPass] = useState('');
-  const [status, setStatus] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
+  const [show2FA, setShow2FA]     = useState(false);
+  const [status, setStatus]       = useState<{ type: 'success' | 'error', msg: string } | null>(null);
 
   if (!user) return null;
 
@@ -134,8 +135,50 @@ const ProfileSettings: React.FC = () => {
                  </button>
               </form>
            </div>
+
+           {/* ── Two-Factor Authentication card ── */}
+           <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-[40px] p-8 md:p-12">
+             <div className="flex items-start justify-between gap-6 flex-wrap">
+               <div>
+                 <div className="flex items-center gap-3 mb-2">
+                   <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xl ${user?.twoFactorEnabled ? 'bg-emerald-500/20' : 'bg-white/10'}`}>
+                     {user?.twoFactorEnabled ? '🔐' : '🔓'}
+                   </div>
+                   <h3 className="text-white font-black text-lg">Two-Factor Authentication</h3>
+                 </div>
+                 <p className="text-slate-400 font-bold text-sm max-w-md">
+                   {user?.twoFactorEnabled
+                     ? 'Your account is protected. A 6-digit code from Google Authenticator is required at every login.'
+                     : 'Add an extra layer of security. After entering your password, you\'ll also need a code from Google Authenticator.'}
+                 </p>
+                 {user?.twoFactorEnabled && (
+                   <div className="mt-2 flex items-center gap-2">
+                     <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
+                     <span className="text-emerald-400 font-black text-[10px] uppercase tracking-widest">Active — Google Authenticator connected</span>
+                   </div>
+                 )}
+               </div>
+               <button
+                 onClick={() => setShow2FA(true)}
+                 className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 ${
+                   user?.twoFactorEnabled
+                     ? 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
+                     : 'bg-amber-500 text-white hover:bg-amber-600 shadow-lg shadow-amber-900/40'
+                 }`}>
+                 <i className={`fas ${user?.twoFactorEnabled ? 'fa-cog' : 'fa-shield-alt'} mr-2`}></i>
+                 {user?.twoFactorEnabled ? 'Manage 2FA' : 'Enable 2FA'}
+               </button>
+             </div>
+           </div>
         </div>
       </div>
+
+      {/* 2FA Setup Modal */}
+      {show2FA && (
+        <Suspense fallback={null}>
+          <TwoFactorSetupLazy onClose={() => setShow2FA(false)} />
+        </Suspense>
+      )}
     </div>
   );
 };
