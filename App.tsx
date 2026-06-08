@@ -38,33 +38,53 @@ const App: React.FC = () => {
     const tenant    = params.get('tenant');
     const configure = params.get('configure');
 
-    // ?tenant=mudhol&configure=1 → store permanently on this device (QR scan)
+    const isCapacitorApp = !!(window as any).Capacitor ||
+      navigator.userAgent.includes('RoyalERP-Android') ||
+      navigator.userAgent.includes('RoyalERP-iOS');
+
+    // ── Case 1: QR configure URL (?tenant=mudhol&configure=1) ────────────────
     if (tenant && configure === '1') {
       localStorage.setItem('royal_app_tenant', tenant);
-      localStorage.setItem('royal_jwt', ''); // clear old JWT so fresh login required
+      localStorage.setItem('royal_jwt', '');  // force fresh login
       window.history.replaceState({}, '', `/?tenant=${tenant}`);
       window.location.reload();
       return;
     }
 
-    // ?tenant=mudhol (explicit URL) → remember for this session
-    if (tenant && configure !== '1') {
+    // ── Case 2: Explicit tenant URL (?tenant=mudhol) ─────────────────────────
+    if (tenant) {
+      // Keep JWT if it matches this tenant, clear if switching tenants
+      const existingJwt = localStorage.getItem('royal_jwt') || '';
+      if (existingJwt) {
+        try {
+          const payload = JSON.parse(atob(existingJwt.split('.')[1]));
+          if (payload.tenantId && !payload.tenantId.startsWith(tenant)) {
+            localStorage.setItem('royal_jwt', ''); // wrong tenant JWT, clear it
+          }
+        } catch {}
+      }
       localStorage.setItem('royal_app_tenant', tenant);
+      return;
     }
 
-    // ── Auto-restore stored tenant — ONLY on Capacitor mobile app ────────────
-    // NEVER on desktop/browser — to protect the default admin login at base URL
-    const isCapacitorApp = !!(window as any).Capacitor ||
-      navigator.userAgent.includes('RoyalERP-Android') ||
-      navigator.userAgent.includes('RoyalERP-iOS');
-
-    if (isCapacitorApp) {
-      const storedTenant = localStorage.getItem('royal_app_tenant');
-      if (storedTenant && !tenant) {
-        window.history.replaceState({}, '', `/?tenant=${storedTenant}`);
+    // ── Case 3: BASE URL (no ?tenant) ────────────────────────────────────────
+    // ALWAYS clear any tenant JWT so the default admin sees their own data
+    // This protects admin@royal.com from accidentally showing another shop's data
+    if (!tenant) {
+      if (isCapacitorApp) {
+        // Mobile app: restore stored tenant (QR configured)
+        const storedTenant = localStorage.getItem('royal_app_tenant');
+        if (storedTenant) {
+          window.history.replaceState({}, '', `/?tenant=${storedTenant}`);
+          window.location.reload();
+        }
+      } else {
+        // Browser at base URL: ALWAYS wipe tenant context
+        // so admin@royal.com always sees full default data
+        localStorage.removeItem('royal_app_tenant');
+        localStorage.setItem('royal_jwt', '');  // clear tenant JWT
       }
     }
-    // On browser: base URL always shows the default admin shop — never redirects
   }, []);
 
   // Login Bypass: Initializing as false

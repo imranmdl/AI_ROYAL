@@ -262,7 +262,17 @@ class DataStore {
     if (this.isSyncing && !force) return;
     try {
       this.isSyncing = true; this.syncError = null;
-      const jwt = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+      const isCapacitorApp = !!(window as any).Capacitor ||
+        navigator.userAgent.includes('RoyalERP-Android') ||
+        navigator.userAgent.includes('RoyalERP-iOS');
+      const currentUrlTenant = typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('tenant') || ''
+        : '';
+      // Only send JWT when actually on a tenant URL or running inside the mobile app
+      // Never send JWT on the default base URL — would filter to wrong tenant
+      const jwt = (currentUrlTenant || isCapacitorApp)
+        ? (typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '')
+        : '';
       const headers: Record<string,string> = { 'Accept-Encoding': 'gzip' };
       if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
       const r = await fetch(this.getApiUrl(`${SYNC_URL}?since=${force ? 0 : this.lastUpdated}&pulse=${Date.now()}`),
@@ -404,7 +414,12 @@ class DataStore {
       return u;
     }
 
-    // ── Single-tenant path: existing flow ────────────────────────────────
+    // ── Single-tenant path: existing flow (admin@royal.com at base URL) ─────
+    // Clear any tenant JWT that might be leftover from testing another shop
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('royal_jwt', '');
+      localStorage.removeItem('royal_app_tenant');
+    }
     try {
       const r = await fetch(this.getApiUrl('/api/users'), { cache: 'no-store' });
       if (r.ok) {

@@ -1052,6 +1052,17 @@ const SubscriptionPortal: React.FC<{ onClose?: () => void }> = ({ onClose }) => 
                 </div>
               )}
 
+              {/* Warning for admin */}
+              <div className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-left">
+                <div className="font-black text-rose-700 text-sm flex items-center gap-2">
+                  <i className="fas fa-exclamation-triangle text-xs"></i>
+                  Do NOT scan this on your admin browser
+                </div>
+                <div className="text-[10px] font-bold text-rose-600 mt-1">
+                  This QR is for the <b>shop staff's phone</b> only. Scanning it on your admin browser will switch it to that shop's account.
+                </div>
+              </div>
+
               {/* Instructions */}
               <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-left space-y-2">
                 <div className="font-black text-amber-800 text-sm">How to use this QR:</div>
