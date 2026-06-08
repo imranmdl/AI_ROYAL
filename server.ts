@@ -2653,6 +2653,69 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     }
   });
 
+  /**
+   * GET /api/admin/diagnose?key=test
+   * Shows exact DB state — what's in each tenant's data
+   */
+  app.get('/api/admin/diagnose', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
+    try {
+      const result: any = { dbHealthy, inMemoryProductCount: inMemoryDb?.products?.length || 0 };
+      if (pool && dbHealthy) {
+        const [spRows]: any = await pool.query('SELECT id, tenant_id, updated_at, LENGTH(payload) as payload_size FROM system_persistence ORDER BY updated_at DESC');
+        result.system_persistence = spRows;
+        const [prodCounts]: any = await pool.query('SELECT tenant_id, COUNT(*) as count FROM products GROUP BY tenant_id');
+        result.product_counts_by_tenant = prodCounts;
+        const [saleCounts]: any = await pool.query('SELECT tenant_id, COUNT(*) as count FROM sales GROUP BY tenant_id');
+        result.sale_counts_by_tenant = saleCounts;
+        const [tenants]: any = await pool.query('SELECT id, name, slug FROM tenants');
+        result.tenants = tenants;
+      }
+      result.inMemory = {
+        products: inMemoryDb?.products?.length || 0,
+        sales: inMemoryDb?.sales?.length || 0,
+        users: inMemoryDb?.users?.length || 0,
+      };
+      res.json(result);
+    } catch(e:any) { res.status(500).json({ error: e.message }); }
+  });
+
+  /**
+   * POST /api/admin/fix-default-tenant?key=test
+   * Fixes the system_persistence tenant_id for default shop
+   * and force-reloads inMemoryDb from DB
+   */
+  app.post('/api/admin/fix-default-tenant', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
+    try {
+      if (pool && dbHealthy) {
+        // Step 1: Fix system_persistence — ensure global_master belongs to default
+        await pool.query(
+          'UPDATE system_persistence SET tenant_id = "default" WHERE id = "global_master"'
+        );
+        // Step 2: Fix products — anything with NULL or empty tenant_id → default
+        await pool.query(
+          'UPDATE products SET tenant_id = "default" WHERE tenant_id IS NULL OR tenant_id = ""'
+        );
+        await pool.query(
+          'UPDATE sales SET tenant_id = "default" WHERE tenant_id IS NULL OR tenant_id = ""'
+        );
+        await pool.query(
+          'UPDATE purchases SET tenant_id = "default" WHERE tenant_id IS NULL OR tenant_id = ""'
+        );
+        await pool.query(
+          'UPDATE users SET tenant_id = "default" WHERE tenant_id IS NULL OR tenant_id = ""'
+        );
+        // Step 3: Force reload inMemoryDb from DB
+        inMemoryDb = null as any;
+        await readFromDb();
+        res.json({ success: true, message: 'Default tenant fixed and inMemoryDb reloaded', products: inMemoryDb?.products?.length || 0 });
+      } else {
+        res.json({ success: false, message: 'DB not connected' });
+      }
+    } catch(e:any) { res.status(500).json({ error: e.message }); }
+  });
+
   /** GET /api/superadmin/ping — no auth needed, confirms tenant API is active */
   app.get('/api/superadmin/ping', (_req: Request, res: Response) => {
     res.json({

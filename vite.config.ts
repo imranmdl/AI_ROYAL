@@ -7,14 +7,18 @@ export default defineConfig({
     port: 5173,
     host: '0.0.0.0',
     proxy: {
-      // Proxy all /api calls to the Express backend
-      '/api': {
-        target: 'http://localhost:3000',
-        changeOrigin: true,
-      }
+      '/api': { target: 'http://localhost:3000', changeOrigin: true }
     }
   },
   build: {
     outDir: 'dist',
+    // Cache buster — forces browser to load fresh JS after each deploy
+    rollupOptions: {
+      output: {
+        entryFileNames: `assets/[name]-[hash]-${Date.now()}.js`,
+        chunkFileNames: `assets/[name]-[hash].js`,
+        assetFileNames: `assets/[name]-[hash].[ext]`
+      }
+    }
   }
 });
