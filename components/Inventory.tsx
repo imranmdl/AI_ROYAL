@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import { store } from '../store';
 import StockLedger from './StockLedger';
 import { Product, Purchase, PurchaseItem, Category, UnitType, UserRole, TransportCostType, TransportBasis, TileGrade, VendorOrder, Slab } from '../types';
@@ -25,41 +26,63 @@ const ActionMenu: React.FC<{
   showInGallery:boolean; status:string;
 }> = ({ currentRole, onLedger, onAddStock, onHistory, onAdjust, onQR, onGallery, onStatus, onEdit, showInGallery, status }) => {
   const [open, setOpen] = React.useState(false);
-  const ref = React.useRef<HTMLDivElement>(null);
+  const [pos,  setPos]  = React.useState({ top: 0, right: 0 });
+  const btnRef = React.useRef<HTMLButtonElement>(null);
+
+  const toggle = () => {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    }
+    setOpen(v => !v);
+  };
+
   React.useEffect(() => {
-    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (btnRef.current && !btnRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+
   const isAdmin = currentRole === UserRole.ADMIN;
   const actions = [
-    { label:'📊 Stock Ledger',  fn: onLedger   },
-    { label:'➕ Add Inward',    fn: onAddStock },
-    { label:'🕑 History',       fn: onHistory  },
-    { label:'📦 Adjust Stock',  fn: onAdjust   },
-    { label:'📷 QR Code',       fn: onQR       },
+    { label:'📊 Stock Ledger',  fn: onLedger,   color: 'text-indigo-700 hover:bg-indigo-50' },
+    { label:'➕ Add Inward',    fn: onAddStock, color: 'text-emerald-700 hover:bg-emerald-50' },
+    { label:'🕑 History',       fn: onHistory,  color: 'text-blue-700 hover:bg-blue-50' },
+    { label:'📦 Adjust Stock',  fn: onAdjust,   color: 'text-amber-700 hover:bg-amber-50' },
+    { label:'📷 QR Code',       fn: onQR,       color: 'text-slate-700 hover:bg-slate-50' },
     ...(isAdmin ? [
-      { label: showInGallery ? '👁 Hide Gallery' : '👁 Show Gallery', fn: onGallery },
-      { label: status === 'Suspended' ? '▶ Activate' : '⏸ Suspend',  fn: onStatus  },
-      { label:'✏️ Edit Product', fn: onEdit },
+      { label: showInGallery ? '👁 Hide Gallery' : '👁 Show Gallery', fn: onGallery, color: 'text-purple-700 hover:bg-purple-50' },
+      { label: status === 'Suspended' ? '▶ Activate' : '⏸ Suspend',  fn: onStatus,  color: status === 'Suspended' ? 'text-emerald-700 hover:bg-emerald-50' : 'text-rose-600 hover:bg-rose-50' },
+      { label:'✏️ Edit Product', fn: onEdit, color: 'text-slate-700 hover:bg-slate-50' },
     ] : []),
   ];
+
   return (
-    <div ref={ref} className="relative flex justify-center">
-      <button onClick={() => setOpen(v => !v)}
-        className={`w-9 h-9 rounded-xl border transition-all flex items-center justify-center font-black text-base ${open ? 'bg-slate-900 text-white border-slate-900' : 'bg-white border-slate-200 text-slate-500 hover:border-slate-400 hover:text-slate-900'}`}
-        title="Actions">⋯</button>
-      {open && (
-        <div className="absolute right-0 top-10 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 py-2 min-w-[160px]">
-          {actions.map(a => (
+    <>
+      <button ref={btnRef} onClick={toggle}
+        className={`w-9 h-9 rounded-xl border-2 transition-all flex items-center justify-center font-black text-lg leading-none ${open ? 'bg-slate-900 text-white border-slate-900 shadow-lg' : 'bg-white border-slate-200 text-slate-500 hover:border-amber-400 hover:text-slate-900'}`}
+        title="Actions">
+        ···
+      </button>
+
+      {open && typeof document !== 'undefined' && ReactDOM.createPortal(
+        <div
+          style={{ position:'fixed', top: pos.top, right: pos.right, zIndex: 9999 }}
+          className="bg-white border border-slate-200 rounded-2xl shadow-2xl py-1.5 min-w-[180px]"
+          onMouseDown={e => e.stopPropagation()}>
+          {actions.map((a, i) => (
             <button key={a.label} onClick={() => { a.fn(); setOpen(false); }}
-              className="w-full text-left px-4 py-2.5 text-[11px] font-bold text-slate-700 hover:bg-amber-50 hover:text-amber-800 transition-colors">
+              className={`w-full text-left px-4 py-2.5 text-xs font-bold transition-colors ${a.color} ${i > 0 && actions[i-1].color !== a.color ? 'border-t border-slate-100' : ''}`}>
               {a.label}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   );
 };
 
