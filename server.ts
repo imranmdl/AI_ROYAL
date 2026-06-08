@@ -730,14 +730,14 @@ async function startServer() {
         [galleryLeadsRows],
         [usersRows]
       ]: any = await Promise.all([
-        pool.query('SELECT payload FROM system_persistence WHERE id = "global_master"'),
-        pool.query('SELECT id, name, category, brand, stock_boxes, stock_loose, selling_price, status, data, updated_at FROM products'),
-        pool.query('SELECT id, invoice_no, customer_name, date, total_amount, data, updated_at FROM sales'),
-        pool.query('SELECT id, vendor_name, invoice_no, date, data, updated_at FROM purchases'),
-        pool.query('SELECT id, order_no, vendor_name, status, payment_status, data, updated_at FROM vendor_orders'),
-        pool.query('SELECT id, product_type, unit_type, rate, per_unit, is_active, updated_at FROM loading_charges'),
-        pool.query('SELECT id, customer_name, customer_mobile, status, `timestamp`, data, updated_at FROM gallery_leads'),
-        pool.query('SELECT id, name, email, role, status, data, updated_at FROM users')
+        pool.query('SELECT payload FROM system_persistence WHERE id = "global_master" AND (tenant_id IS NULL OR tenant_id = "" OR tenant_id = "default") ORDER BY updated_at DESC LIMIT 1'),
+        pool.query('SELECT id, name, category, brand, stock_boxes, stock_loose, selling_price, status, data, updated_at FROM products WHERE (tenant_id IS NULL OR tenant_id = "" OR tenant_id = "default")'),
+        pool.query('SELECT id, invoice_no, customer_name, date, total_amount, data, updated_at FROM sales WHERE (tenant_id IS NULL OR tenant_id = "" OR tenant_id = "default")'),
+        pool.query('SELECT id, vendor_name, invoice_no, date, data, updated_at FROM purchases WHERE (tenant_id IS NULL OR tenant_id = "" OR tenant_id = "default")'),
+        pool.query('SELECT id, order_no, vendor_name, status, payment_status, data, updated_at FROM vendor_orders WHERE (tenant_id IS NULL OR tenant_id = "" OR tenant_id = "default")'),
+        pool.query('SELECT id, product_type, unit_type, rate, per_unit, is_active, updated_at FROM loading_charges WHERE (tenant_id IS NULL OR tenant_id = "" OR tenant_id = "default")'),
+        pool.query('SELECT id, customer_name, customer_mobile, status, `timestamp`, data, updated_at FROM gallery_leads WHERE (tenant_id IS NULL OR tenant_id = "" OR tenant_id = "default")'),
+        pool.query('SELECT id, name, email, role, status, data, updated_at FROM users WHERE (tenant_id IS NULL OR tenant_id = "" OR tenant_id = "default")')
       ]);
 
       let baseData = metaRows.length > 0 ? JSON.parse(metaRows[0].payload) : getInitialData();
@@ -883,7 +883,7 @@ async function writeToDb(data: any) {
     const jsonStr = JSON.stringify(metaData);
     const now = Date.now();
     await pool.query(
-      'INSERT INTO system_persistence (id, payload, updated_at) VALUES ("global_master", ?, ?) ON DUPLICATE KEY UPDATE payload = ?, updated_at = ?',
+      'INSERT INTO system_persistence (id, tenant_id, payload, updated_at) VALUES ("global_master", "default", ?, ?) ON DUPLICATE KEY UPDATE payload = ?, updated_at = ?',
       [jsonStr, now, jsonStr, now]
     );
     
@@ -2147,7 +2147,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
             lastUpdated: Date.now(),
           });
           await conn.query(
-            'INSERT INTO system_persistence (id, payload, updated_at) VALUES ("global_master", ?, ?) ' +
+            'INSERT INTO system_persistence (id, tenant_id, payload, updated_at) VALUES ("global_master", "default", ?, ?) ' +
             'ON DUPLICATE KEY UPDATE payload = ?, updated_at = ?',
             [cleanPayload, Date.now(), cleanPayload, Date.now()]
           );
@@ -2748,9 +2748,11 @@ app.post('/api/sync', async (req: Request, res: Response) => {
             loadingCharges:[], giftInventory:[], giftIssuances:[], incentiveEntries:[],
             lastUpdated: now,
           };
+          // Each tenant gets their own unique persistence row
+          // MUST use tenant-specific id to avoid overwriting the default shop's 'global_master'
           await conn.query(
-            'INSERT INTO system_persistence (id,tenant_id,payload,updated_at) VALUES (?,?,?,?)',
-            [`global_master`,tenantId,JSON.stringify(initialData),now]
+            'INSERT INTO system_persistence (id,tenant_id,payload,updated_at) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE payload=VALUES(payload), updated_at=VALUES(updated_at)',
+            [`global_master_${tenantId}`,tenantId,JSON.stringify(initialData),now]
           );
           await conn.query(
             'INSERT INTO users (id,tenant_id,name,email,role,status,data,updated_at) VALUES (?,?,?,?,?,?,?,?)',
