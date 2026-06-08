@@ -199,6 +199,29 @@ class DataStore {
   public isInitialSyncDone2 = false; // alias kept for compat
 
   private async boot() {
+    // ── Tenant guard: runs BEFORE first sync ─────────────────────────────────
+    // If URL has no ?tenant= (default admin at base URL):
+    //   → wipe any leftover tenant JWT so server returns default data
+    // This must happen before refreshFromServer() is called
+    const urlTenant = new URLSearchParams(window.location.search).get('tenant') || '';
+    const storedJwt = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+
+    if (!urlTenant && storedJwt) {
+      // Decode JWT without verifying — just check which tenant it was for
+      try {
+        const payload = JSON.parse(atob(storedJwt.split('.')[1]));
+        if (payload.tenantId && payload.tenantId !== 'default') {
+          // JWT is for a different tenant — clear it so default data is returned
+          console.log('[STORE] Clearing cross-tenant JWT:', payload.tenantId, '→ loading default shop data');
+          localStorage.setItem('royal_jwt', '');
+          localStorage.removeItem('royal_erp_cache'); // also clear stale cache
+          this.products = []; this.sales = []; this.quotations = [];
+          this.purchases = []; this.lastUpdated = 0;
+          this.notify();
+        }
+      } catch { /* invalid JWT, clear it anyway */ localStorage.setItem('royal_jwt', ''); }
+    }
+
     this.checkDbHealth();
     const useDelta = this.lastUpdated > 0 && this.products.length > 0;
     this.refreshFromServer(!useDelta).then(() => { this.isInitialSyncDone = true; this.notify(); });

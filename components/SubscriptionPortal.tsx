@@ -154,9 +154,32 @@ const SubscriptionPortal: React.FC<{ onClose?: () => void }> = ({ onClose }) => 
       .then(r => r.json())
       .then(data => {
         const subs: Record<string,Subscription> = load('royal_subscriptions', {});
-        setTenants((data.tenants||[]).map((t: Tenant) => ({
-          ...t, sub: subs[t.id] || defaultSub(t.id)
-        })));
+
+        // Always include the default shop (the original shop at base URL)
+        const defaultShop: Tenant = {
+          id: 'default', name: 'Default Shop (Owner)', slug: 'default',
+          owner_email: 'admin@royal.com', owner_phone: '',
+          status: 'active', created_at: 0,
+        };
+        const defaultSubs: Record<string,Subscription> = {
+          default: subs['default'] || {
+            tenantId: 'default', planId: 'pro', status: 'active',
+            billingCycle: 'yearly', startDate: '2024-01-01', endDate: '2099-12-31',
+            featureOverrides: {}, autoRenew: true,
+            notes: 'Owner shop — full access permanently',
+          },
+        };
+
+        const allTenants = [
+          { ...defaultShop, sub: defaultSubs['default'] },
+          ...(data.tenants||[]).map((t: Tenant) => ({ ...t, sub: subs[t.id] || defaultSub(t.id) })),
+        ];
+        setTenants(allTenants);
+        // Save default sub if not already saved
+        if (!subs['default']) {
+          const updated = { ...subs, ...defaultSubs };
+          save('royal_subscriptions', updated);
+        }
       })
       .catch(()=>{})
       .finally(()=>setLoading(false));
