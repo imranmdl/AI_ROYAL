@@ -166,6 +166,43 @@ const UserManagement: React.FC = () => {
                    </div>
                    <div className="flex flex-col gap-3 z-10 w-full md:w-64">
                       <button onClick={() => { setFormUser(selectedUser); setShowEditUser(true); }} className="w-full py-3.5 bg-white text-slate-900 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all shadow-xl">Modify Policy</button>
+
+                      {/* 2FA Admin Reset — shown only when user has 2FA enabled */}
+                      {(selectedUser as any).twoFactorEnabled ? (
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`Reset 2FA for ${selectedUser.name}?\n\nThis will disable their two-factor authentication. They can set it up again from Profile Settings.\n\nUse this when they have lost access to their authenticator app.`)) return;
+                            try {
+                              const r = await fetch(`${store.getApiUrl('/api/auth/2fa/admin-reset')}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ userId: selectedUser.id, adminId: store.currentUser?.id }),
+                              });
+                              const d = await r.json();
+                              if (r.ok) {
+                                // Update local state
+                                const updated = store.users.map(u => u.id === selectedUser.id
+                                  ? { ...u, twoFactorEnabled: false, totpSecret: '' } as any
+                                  : u);
+                                (store as any).users = updated;
+                                store.save();
+                                setSelectedUser({ ...selectedUser, twoFactorEnabled: false, totpSecret: '' } as any);
+                                alert(`✓ 2FA has been reset for ${selectedUser.name}. They can now log in with password only and re-enable 2FA from Profile Settings.`);
+                              } else {
+                                alert('Error: ' + (d.error || 'Reset failed'));
+                              }
+                            } catch(e: any) { alert('Network error: ' + e.message); }
+                          }}
+                          className="w-full py-3.5 bg-amber-50 text-amber-700 border-2 border-amber-200 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-amber-100 transition-all flex items-center justify-center gap-2">
+                          <i className="fas fa-shield-alt text-[10px]"></i>
+                          Reset 2FA (Lost Phone)
+                        </button>
+                      ) : (
+                        <div className="w-full py-3 text-center text-[9px] font-bold text-slate-400 bg-slate-50 rounded-2xl border border-slate-100">
+                          <i className="fas fa-shield-alt mr-1"></i>
+                          2FA not enabled for this user
+                        </div>
+                      )}
                    </div>
                 </div>
 

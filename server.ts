@@ -2819,6 +2819,42 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  /** POST /api/auth/2fa/admin-reset — admin force-disables 2FA for a user (lost phone scenario) */
+  app.post('/api/auth/2fa/admin-reset', async (req: Request, res: Response) => {
+    const { userId, adminId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    // Only allow if requester is admin of the same tenant
+    const tenantId = req.tenantId || 'default';
+    try {
+      let adminOk = false;
+      if (pool && dbHealthy) {
+        const [adminRows]: any = await pool.query(
+          'SELECT id, role FROM users WHERE id=? AND (tenant_id=? OR tenant_id IS NULL)',
+          [adminId, tenantId]
+        );
+        adminOk = adminRows.length > 0 && ['Admin','admin'].includes(adminRows[0].role);
+      } else {
+        const admin = inMemoryDb?.users?.find((u: any) => u.id === adminId);
+        adminOk = admin && ['Admin','admin'].includes(admin.role);
+      }
+      if (!adminOk) return res.status(403).json({ error: 'Only admin users can reset 2FA' });
+
+      if (pool && dbHealthy) {
+        const [rows]: any = await pool.query('SELECT data FROM users WHERE id=?', [userId]);
+        if (rows.length) {
+          const d = parseData(rows[0].data);
+          delete d.totpSecret; d.twoFactorEnabled = false;
+          await pool.query('UPDATE users SET data=?, updated_at=? WHERE id=?', [JSON.stringify(d), Date.now(), userId]);
+        }
+      } else {
+        const u = inMemoryDb?.users?.find((x: any) => x.id === userId);
+        if (u) { delete (u as any).totpSecret; (u as any).twoFactorEnabled = false; }
+      }
+      console.log(`[2FA] Admin ${adminId} reset 2FA for user ${userId}`);
+      res.json({ success: true, message: '2FA has been disabled for this user' });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   /** POST /api/auth/2fa/check — check if login OTP is valid (called after password step) */
   app.post('/api/auth/2fa/check', async (req: Request, res: Response) => {
     const { userId, token } = req.body;
