@@ -60,8 +60,12 @@ const TwoFactorSetup: React.FC<Props> = ({ onClose }) => {
       });
       const d = await r.json();
       if (!r.ok) { setError(d.error); return; }
-      // Update local user object
-      store.updateCurrentUser({ twoFactorEnabled: true, totpSecret: secret } as any);
+      // Update local user object so UI reflects change immediately
+      if (store.currentUser) {
+        (store.currentUser as any).twoFactorEnabled = true;
+        (store.currentUser as any).totpSecret = secret;
+        store.saveSettings(store.settings); // trigger re-render via notify
+      }
       setMsg('✓ Two-factor authentication is now active on your account');
       setStep('done');
     } catch (e: any) { setError(e.message); }
@@ -78,7 +82,11 @@ const TwoFactorSetup: React.FC<Props> = ({ onClose }) => {
       });
       const d = await r.json();
       if (!r.ok) { setError(d.error); return; }
-      store.updateCurrentUser({ twoFactorEnabled: false, totpSecret: '' } as any);
+      if (store.currentUser) {
+        (store.currentUser as any).twoFactorEnabled = false;
+        (store.currentUser as any).totpSecret = '';
+        store.saveSettings(store.settings);
+      }
       setMsg('Two-factor authentication has been disabled');
       setStep('done');
     } catch (e: any) { setError(e.message); }
