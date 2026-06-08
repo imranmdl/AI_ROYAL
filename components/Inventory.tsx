@@ -1871,14 +1871,14 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
           </div>
         </div>
       )}
+      {/* Stock Ledger Modal */}
+      {ledgerProduct && (
+        <StockLedger
+          product={ledgerProduct}
+          onClose={() => setLedgerProduct(null)}
+        />
+      )}
     </div>
-    {/* Stock Ledger Modal */}
-    {ledgerProduct && (
-      <StockLedger
-        product={ledgerProduct}
-        onClose={() => setLedgerProduct(null)}
-      />
-    )}
   );
 };
 
