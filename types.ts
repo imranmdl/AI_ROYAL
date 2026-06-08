@@ -159,13 +159,24 @@ export interface DamageRecord {
 }
 
 export interface PurchaseRecord {
-  id: string;
-  date: string;
-  vendorName: string;
-  vehicleNumber: string;
+  id:           string;
+  date:         string;
+  vendorName:   string;
+  vehicleNumber:string;
   gstInvoiceNo: string;
-  qtyBoxes: number;
-  godownId: string;
+  qtyBoxes:     number;
+  qtyLoose?:    number;
+  godownId:     string;
+  // Cost fields (filled from purchase/vendor order)
+  purchaseRate?:    number;   // ₹ per box/unit (before transport)
+  transportShare?:  number;   // ₹ per unit transport allocation
+  otherCharges?:    number;   // ₹ per unit other costs
+  landedCost?:      number;   // total landed ₹ per unit
+  totalValue?:      number;   // qtyBoxes × landedCost
+  vendorOrderId?:   string;   // link to VendorOrder
+  vendorPhone?:     string;
+  vendorGst?:       string;
+  invoiceNo?:       string;
 }
 
 export interface StockAdjustmentEntry {

@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { store } from '../store';
+import StockLedger from './StockLedger';
 import { Product, Purchase, PurchaseItem, Category, UnitType, UserRole, TransportCostType, TransportBasis, TileGrade, VendorOrder, Slab } from '../types';
 import QRCode from 'qrcode';
 import KadapaManager from './KadapaManager';
@@ -23,6 +24,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
   const [showAddStock, setShowAddStock] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showImportExport, setShowImportExport] = useState(false);
+  const [ledgerProduct, setLedgerProduct]         = useState<Product | null>(null);
   const [editProduct, setEditProduct] = useState<Product | null>(null);
   const [showGallery, setShowGallery] = useState<Product | null>(null);
   const [showQR, setShowQR] = useState<Product | null>(null);
@@ -1870,6 +1872,13 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
         </div>
       )}
     </div>
+    {/* Stock Ledger Modal */}
+    {ledgerProduct && (
+      <StockLedger
+        product={ledgerProduct}
+        onClose={() => setLedgerProduct(null)}
+      />
+    )}
   );
 };
 

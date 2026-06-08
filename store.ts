@@ -580,7 +580,31 @@ class DataStore {
 
   addPurchase(p: Purchase) {
     this.purchases.push(p); this.persistPurchase(p);
-    p.items.forEach(it => { this.adjustStock(it.productId, p.godownId, it.qtyBoxes, 0, 'Purchase', `Vendor: ${p.vendorName}`, p.date, p.vendorOrderId); this.products = this.products.map(prod => { if (prod.id !== it.productId) return prod; const record: PurchaseRecord = { id: p.id, date: p.date, vendorName: p.vendorName, vehicleNumber: p.vehicleNumber, gstInvoiceNo: p.gstInvoiceNo, qtyBoxes: it.qtyBoxes, godownId: p.godownId }; const updated = { ...prod, purchaseHistory: [record, ...(prod.purchaseHistory || [])] }; this.persistProduct(updated); return updated; }); });
+    p.items.forEach(it => {
+      this.adjustStock(it.productId, p.godownId, it.qtyBoxes, 0, 'Purchase', `Vendor: ${p.vendorName}`, p.date, p.vendorOrderId);
+      this.products = this.products.map(prod => {
+        if (prod.id !== it.productId) return prod;
+        const landedCost = prod.totalCostPerUnit || it.landedCost || 0;
+        const record: PurchaseRecord = {
+          id:            p.id,
+          date:          p.date,
+          vendorName:    p.vendorName,
+          vehicleNumber: p.vehicleNumber,
+          gstInvoiceNo:  p.gstInvoiceNo,
+          qtyBoxes:      it.qtyBoxes,
+          godownId:      p.godownId,
+          vendorOrderId: p.vendorOrderId,
+          purchaseRate:  it.purchaseRate || 0,
+          transportShare:it.transportShare || 0,
+          landedCost,
+          totalValue:    (it.qtyBoxes || 0) * landedCost,
+          invoiceNo:     p.gstInvoiceNo,
+        };
+        const updated = { ...prod, purchaseHistory: [record, ...(prod.purchaseHistory || [])] };
+        this.persistProduct(updated);
+        return updated;
+      });
+    });
   }
 
   private _markSlabsSold(items: any[], isSold: boolean) {
