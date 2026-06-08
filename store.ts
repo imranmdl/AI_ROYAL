@@ -145,7 +145,9 @@ class DataStore {
         galleryLeads: this.galleryLeads, lastUpdated: this.lastUpdated, settings: this.settings,
       };
       // Always write — even empty state must overwrite stale cache after a clear
-      localStorage.setItem('royal_erp_cache', JSON.stringify(data));
+      // Tag cache with current tenant so it's rejected if tenant changes
+      const _tenant = new URLSearchParams(window.location.search).get('tenant') || 'default';
+      localStorage.setItem('royal_erp_cache', JSON.stringify({ ...data, _tenant }));
     } catch (e) { console.warn('[STORE] localStorage write failed:', e); }
   }
   private loadFromLocalStorage() {
@@ -153,6 +155,17 @@ class DataStore {
       const cached = localStorage.getItem('royal_erp_cache');
       if (!cached) return;
       const data = JSON.parse(cached);
+
+      // ── Tenant safety check ───────────────────────────────────────────────
+      // If cache was saved for a different tenant, discard it completely
+      // This prevents mudhol's ₹30.90L showing on the default admin's screen
+      const currentTenant = new URLSearchParams(window.location.search).get('tenant') || 'default';
+      const cachedTenant  = data._tenant || 'default';
+      if (cachedTenant !== currentTenant) {
+        console.log(`[STORE] Cache tenant mismatch (cached=${cachedTenant}, current=${currentTenant}) — discarding cache`);
+        localStorage.removeItem('royal_erp_cache');
+        return; // start fresh — boot() will fetch from server
+      }
       // Preserve passwords from cache — they were set during sync from DB (data JSON column contains password)
       // Fall back to in-memory defaults only for users not in cache at all
       const cachedUsers = data.users || [];
