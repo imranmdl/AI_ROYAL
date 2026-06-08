@@ -203,7 +203,8 @@ class DataStore {
     // If URL has no ?tenant= (default admin at base URL):
     //   → wipe any leftover tenant JWT so server returns default data
     // This must happen before refreshFromServer() is called
-    const urlTenant = new URLSearchParams(window.location.search).get('tenant') || '';
+    const rawUrlTenant = new URLSearchParams(window.location.search).get('tenant') || '';
+    const urlTenant = rawUrlTenant === 'default' ? '' : rawUrlTenant; // 'default' = no tenant
     const storedJwt = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
 
     if (!urlTenant && storedJwt) {
@@ -419,8 +420,11 @@ class DataStore {
       ? new URLSearchParams(window.location.search).get('tenant') || ''
       : '';
 
+    // 'default' and '' both use the original single-tenant path (admin@royal.com)
+    const isMultiTenant = tenantSlug !== '' && tenantSlug !== 'default';
+
     // ── Multi-tenant path: use /api/tenant/login ──────────────────────────
-    if (tenantSlug) {
+    if (isMultiTenant) {
       const r = await fetch(this.getApiUrl('/api/tenant/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

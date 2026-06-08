@@ -2837,9 +2837,12 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     const { email, password, tenantSlug } = req.body;
     console.log('[LOGIN] attempt — email:', email, '| slug:', tenantSlug, '| dbHealthy:', dbHealthy);
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+
+    // 'default' slug means the original single-tenant shop — use that path
+    const effectiveSlug = tenantSlug === 'default' ? '' : (tenantSlug || '');
     try {
       let user: any = null;
-      let tenantId  = tenantSlug ? '' : (process.env.DEFAULT_TENANT_ID || 'default');
+      let tenantId  = effectiveSlug ? '' : (process.env.DEFAULT_TENANT_ID || 'default');
 
       if (pool && dbHealthy) {
         // ── Step 1: resolve tenantId from slug/id ──────────────────────────
