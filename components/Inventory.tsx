@@ -16,6 +16,53 @@ interface InventoryProps {
   setActiveTab?: (tab: string) => void;
 }
 
+// ── Collapsed action menu ─────────────────────────────────────────────────────
+const ActionMenu: React.FC<{
+  product: any; currentRole: string;
+  onLedger:()=>void; onAddStock:()=>void; onHistory:()=>void;
+  onAdjust:()=>void; onQR:()=>void; onGallery:()=>void;
+  onStatus:()=>void; onEdit:()=>void;
+  showInGallery:boolean; status:string;
+}> = ({ currentRole, onLedger, onAddStock, onHistory, onAdjust, onQR, onGallery, onStatus, onEdit, showInGallery, status }) => {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+  const isAdmin = currentRole === UserRole.ADMIN;
+  const actions = [
+    { label:'📊 Stock Ledger',  fn: onLedger   },
+    { label:'➕ Add Inward',    fn: onAddStock },
+    { label:'🕑 History',       fn: onHistory  },
+    { label:'📦 Adjust Stock',  fn: onAdjust   },
+    { label:'📷 QR Code',       fn: onQR       },
+    ...(isAdmin ? [
+      { label: showInGallery ? '👁 Hide Gallery' : '👁 Show Gallery', fn: onGallery },
+      { label: status === 'Suspended' ? '▶ Activate' : '⏸ Suspend',  fn: onStatus  },
+      { label:'✏️ Edit Product', fn: onEdit },
+    ] : []),
+  ];
+  return (
+    <div ref={ref} className="relative flex justify-center">
+      <button onClick={() => setOpen(v => !v)}
+        className={`w-9 h-9 rounded-xl border transition-all flex items-center justify-center font-black text-base ${open ? 'bg-slate-900 text-white border-slate-900' : 'bg-white border-slate-200 text-slate-500 hover:border-slate-400 hover:text-slate-900'}`}
+        title="Actions">⋯</button>
+      {open && (
+        <div className="absolute right-0 top-10 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 py-2 min-w-[160px]">
+          {actions.map(a => (
+            <button key={a.label} onClick={() => { a.fn(); setOpen(false); }}
+              className="w-full text-left px-4 py-2.5 text-[11px] font-bold text-slate-700 hover:bg-amber-50 hover:text-amber-800 transition-colors">
+              {a.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
   const [products, setProducts] = useState<Product[]>(store.products);
   const [predefinedSizes, setPredefinedSizes] = useState<string[]>(store.settings.predefinedSizes || []);
@@ -776,75 +823,29 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                           <span className="bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full text-[8px] font-black uppercase border border-emerald-100">Healthy</span>
                        )}
                     </td>
-                    <td className="px-8 py-6 sticky right-0 bg-white z-10 shadow-[-10px_0_15px_-3px_rgba(0,0,0,0.05)] group-hover:bg-slate-50 transition-colors">
-                      <div className="flex justify-center gap-2 flex-wrap min-w-[150px]">
-                        <button 
-                          onClick={() => {
-                            if (!newPurchase.items) return;
-                            const existingItemIdx = newPurchase.items.findIndex(it => it.productId === p.id);
-                            let nextItems = [...newPurchase.items];
-                            
-                            if (existingItemIdx === -1) {
-                              nextItems.push({
-                                productId: p.id,
-                                qtyBoxes: 1,
-                                rate: p.purchasePrice || 0
-                              });
-                            }
-
-                            setNewPurchase({
-                              ...newPurchase,
-                              vendorName: p.lastPurchaseVendor || newPurchase.vendorName || '',
-                              vehicleNumber: p.lastPurchaseVehicle || newPurchase.vehicleNumber || '',
-                              items: nextItems
-                            });
-                            setShowAddStock(true);
-                          }} 
-                          className="w-10 h-10 rounded-xl bg-white border border-slate-100 text-slate-400 hover:text-emerald-600 shadow-sm transition-all" 
-                          title="Add to Inward Batch"
-                        >
-                          <i className="fas fa-plus-circle text-xs"></i>
-                        </button>
-                        <button onClick={() => setShowItemHistory(p)} className="w-10 h-10 rounded-xl bg-white border border-slate-100 text-slate-400 hover:text-blue-600 shadow-sm transition-all" title="View Item History"><i className="fas fa-history text-xs"></i></button>
-                        <button onClick={() => setShowAdjustStock(p)} className="w-10 h-10 rounded-xl bg-white border border-slate-100 text-slate-400 hover:text-amber-600 shadow-sm transition-all" title="Adjust Stock / Report Damage"><i className="fas fa-boxes text-xs"></i></button>
-                        <button onClick={() => setShowQR(p)} className="w-10 h-10 rounded-xl bg-white border border-slate-100 text-slate-400 hover:text-slate-900 shadow-sm transition-all"><i className="fas fa-qrcode text-xs"></i></button>
-                        {currentRole === UserRole.ADMIN && (
-                          <button 
-                            onClick={() => {
-                              store.updateProduct(p.id, { showInGallery: !p.showInGallery });
-                              setServerProducts(prev => prev.map(prod => prod.id === p.id ? { ...prod, showInGallery: !prod.showInGallery } : prod));
-                            }} 
-                            className={`w-10 h-10 rounded-xl bg-white border border-slate-100 shadow-sm transition-all ${p.showInGallery ? 'text-blue-500 hover:text-blue-700' : 'text-slate-300 hover:text-slate-500'}`}
-                            title={p.showInGallery ? 'Hide from Gallery' : 'Show in Gallery'}
-                          >
-                            <i className={`fas ${p.showInGallery ? 'fa-eye' : 'fa-eye-slash'} text-xs`}></i>
-                          </button>
-                        )}
-                        {currentRole === UserRole.ADMIN && (
-                          <button 
-                            onClick={() => {
-                              store.toggleProductStatus(p.id);
-                              setServerProducts(prev => prev.map(prod => prod.id === p.id ? { ...prod, status: prod.status === 'Active' ? 'Suspended' : 'Active' } : prod));
-                            }} 
-                            className={`w-10 h-10 rounded-xl bg-white border border-slate-100 shadow-sm transition-all ${p.status === 'Suspended' ? 'text-emerald-500 hover:text-emerald-700' : 'text-rose-500 hover:text-rose-700'}`}
-                            title={p.status === 'Suspended' ? 'Activate Product' : 'Suspend Product'}
-                          >
-                            <i className={`fas ${p.status === 'Suspended' ? 'fa-play' : 'fa-pause'} text-xs`}></i>
-                          </button>
-                        )}
-                        <button 
-                          onClick={() => { 
-                            setEditProduct(p); 
-                            const graniteName = p.graniteName || (p.category === 'Granite' && p.name.includes('_') ? p.name.split('_')[0] : '');
-                            setProductForm({ ...p, graniteName }); 
-                            setErrorMessage(null);
-                            setShowAddProduct(true); 
-                          }} 
-                          className="w-10 h-10 rounded-xl bg-white border border-slate-100 text-slate-400 hover:text-slate-900 shadow-sm transition-all"
-                        >
-                          <i className="fas fa-edit text-xs"></i>
-                        </button>
-                      </div>
+                    <td className="px-4 py-6 sticky right-0 bg-white z-10 shadow-[-10px_0_15px_-3px_rgba(0,0,0,0.05)] group-hover:bg-slate-50 transition-colors">
+                      {/* Collapsed action menu — click ⋯ to reveal */}
+                      <ActionMenu
+                        product={p}
+                        currentRole={currentRole}
+                        onLedger={() => setLedgerProduct(p)}
+                        onAddStock={() => {
+                          if (!newPurchase.items) return;
+                          const existingItemIdx = newPurchase.items.findIndex(it => it.productId === p.id);
+                          let nextItems = [...newPurchase.items];
+                          if (existingItemIdx === -1) nextItems.push({ productId: p.id, qtyBoxes: 1, rate: p.purchasePrice || 0 });
+                          setNewPurchase({ ...newPurchase, vendorName: p.lastPurchaseVendor || newPurchase.vendorName || '', vehicleNumber: p.lastPurchaseVehicle || newPurchase.vehicleNumber || '', items: nextItems });
+                          setShowAddStock(true);
+                        }}
+                        onHistory={() => setShowItemHistory(p)}
+                        onAdjust={() => setShowAdjustStock(p)}
+                        onQR={() => setShowQR(p)}
+                        onGallery={() => { store.updateProduct(p.id, { showInGallery: !p.showInGallery }); setServerProducts(prev => prev.map(prod => prod.id === p.id ? { ...prod, showInGallery: !prod.showInGallery } : prod)); }}
+                        onStatus={() => { store.toggleProductStatus(p.id); setServerProducts(prev => prev.map(prod => prod.id === p.id ? { ...prod, status: prod.status === 'Active' ? 'Suspended' : 'Active' } : prod)); }}
+                        onEdit={() => { setEditProduct(p); const graniteName = p.graniteName || (p.category === 'Granite' && p.name.includes('_') ? p.name.split('_')[0] : ''); setProductForm({ ...p, graniteName }); setErrorMessage(null); setShowAddProduct(true); }}
+                        showInGallery={p.showInGallery}
+                        status={p.status}
+                      />
                     </td>
                   </tr>
                     );
