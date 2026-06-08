@@ -79,6 +79,39 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, onPublicGallery }) => {
     ? connStatus.db ? 'MySQL Connected' : 'Server Reached (no DB)'
     : 'Server Unreachable';
 
+  // ── 2FA OTP step ─────────────────────────────────────────────────────────
+  if (needs2FA) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-6">
+            <div className="w-16 h-16 bg-amber-500/10 border-2 border-amber-500/30 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <i className="fas fa-shield-alt text-amber-400 text-2xl"></i>
+            </div>
+            <h2 className="text-white font-black text-2xl">Two-Factor Auth</h2>
+            <p className="text-slate-400 font-bold text-sm mt-1">Open Google Authenticator and enter the 6-digit code</p>
+          </div>
+          <div className="bg-white/5 border border-white/10 rounded-[24px] p-6 space-y-4">
+            <input type="tel" inputMode="numeric" pattern="[0-9]*" maxLength={6} autoFocus
+              className="w-full px-4 py-4 bg-white/10 border-2 border-white/20 rounded-xl font-mono text-3xl text-white text-center tracking-[0.5em] outline-none focus:border-amber-400 transition-all placeholder:text-slate-600"
+              placeholder="000000"
+              value={otpCode} onChange={e => { setOtpCode(e.target.value.replace(/\D/g,'')); setError(''); }}
+              onKeyDown={e => e.key === 'Enter' && handleOtp()} />
+            {error && <div className="text-rose-400 font-bold text-sm text-center bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-2">{error}</div>}
+            <button onClick={handleOtp} disabled={loading || otpCode.length !== 6}
+              className="w-full py-4 bg-amber-500 text-white rounded-xl font-black text-[11px] uppercase tracking-widest hover:bg-amber-600 transition-all disabled:opacity-40 active:scale-98">
+              {loading ? 'Verifying…' : 'Verify & Sign In'}
+            </button>
+            <button onClick={() => { setNeeds2FA(false); setOtpCode(''); setError(''); }}
+              className="w-full py-2 text-slate-500 font-bold text-[10px] uppercase hover:text-slate-300 transition-all">
+              ← Back to Login
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden">
       {/* Background blobs */}

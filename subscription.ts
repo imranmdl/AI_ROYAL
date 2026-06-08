@@ -50,6 +50,7 @@ export const FEATURES: PlanFeature[] = [
   { id: 'platform_branding',   name: 'Custom Branding',          description: 'Your logo & colors on documents',   category: 'Platform' },
   { id: 'platform_support',    name: 'Priority Support',         description: '4-hour response SLA',               category: 'Platform' },
   { id: 'platform_mobile',     name: 'Mobile App',               description: 'Android & iOS access',              category: 'Platform' },
+  { id: 'platform_2fa',        name: 'Two-Factor Authentication',description: 'Google Authenticator TOTP login',  category: 'Platform' },
 ];
 
 // ── Plan Definitions ──────────────────────────────────────────────────────────

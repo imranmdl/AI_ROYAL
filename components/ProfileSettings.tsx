@@ -1,5 +1,6 @@
 
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
+const TwoFactorSetupLazy = lazy(() => import('./TwoFactorSetup'));
 import { store } from '../store';
 import { UserRole } from '../types';
 

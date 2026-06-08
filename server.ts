@@ -2716,6 +2716,129 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     } catch(e:any) { res.status(500).json({ error: e.message }); }
   });
 
+  // ════════════════════════════════════════════════════════════════════════
+  //  TWO-FACTOR AUTHENTICATION (TOTP — Google Authenticator compatible)
+  // ════════════════════════════════════════════════════════════════════════
+
+  /** TOTP engine — pure Node.js crypto, no external library */
+  const base32Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+  const base32Encode = (buf: Buffer): string => {
+    let result = ''; let bits = 0; let val = 0;
+    for (const byte of buf) {
+      val = (val << 8) | byte; bits += 8;
+      while (bits >= 5) { result += base32Chars[(val >>> (bits - 5)) & 31]; bits -= 5; }
+    }
+    if (bits > 0) result += base32Chars[(val << (5 - bits)) & 31];
+    return result;
+  };
+
+  const base32Decode = (str: string): Buffer => {
+    const clean = str.toUpperCase().replace(/[^A-Z2-7]/g, '');
+    const bytes: number[] = [];
+    let bits = 0; let val = 0;
+    for (const ch of clean) {
+      val = (val << 5) | base32Chars.indexOf(ch); bits += 5;
+      if (bits >= 8) { bytes.push((val >>> (bits - 8)) & 255); bits -= 8; }
+    }
+    return Buffer.from(bytes);
+  };
+
+  const generateTOTP = (secret: string, counter: number): string => {
+    const key = base32Decode(secret);
+    const buf = Buffer.alloc(8);
+    buf.writeBigInt64BE(BigInt(counter));
+    const hmac = crypto.createHmac('sha1', key).update(buf).digest();
+    const offset = hmac[hmac.length - 1] & 0x0f;
+    const code = ((hmac[offset] & 0x7f) << 24) | (hmac[offset+1] << 16) | (hmac[offset+2] << 8) | hmac[offset+3];
+    return (code % 1000000).toString().padStart(6, '0');
+  };
+
+  const verifyTOTP = (secret: string, token: string): boolean => {
+    const counter = Math.floor(Date.now() / 1000 / 30);
+    for (let i = -2; i <= 2; i++) { // ±2 windows = ±60s clock drift
+      if (generateTOTP(secret, counter + i) === token) return true;
+    }
+    return false;
+  };
+
+  const generateTOTPSecret = (): string => base32Encode(crypto.randomBytes(20));
+
+  /** POST /api/auth/2fa/setup — generate a new TOTP secret for a user */
+  app.post('/api/auth/2fa/setup', async (req: Request, res: Response) => {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const secret = generateTOTPSecret();
+    // Store temporarily — user must verify before it's saved permanently
+    res.json({ secret, otpauthUrl: `otpauth://totp/RoyalERP:${userId}?secret=${secret}&issuer=RoyalERP&algorithm=SHA1&digits=6&period=30` });
+  });
+
+  /** POST /api/auth/2fa/verify — verify TOTP token and enable 2FA on the user */
+  app.post('/api/auth/2fa/verify', async (req: Request, res: Response) => {
+    const { userId, secret, token } = req.body;
+    if (!userId || !secret || !token) return res.status(400).json({ error: 'userId, secret, token required' });
+    if (!verifyTOTP(secret, token.toString().trim())) return res.status(401).json({ error: 'Invalid OTP — check your authenticator app' });
+    // Save secret to user record
+    try {
+      if (pool && dbHealthy) {
+        const [rows]: any = await pool.query('SELECT data FROM users WHERE id=?', [userId]);
+        if (rows.length) {
+          const d = parseData(rows[0].data);
+          d.totpSecret = secret; d.twoFactorEnabled = true;
+          await pool.query('UPDATE users SET data=?, updated_at=? WHERE id=?', [JSON.stringify(d), Date.now(), userId]);
+        }
+      } else {
+        const u = inMemoryDb?.users?.find((x: any) => x.id === userId);
+        if (u) { u.totpSecret = secret; u.twoFactorEnabled = true; }
+      }
+      res.json({ success: true, message: '2FA enabled successfully' });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  /** POST /api/auth/2fa/disable — disable 2FA for a user */
+  app.post('/api/auth/2fa/disable', async (req: Request, res: Response) => {
+    const { userId, token } = req.body;
+    if (!userId || !token) return res.status(400).json({ error: 'userId and token required' });
+    try {
+      let secret = '';
+      if (pool && dbHealthy) {
+        const [rows]: any = await pool.query('SELECT data FROM users WHERE id=?', [userId]);
+        if (rows.length) { const d = parseData(rows[0].data); secret = d.totpSecret || ''; }
+      }
+      if (!secret || !verifyTOTP(secret, token.toString().trim()))
+        return res.status(401).json({ error: 'Invalid OTP' });
+      if (pool && dbHealthy) {
+        const [rows]: any = await pool.query('SELECT data FROM users WHERE id=?', [userId]);
+        if (rows.length) {
+          const d = parseData(rows[0].data);
+          delete d.totpSecret; d.twoFactorEnabled = false;
+          await pool.query('UPDATE users SET data=?, updated_at=? WHERE id=?', [JSON.stringify(d), Date.now(), userId]);
+        }
+      }
+      res.json({ success: true, message: '2FA disabled' });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  /** POST /api/auth/2fa/check — check if login OTP is valid (called after password step) */
+  app.post('/api/auth/2fa/check', async (req: Request, res: Response) => {
+    const { userId, token } = req.body;
+    if (!userId || !token) return res.status(400).json({ error: 'userId and token required' });
+    try {
+      let secret = '';
+      if (pool && dbHealthy) {
+        const [rows]: any = await pool.query('SELECT data FROM users WHERE id=?', [userId]);
+        if (rows.length) { const d = parseData(rows[0].data); secret = d.totpSecret || ''; }
+      } else {
+        const u = inMemoryDb?.users?.find((x: any) => x.id === userId);
+        if (u) secret = (u as any).totpSecret || '';
+      }
+      if (!secret) return res.status(400).json({ error: '2FA not set up for this user' });
+      if (!verifyTOTP(secret, token.toString().trim()))
+        return res.status(401).json({ error: 'Invalid OTP. Try again.' });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   /** GET /api/superadmin/ping — no auth needed, confirms tenant API is active */
   app.get('/api/superadmin/ping', (_req: Request, res: Response) => {
     res.json({
