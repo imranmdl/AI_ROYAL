@@ -7,15 +7,19 @@ interface LoginProps {
 }
 
 const Login: React.FC<LoginProps> = ({ onLoginSuccess, onPublicGallery }) => {
-  const [email, setEmail]       = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError]       = useState('');
-  const [status, setStatus]     = useState('');   // progress messages
-  const [isLoading, setIsLoading] = useState(false);
-  const [showConfig, setShowConfig] = useState(false);
-  const [showPass, setShowPass] = useState(false);
-  const [backendUrl, setBackendUrl] = useState(store.settings.backendUrl || '');
-  const [connStatus, setConnStatus] = useState({
+  const [email, setEmail]             = useState('');
+  const [password, setPassword]       = useState('');
+  const [error, setError]             = useState('');
+  const [needs2FA, setNeeds2FA]       = useState(false);
+  const [pendingUser, setPendingUser] = useState<any>(null);
+  const [otpCode, setOtpCode]         = useState('');
+  const [loading, setLoading]         = useState(false);
+  const [status, setStatus]           = useState('');
+  const [isLoading, setIsLoading]     = useState(false);
+  const [showConfig, setShowConfig]   = useState(false);
+  const [showPass, setShowPass]       = useState(false);
+  const [backendUrl, setBackendUrl]   = useState(store.settings.backendUrl || '');
+  const [connStatus, setConnStatus]   = useState({
     online: store.isOnline, db: store.dbConnected, error: store.connectionError,
   });
 
@@ -42,6 +46,21 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, onPublicGallery }) => {
     setTimeout(() => setStatus(''), 3000);
   };
 
+  const handleOtp = async () => {
+    if (otpCode.length !== 6) { setError('Enter the 6-digit code from Google Authenticator'); return; }
+    setLoading(true); setError('');
+    try {
+      const r = await fetch(`${store.getApiUrl('/api/auth/2fa/check')}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: pendingUser.id, token: otpCode }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setError(d.error || 'Invalid OTP'); return; }
+      onLoginSuccess(pendingUser);
+    } catch (e: any) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isLoading) return;
@@ -51,8 +70,11 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, onPublicGallery }) => {
 
     try {
       // loginAsync: fetches fresh users from server → authenticates → starts background sync
-      const user = await store.loginAsync(email.trim(), password);
+      const user = await store.loginAsync(email.trim(), password) as any;
       if (user) {
+        if (user.twoFactorEnabled && user.totpSecret) {
+          setPendingUser(user); setNeeds2FA(true); return;
+        }
         setStatus('Access granted — loading…');
         onLoginSuccess();
       }
