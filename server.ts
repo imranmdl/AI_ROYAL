@@ -2956,6 +2956,37 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     }
   });
 
+
+  /** POST /api/admin/reset-user-password?key=test
+   * Emergency: reset a user's password by email + tenantId.
+   * Use when migrated users can't login because password wasn't in DB.
+   */
+  app.post('/api/admin/reset-user-password', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
+    const { email, newPassword, tenantId } = req.body;
+    if (!email || !newPassword) return res.status(400).json({ error:'email + newPassword required' });
+    if (!pool || !dbHealthy) return res.status(503).json({ error:'DB not connected' });
+    try {
+      // Find user rows matching email (any tenant if tenantId not specified)
+      const [rows]: any = await pool.query(
+        'SELECT id, data, tenant_id FROM users WHERE LOWER(email)=LOWER(?)',
+        [email.trim()]
+      );
+      if (!rows.length) return res.status(404).json({ error:'User not found: ' + email });
+      const results = [];
+      for (const row of rows) {
+        if (tenantId && row.tenant_id !== tenantId) continue;
+        const d = parseData(row.data) || {};
+        d.password = newPassword;
+        await pool.query('UPDATE users SET data=?, updated_at=? WHERE id=?',
+          [JSON.stringify(d), Date.now(), row.id]);
+        results.push({ id: row.id, tenant_id: row.tenant_id, updated: true });
+      }
+      if (!results.length) return res.status(404).json({ error:'No matching user for tenantId: ' + tenantId });
+      res.json({ success: true, updated: results });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   /** GET /api/superadmin/ping — no auth needed, confirms tenant API is active */
   app.get('/api/superadmin/ping', (_req: Request, res: Response) => {
     res.json({
