@@ -45,7 +45,10 @@ const parseData = (d: any) => {
 // ════════════════════════════════════════════════════════════════
 
 const JWT_SECRET = process.env.JWT_SECRET || 'royal-erp-jwt-secret-change-in-production';
-const SUPER_ADMIN_KEY = process.env.SUPER_ADMIN_KEY || 'test';
+const SUPER_ADMIN_KEY = process.env.SUPER_ADMIN_KEY || 'royal-super-2024';
+if (!process.env.SUPER_ADMIN_KEY) {
+  console.warn('[SECURITY] SUPER_ADMIN_KEY not set in env — using default. Set it in Railway env vars!');
+}
 
 // Simple JWT implementation (no external lib needed)
 const signToken = (payload: any, expiresInDays = 30): string => {
@@ -85,8 +88,10 @@ declare global {
 // Skips: /api/tenant/login, /api/tenant/register, /api/superadmin/*
 const tenantMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   const open = [
-    '/api/tenant/login', '/api/tenant/register', '/api/superadmin',
-    '/api/health', '/api/ping', '/api/superadmin/ping', '/api/public/',
+    '/api/tenant/login', '/api/tenant/register',
+    '/api/superadmin',   '/api/admin/',           // superadmin & admin diagnostic endpoints
+    '/api/health', '/api/ping', '/api/public/',
+    '/api/auth/2fa/',                             // 2FA endpoints use their own auth
   ];
   if (open.some(p => req.path.startsWith(p)) || !req.path.startsWith('/api/')) {
     return next();
