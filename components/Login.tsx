@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { store } from '../store';
+import MobileShopSetup from './MobileShopSetup';
 
 interface LoginProps {
   onLoginSuccess: () => void;
@@ -254,23 +255,13 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, onPublicGallery }) => {
 
             {/* Gallery link */}
             <div className="text-center pt-2 border-t border-white/5 space-y-3">
-              {/* QR Scan button — visible in mobile app */}
-              {typeof window !== 'undefined' && (navigator.userAgent.includes('RoyalERP-Android') || navigator.userAgent.includes('RoyalERP-iOS') || localStorage.getItem('royal_app_tenant')) && (
-                <button
-                  onClick={() => {
-                    const stored = localStorage.getItem('royal_app_tenant');
-                    if (stored) {
-                      // Already configured — just reload with tenant
-                      window.location.href = `/?tenant=${stored}`;
-                    } else {
-                      // Open QR scanner — user scans configure QR
-                      alert('Ask your administrator for the QR code. Then open your camera app and scan it to configure this device.');
-                    }
-                  }}
-                  className="w-full flex items-center justify-center gap-2 py-3.5 bg-amber-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-amber-700 transition-all">
-                  <i className="fas fa-qrcode text-sm"></i>
-                  {localStorage.getItem('royal_app_tenant') ? `Shop: ${localStorage.getItem('royal_app_tenant')}` : 'Scan QR to Configure'}
-                </button>
+              {/* Mobile app shop configuration */}
+              {typeof window !== 'undefined' && (
+                !!(window as any).Capacitor ||
+                navigator.userAgent.includes('RoyalERP-Android') ||
+                navigator.userAgent.includes('RoyalERP-iOS')
+              ) && (
+                <MobileShopSetup />
               )}
               <button onClick={onPublicGallery}
                 className="text-[10px] font-black text-amber-500 uppercase tracking-widest hover:text-amber-400 transition-colors flex items-center gap-2 mx-auto">
