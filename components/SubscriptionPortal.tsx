@@ -20,7 +20,7 @@ const addM   = (n: number) => { const d = new Date(); d.setMonth(d.getMonth()+n)
 const addD   = (s: string, n: number) => new Date(new Date(s).getTime()+n*86400000).toISOString().split('T')[0];
 const fmtDate = (s: string) => new Date(s).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
 const BASE   = window.location.origin;
-const SK     = 'royal-super-2024'; // super admin key (matches SUPER_ADMIN_KEY env var default)
+const SK     = 'test'; // super admin key — must match SUPER_ADMIN_KEY env var on Railway
 
 // ── Storage helpers ───────────────────────────────────────────────────────────
 const load  = <T,>(k: string, def: T): T => { try { return JSON.parse(localStorage.getItem(k)||'null') ?? def; } catch { return def; } };
