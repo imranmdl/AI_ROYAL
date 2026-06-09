@@ -131,8 +131,8 @@ const App: React.FC = () => {
     setIsLoggedIn(true);
     setIsPublicMode(false);
     setPublicDoc(null);
-    if (store.currentUser?.permissions.canViewDashboard) setActiveTab('dashboard');
-    else if (store.currentUser?.permissions.canManageSales) setActiveTab('sales');
+    if (store.currentUser?.permissions?.canViewDashboard) setActiveTab('dashboard');
+    else if (store.currentUser?.permissions?.canManageSales) setActiveTab('sales');
     else setActiveTab('inventory');
   };
 
@@ -232,6 +232,14 @@ const App: React.FC = () => {
   }
 
   const currentUser = store.currentUser!;
+  // Ensure permissions object exists — new tenant users may not have it yet
+  if (currentUser && !currentUser.permissions) {
+    currentUser.permissions = {
+      canViewDashboard: true, canManageInventory: true, canManageSales: true,
+      canViewReports: true, canManageUsers: true, canViewCredits: true,
+      canManageCustomers: true, canManageReturns: true, canManageGallery: true,
+    };
+  }
 
   const AccessDenied = () => (
     <div className="min-h-[60vh] flex flex-col items-center justify-center text-center space-y-6">
@@ -257,36 +265,36 @@ const App: React.FC = () => {
         {(() => {
           if (activeTab.startsWith('reports_')) {
             const subTab = activeTab.replace('reports_', '');
-            return currentUser.permissions.canViewReports ? <Reports defaultTab={subTab as any} /> : <AccessDenied />;
+            return currentUser.permissions?.canViewReports ? <Reports defaultTab={subTab as any} /> : <AccessDenied />;
           }
 
           switch (activeTab) {
             case 'dashboard': 
-              return currentUser.permissions.canViewDashboard ? <Dashboard /> : <AccessDenied />;
+              return currentUser.permissions?.canViewDashboard ? <Dashboard /> : <AccessDenied />;
             case 'inventory': 
-              return currentUser.permissions.canManageInventory ? <Inventory currentRole={currentUser.role} setActiveTab={setActiveTab} /> : <AccessDenied />;
+              return currentUser.permissions?.canManageInventory ? <Inventory currentRole={currentUser.role} setActiveTab={setActiveTab} /> : <AccessDenied />;
             case 'sales': 
-              return currentUser.permissions.canManageSales ? <Sales initialQuotation={convQuotation} onInvoiceCreated={handleInvoiceDone} /> : <AccessDenied />;
+              return currentUser.permissions?.canManageSales ? <Sales initialQuotation={convQuotation} onInvoiceCreated={handleInvoiceDone} /> : <AccessDenied />;
             case 'returns':
-              return currentUser.permissions.canManageReturns ? <Returns /> : <AccessDenied />;
+              return currentUser.permissions?.canManageReturns ? <Returns /> : <AccessDenied />;
             case 'quotations': 
-              return currentUser.permissions.canManageSales ? <Quotations onConvertToSale={handleQuotationConversion} initialLead={convLead} onLeadConverted={() => setConvLead(null)} /> : <AccessDenied />;
+              return currentUser.permissions?.canManageSales ? <Quotations onConvertToSale={handleQuotationConversion} initialLead={convLead} onLeadConverted={() => setConvLead(null)} /> : <AccessDenied />;
             case 'offers':
-              return currentUser.permissions.canManageSales ? <Offers /> : <AccessDenied />;
+              return currentUser.permissions?.canManageSales ? <Offers /> : <AccessDenied />;
             case 'commission_master':
               return currentUser.role === UserRole.ADMIN ? <CommissionMaster /> : <AccessDenied />;
             case 'credits': 
-              return currentUser.permissions.canViewCredits ? <CreditManagement /> : <AccessDenied />;
+              return currentUser.permissions?.canViewCredits ? <CreditManagement /> : <AccessDenied />;
             case 'users': 
               return currentUser.permissions.canManageUsers ? <UserManagement /> : <AccessDenied />;
             case 'connect': 
               return currentUser.permissions.canManageCustomers ? <CustomerConnect /> : <AccessDenied />;
             case 'expenses':
-              return currentUser.permissions.canManageSales ? <Expenses /> : <AccessDenied />;
+              return currentUser.permissions?.canManageSales ? <Expenses /> : <AccessDenied />;
             case 'gallery_leads':
               return currentUser.permissions.canManageGallery ? <GalleryLeads onConvertToQuotation={handleLeadConversion} /> : <AccessDenied />;
             case 'vendor_tracking':
-              return currentUser.permissions.canManageInventory ? <VendorTracking setActiveTab={setActiveTab} /> : <AccessDenied />;
+              return currentUser.permissions?.canManageInventory ? <VendorTracking setActiveTab={setActiveTab} /> : <AccessDenied />;
             case 'profile':
               return <ProfileSettings />;
             case 'system':
