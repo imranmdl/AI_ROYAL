@@ -1870,8 +1870,9 @@ app.get('/api/sync/version', async (req: Request, res: Response) => {
     return res.json(delta);
   }
 
-  // Use cached response if available to save CPU for full syncs
-  if (syncResponseCache && since === 0) {
+  // ── Response cache (DEFAULT TENANT ONLY) ─────────────────────────────────
+  // NEVER cache for named tenants — each tenant must get their own scoped data
+  if (isDefaultTenant && syncResponseCache && since === 0) {
     res.setHeader('Content-Type', 'application/json');
     return res.send(syncResponseCache);
   }
@@ -1884,15 +1885,18 @@ app.get('/api/sync/version', async (req: Request, res: Response) => {
 
   const responsePayload = {
     ...prunedData,
+    _tenant: tenantId,
     _metadata: {
       db_healthy: dbHealthy,
+      tenant_id: tenantId,
+      is_default: isDefaultTenant,
       is_fallback: !dbHealthy,
-      is_warming_up: isWarmingUp,
       timestamp: Date.now()
     }
   };
 
-  if (since === 0) {
+  // Only cache full sync responses for the default tenant
+  if (since === 0 && isDefaultTenant) {
     syncResponseCache = JSON.stringify(responsePayload);
   }
 
