@@ -2888,6 +2888,72 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+
+  /**
+   * POST /api/admin/migrate-default-tenant?key=test
+   * One-time migration: moves all 'default' tenant data to a named tenant.
+   * Run ONCE to convert the base URL shop into a proper tenant.
+   */
+  app.post('/api/admin/migrate-default-tenant', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
+    const { shopName, slug, ownerEmail } = req.body;
+    if (!shopName || !slug || !ownerEmail) return res.status(400).json({ error:'shopName, slug, ownerEmail required' });
+    if (!pool || !dbHealthy) return res.status(503).json({ error:'DB not connected' });
+
+    const tenantId = `${slug}-${crypto.randomBytes(4).toString('hex')}`;
+    const now      = Date.now();
+
+    try {
+      // 1. Create tenant record
+      await pool.query(
+        'INSERT IGNORE INTO tenants (id, name, slug, owner_email, plan, status, settings, created_at) VALUES (?,?,?,?,?,?,?,?)',
+        [tenantId, shopName, slug, ownerEmail, 'pro', 'active', '{}', now]
+      );
+
+      // 2. Migrate all default-tagged rows in every table
+      const tables = [
+        { table:'products',           col:'tenant_id' },
+        { table:'sales',              col:'tenant_id' },
+        { table:'purchases',          col:'tenant_id' },
+        { table:'vendor_orders',      col:'tenant_id' },
+        { table:'users',              col:'tenant_id' },
+        { table:'loading_charges',    col:'tenant_id' },
+        { table:'gallery_leads',      col:'tenant_id' },
+      ];
+      const results: any = {};
+      for (const { table, col } of tables) {
+        try {
+          const [r]: any = await pool.query(
+            `UPDATE ${table} SET ${col}=? WHERE ${col}='default' OR ${col} IS NULL OR ${col}=''`,
+            [tenantId]
+          );
+          results[table] = r.affectedRows;
+        } catch (e: any) { results[table] = `error: ${e.message}`; }
+      }
+
+      // 3. Migrate system_persistence
+      const [sp]: any = await pool.query(
+        `UPDATE system_persistence SET tenant_id=? WHERE id='global_master' AND (tenant_id='default' OR tenant_id IS NULL OR tenant_id='')`,
+        [tenantId]
+      );
+      results.system_persistence = sp.affectedRows;
+
+      // 4. Force reload inMemoryDb (it now has no default data)
+      inMemoryDb = null as any;
+
+      res.json({
+        success: true,
+        tenantId,
+        slug,
+        loginUrl: `/?tenant=${slug}`,
+        migrated: results,
+        message: `Default tenant migrated to "${shopName}" (slug: ${slug}). Update your bookmarks to /?tenant=${slug}`
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   /** GET /api/superadmin/ping — no auth needed, confirms tenant API is active */
   app.get('/api/superadmin/ping', (_req: Request, res: Response) => {
     res.json({

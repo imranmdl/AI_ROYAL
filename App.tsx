@@ -32,39 +32,46 @@ import { store } from './store';
 const SubscriptionPortalLazy  = lazy(() => import('./components/SubscriptionPortal'));
 
 const App: React.FC = () => {
-  // ── Tenant auto-config (QR scan + mobile persistence) ──────────────────
+  // ── Routing: base URL → Subscription Portal, tenant URL → ERP ──────────
   React.useEffect(() => {
-    const params    = new URLSearchParams(window.location.search);
-    const tenant    = params.get('tenant');
-    const configure = params.get('configure');
+    const params      = new URLSearchParams(window.location.search);
+    const tenant      = params.get('tenant');
+    const configure   = params.get('configure');
+    const isSubAdmin  = params.get('sub-admin') === 'true';
+    const isSetup     = params.get('setup') === 'true';
     const isCapacitorApp = !!(window as any).Capacitor ||
       navigator.userAgent.includes('RoyalERP-Android') ||
       navigator.userAgent.includes('RoyalERP-iOS');
 
+    // ── QR configure ────────────────────────────────────────────────────────
     if (tenant && configure === '1') {
-      // QR scan: store tenant permanently, no reload needed
       localStorage.setItem('royal_app_tenant', tenant);
       localStorage.setItem('royal_jwt', '');
       window.history.replaceState({}, '', `/?tenant=${tenant}`);
       return;
     }
 
-    if (tenant && tenant !== 'default') {
+    // ── Explicit tenant URL ─────────────────────────────────────────────────
+    if (tenant) {
       localStorage.setItem('royal_app_tenant', tenant);
       return;
     }
 
-    if (!tenant || tenant === 'default') {
+    // ── No tenant in URL ────────────────────────────────────────────────────
+    if (!tenant && !isSubAdmin && !isSetup) {
       if (isCapacitorApp) {
-        // Mobile: restore stored tenant via URL only (no reload)
+        // Mobile: restore stored tenant
         const stored = localStorage.getItem('royal_app_tenant');
-        if (stored && stored !== 'default') {
+        if (stored) {
           window.history.replaceState({}, '', `/?tenant=${stored}`);
+          return;
         }
+        // Mobile with no configured tenant: show QR setup screen
       } else {
-        // Desktop browser: clear tenant JWT so admin sees default data
-        localStorage.removeItem('royal_app_tenant');
-        localStorage.setItem('royal_jwt', '');
+        // Desktop browser with no tenant:
+        // Redirect to Subscription Portal — no more "default" shop at base URL
+        window.location.replace('/?sub-admin=true');
+        return;
       }
     }
   }, []);
