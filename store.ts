@@ -157,15 +157,14 @@ class DataStore {
       const data = JSON.parse(cached);
 
       // ── Tenant safety check ───────────────────────────────────────────────
-      // If cache was saved for a different tenant AND we're on a browser (not mobile),
-      // discard it. On Capacitor mobile we NEVER discard — it causes blank screen.
-      const isCapacitorApp = !!(window as any).Capacitor ||
+      const isCapacitorApp2 = !!(window as any).Capacitor ||
         navigator.userAgent.includes('RoyalERP-Android') ||
         navigator.userAgent.includes('RoyalERP-iOS');
-      const currentTenant = new URLSearchParams(window.location.search).get('tenant') || 'default';
-      const cachedTenant  = data._tenant || 'default';
-      if (!isCapacitorApp && cachedTenant !== currentTenant) {
-        console.log(`[STORE] Cache tenant mismatch (cached=${cachedTenant}, current=${currentTenant}) — discarding cache`);
+      const urlTenantForCache = (new URLSearchParams(window.location.search).get('tenant') || 'default');
+      const cachedTenant      = data._tenant || 'default';
+      // On browser: discard cache if it belongs to a different tenant
+      if (!isCapacitorApp2 && cachedTenant !== urlTenantForCache) {
+        console.log(`[STORE] Cache tenant mismatch: cached="${cachedTenant}" url="${urlTenantForCache}" — discarding`);
         localStorage.removeItem('royal_erp_cache');
         return;
       }
@@ -204,22 +203,35 @@ class DataStore {
   private async boot() {
     // ── Tenant guard: runs BEFORE first sync ─────────────────────────────────
     const rawUrlTenant = new URLSearchParams(window.location.search).get('tenant') || '';
-    const urlTenant = rawUrlTenant === 'default' ? '' : rawUrlTenant;
-    const storedJwt = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+    const urlTenant    = rawUrlTenant === 'default' ? '' : rawUrlTenant;
+    const storedJwt    = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+    const storedSlug   = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_tenant_slug') || '' : '';
     const isCapacitorApp = !!(window as any).Capacitor ||
       navigator.userAgent.includes('RoyalERP-Android') ||
       navigator.userAgent.includes('RoyalERP-iOS');
 
-    if (!urlTenant && storedJwt && !isCapacitorApp) {
-      // Browser at base URL: clear wrong-tenant JWT (but never clear on mobile)
-      try {
-        const payload = JSON.parse(atob(storedJwt.split('.')[1]));
-        if (payload.tenantId && payload.tenantId !== 'default') {
-          console.log('[STORE] Browser: clearing cross-tenant JWT →', payload.tenantId);
-          localStorage.setItem('royal_jwt', '');
-          // Don't clear products — let sync overwrite with correct data
-        }
-      } catch { localStorage.setItem('royal_jwt', ''); }
+    if (storedJwt) {
+      if (!urlTenant && !isCapacitorApp) {
+        // Browser at base URL → clear any tenant JWT so default shop loads correctly
+        try {
+          const payload = JSON.parse(atob(storedJwt.split('.')[1]));
+          if (payload.tenantId && payload.tenantId !== 'default') {
+            console.log('[STORE] Base URL: clearing cross-tenant JWT', payload.tenantId);
+            localStorage.setItem('royal_jwt', '');
+          }
+        } catch { localStorage.setItem('royal_jwt', ''); }
+
+      } else if (urlTenant && storedSlug && storedSlug !== urlTenant) {
+        // URL tenant slug changed — ALWAYS clear JWT to prevent data leak
+        // e.g. stored=mudhol but URL=taps-and-tiles2-54f8 → wipe immediately
+        console.log(`[STORE] Tenant switch detected (${storedSlug} → ${urlTenant}): clearing JWT`);
+        localStorage.setItem('royal_jwt', '');
+        localStorage.setItem('royal_tenant_slug', urlTenant);
+        localStorage.removeItem('royal_erp_cache');
+        this.products = []; this.sales = []; this.purchases = [];
+        this.vendorOrders = []; this.quotations = []; this.lastUpdated = 0;
+        this.notify();
+      }
     }
 
     this.checkDbHealth();
