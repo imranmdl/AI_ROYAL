@@ -646,6 +646,11 @@ async function startServer() {
   app.use(compression());
   app.use(bodyParser.json({ limit: '100mb' }));
 
+  // ── TENANT ISOLATION MIDDLEWARE ───────────────────────────────────────────
+  // MUST be registered here — reads JWT from Authorization header,
+  // sets req.tenantId on every request so all handlers are tenant-scoped
+  app.use(tenantMiddleware);
+
   app.use((req, res, next) => {
     // Add health headers
     res.setHeader('X-System-Persistence', dbHealthy ? 'Relational (Healthy)' : 'In-Memory (Offline)');
