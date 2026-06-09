@@ -1760,61 +1760,65 @@ app.get('/api/sync/version', async (req: Request, res: Response) => {
   app.get('/api/sync', async (req: Request, res: Response) => {
   const since = parseInt(req.query.since as string) || 0;
 
-  // ── Tenant-scoped sync ───────────────────────────────────────────────────────
-  // Read tenantId from JWT if present — filters all data to that tenant only
-  const tenantId = req.tenantId || 'default';
+  // ── CRITICAL TENANT ISOLATION ────────────────────────────────────────────────
+  // A tenant MUST ONLY see their own data. NEVER fall back to another tenant's data.
+  const tenantId       = req.tenantId || 'default';
   const isDefaultTenant = !req.tenantId || req.tenantId === 'default';
 
-  // If we are warming up and have NO products (empty state), wait for it
-  const hasNoData = !inMemoryDb || (inMemoryDb.products?.length === 0 && inMemoryDb.sales?.length === 0);
-  if (isWarmingUp && hasNoData && warmupPromise) {
-    await warmupPromise;
-  }
+  if (isWarmingUp && warmupPromise) await warmupPromise;
 
-  // ── If tenant is set, load fresh from DB to get tenant-scoped data ──────────
-  let rawData = inMemoryDb || await readFromDb();
-  if (!rawData) return res.status(503).json({ error: "Storage node offline", details: dbError });
-
-  // Scope data to the tenant — filter every collection
   let data: any;
-  if (!isDefaultTenant && pool && dbHealthy) {
+
+  if (isDefaultTenant) {
+    // ── Default tenant: use in-memory cache (already scoped to default) ────────
+    const rawData = inMemoryDb || await readFromDb();
+    if (!rawData) return res.status(503).json({ error: 'Storage node offline', details: dbError });
+    data = rawData;
+
+  } else {
+    // ── Named tenant: ONLY load from DB for this specific tenant ──────────────
+    // NEVER use inMemoryDb here — it contains default tenant data
+    if (!pool || !dbHealthy) {
+      // DB not available → return truly empty data, never default tenant data
+      return res.json({
+        ...getInitialData(),
+        lastUpdated: 0,
+        _tenant: tenantId,
+        _warning: 'DB offline — no tenant data available',
+      });
+    }
+
     try {
-      // Load tenant-specific data directly from DB
+      // Fetch settings/meta from system_persistence
       const [spRows]: any = await pool.query(
         'SELECT payload FROM system_persistence WHERE tenant_id=? ORDER BY updated_at DESC LIMIT 1',
         [tenantId]
       );
-      if (spRows.length) {
-        const tenantData = parseData(spRows[0].payload);
-        // Also fetch products/sales for this tenant from their tables
-        const [prodRows]: any = await pool.query(
-          'SELECT id,name,category,brand,data,selling_price,stock_boxes,stock_loose,status,updated_at FROM products WHERE tenant_id=?',
-          [tenantId]
-        );
-        const [saleRows]: any = await pool.query(
-          'SELECT id,data,invoice_no,customer_name,date,total_amount,updated_at FROM sales WHERE tenant_id=?',
-          [tenantId]
-        );
-        tenantData.products = prodRows.map((p: any) => ({
-          ...parseData(p.data), id:p.id, name:p.name, category:p.category, brand:p.brand,
-          sellingPrice:parseFloat(p.selling_price)||0, stockBoxes:p.stock_boxes||0,
-          stockLoose:p.stock_loose||0, status:p.status, updatedAt:p.updated_at
-        }));
-        tenantData.sales = saleRows.map((s: any) => ({
-          ...parseData(s.data), id:s.id, invoiceNo:s.invoice_no,
-          customerName:s.customer_name, date:s.date,
-          totalAmount:parseFloat(s.total_amount)||0, updatedAt:s.updated_at
-        }));
-        data = tenantData;
-      } else {
-        data = rawData; // fallback
-      }
-    } catch(e) {
-      data = rawData; // DB error fallback
+      // Start with empty base — NEVER borrow from default tenant
+      const base = spRows.length ? parseData(spRows[0].payload) : getInitialData();
+
+      // Fetch all relational data for THIS tenant only
+      const [prodRows]:  any = await pool.query('SELECT id,name,category,brand,data,selling_price,stock_boxes,stock_loose,status,updated_at FROM products WHERE tenant_id=?', [tenantId]);
+      const [saleRows]:  any = await pool.query('SELECT id,data,invoice_no,customer_name,date,total_amount,updated_at FROM sales WHERE tenant_id=?', [tenantId]);
+      const [purchRows]: any = await pool.query('SELECT id,data,vendor_name,invoice_no,date,updated_at FROM purchases WHERE tenant_id=?', [tenantId]);
+      const [voRows]:    any = await pool.query('SELECT id,data,order_no,vendor_name,status,payment_status,updated_at FROM vendor_orders WHERE tenant_id=?', [tenantId]);
+      const [userRows]:  any = await pool.query('SELECT id,name,email,role,status,data,updated_at FROM users WHERE tenant_id=?', [tenantId]);
+
+      base.products    = prodRows.map((p: any)  => ({ ...parseData(p.data),  id:p.id, name:p.name, category:p.category, brand:p.brand, sellingPrice:parseFloat(p.selling_price)||0, stockBoxes:p.stock_boxes||0, stockLoose:p.stock_loose||0, status:p.status }));
+      base.sales       = saleRows.map((s: any)  => ({ ...parseData(s.data),  id:s.id, invoiceNo:s.invoice_no, customerName:s.customer_name, date:s.date, totalAmount:parseFloat(s.total_amount)||0 }));
+      base.purchases   = purchRows.map((p: any) => ({ ...parseData(p.data),  id:p.id, vendorName:p.vendor_name, date:p.date }));
+      base.vendorOrders= voRows.map((v: any)    => ({ ...parseData(v.data),  id:v.id, orderNo:v.order_no, vendorName:v.vendor_name, status:v.status, paymentStatus:v.payment_status }));
+      base.users       = userRows.map((u: any)  => ({ ...parseData(u.data),  id:u.id, name:u.name, email:u.email, role:u.role, status:u.status }));
+      base._tenant     = tenantId;
+      data             = base;
+
+    } catch (err: any) {
+      console.error('[SYNC] Tenant query error:', err.message);
+      // Even on error: return empty data, never default tenant data
+      return res.status(500).json({ error: 'Sync failed: ' + err.message });
     }
-  } else {
-    data = rawData;
   }
+
   
   // If 'since' is provided, we can send a delta
   if (since > 0) {

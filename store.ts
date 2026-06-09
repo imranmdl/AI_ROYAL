@@ -444,12 +444,30 @@ class DataStore {
         localStorage.setItem('royal_tenant_slug', tenantSlug);
         localStorage.setItem('royal_tenant_id', data.user?.tenantId || '');
       }
+      // ── CRITICAL: Wipe ALL store data before loading new tenant ──────────────
+      // Prevents previous tenant/default data from showing while sync loads
+      this.products = []; this.sales = []; this.purchases = [];
+      this.vendorOrders = []; this.quotations = []; this.customers = [];
+      this.users = []; this.activityLogs = []; this.galleryLeads = [];
+      this.loadingCharges = []; this.advances = []; this.payrollRecords = [];
+      this.returns = []; this.offers = []; this.incentiveEntries = [];
+      this.lastUpdated = 0;
+      // Clear localStorage cache for previous tenant
+      localStorage.removeItem('royal_erp_cache');
+      this.notify();
+
       const u = data.user as User;
+      if (u && !u.permissions) {
+        (u as any).permissions = {
+          canViewDashboard:true, canManageInventory:true, canManageSales:true,
+          canViewReports:true, canManageUsers:true, canViewCredits:true,
+          canManageCustomers:true, canManageReturns:true, canManageGallery:true,
+        };
+      }
       this.currentUser = u;
       this.logActivity('Users', 'Login', 'Session started');
-      if (!this.isInitialSyncDone) {
-        this.refreshFromServer(true).then(() => { this.isInitialSyncDone = true; this.notify(); });
-      }
+      // Force full sync — bypasses cache, gets tenant-scoped data from server
+      this.refreshFromServer(true).then(() => { this.isInitialSyncDone = true; this.notify(); });
       return u;
     }
 
