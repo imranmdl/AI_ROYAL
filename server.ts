@@ -3272,7 +3272,11 @@ app.post('/api/sync', async (req: Request, res: Response) => {
               // Filter out generated/virtual columns
               const entries = Object.entries(row).filter(([k]) => !skipCols.has(k));
               const cols = entries.map(([k]) => k);
-              const vals = entries.map(([,v]) => v);
+              // JSON-type columns need to be serialized back to string for MySQL
+              const vals = entries.map(([,v]) => {
+                if (v !== null && typeof v === 'object') return JSON.stringify(v);
+                return v;
+              });
               if (!cols.length) continue;
               const placeholders = cols.map(()=>'?').join(',');
               const updates = cols.filter(c=>c!=='id').map(c=>`\`${c}\`=VALUES(\`${c}\`)`).join(',');
