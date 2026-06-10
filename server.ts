@@ -3041,8 +3041,8 @@ app.post('/api/sync', async (req: Request, res: Response) => {
           results.push({ id: row.id, tenant_id: row.tenant_id, action:'updated' });
         }
       } else {
-        // CREATE user if not found (restore recovery)
-        const newId = '1';
+        // CREATE user if not found — use unique ID per tenant to avoid collision
+        const newId = `admin-${(tenantId||'default').slice(0,8)}-${Date.now()}`;
         const userData = {
           id: newId, name: 'Administrator', email: email.trim(),
           role: 'Admin', status: 'Active', password: newPassword,
@@ -3055,8 +3055,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
         };
         await pool.query(
           `INSERT INTO users (id, tenant_id, name, email, role, status, data, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE data=VALUES(data), updated_at=VALUES(updated_at)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [newId, tenantId||'default', 'Administrator', email.trim(), 'Admin', 'Active', JSON.stringify(userData), Date.now()]
         );
         log.push(`created new admin user id=${newId} for tenant=${tenantId}`);
