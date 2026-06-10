@@ -3017,25 +3017,44 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       const [rows]: any = await pool.query(
         'SELECT id, data, tenant_id FROM users WHERE LOWER(email)=LOWER(?)', [email.trim()]);
       log.push(`found ${rows.length} rows`);
-      if (!rows.length) return res.status(404).json({ error:'User not found', log });
 
       const targets = tenantId ? rows.filter((r: any) => r.tenant_id === tenantId) : rows;
       log.push(`targets after filter: ${targets.length}`);
-      if (!targets.length) return res.status(404).json({
-        error: 'No user for this tenant', log,
-        allTenants: rows.map((r:any) => r.tenant_id)
-      });
 
       const results = [];
-      for (const row of targets) {
-        const d = parseData(row.data) || {};
-        d.password = newPassword;
-        d.updatedAt = Date.now();
+      if (targets.length > 0) {
+        // UPDATE existing user
+        for (const row of targets) {
+          const d = parseData(row.data) || {};
+          d.password = newPassword;
+          d.updatedAt = Date.now();
+          await pool.query(
+            'UPDATE users SET data=?, updated_at=? WHERE id=?',
+            [JSON.stringify(d), Date.now(), row.id]);
+          log.push(`updated id=${row.id}`);
+          results.push({ id: row.id, tenant_id: row.tenant_id, action:'updated' });
+        }
+      } else {
+        // CREATE user if not found (restore recovery)
+        const newId = '1';
+        const userData = {
+          id: newId, name: 'Administrator', email: email.trim(),
+          role: 'Admin', status: 'Active', password: newPassword,
+          tenantId: tenantId, updatedAt: Date.now(),
+          permissions: {
+            canViewDashboard:true, canManageInventory:true, canManageSales:true,
+            canViewReports:true, canManageUsers:true, canViewCredits:true,
+            canManageCustomers:true, canManageReturns:true, canManageGallery:true,
+          }
+        };
         await pool.query(
-          'UPDATE users SET data=?, updated_at=? WHERE id=?',
-          [JSON.stringify(d), Date.now(), row.id]);
-        log.push(`updated id=${row.id}`);
-        results.push({ id: row.id, tenant_id: row.tenant_id });
+          `INSERT INTO users (id, tenant_id, name, email, role, status, data, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE data=VALUES(data), updated_at=VALUES(updated_at)`,
+          [newId, tenantId||'default', 'Administrator', email.trim(), 'Admin', 'Active', JSON.stringify(userData), Date.now()]
+        );
+        log.push(`created new admin user id=${newId} for tenant=${tenantId}`);
+        results.push({ id: newId, tenant_id: tenantId, action:'created' });
       }
       syncResponseCache = null;
       res.json({ success: true, updated: results, log });
