@@ -3171,37 +3171,28 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       }
 
       if (format === 'sql') {
-        // Generate SQL INSERT statements
-        let sql = `-- Royal ERP Backup
--- Tenant: ${tenantId||'ALL'}
--- Date: ${new Date().toISOString()}
-
-`;
-        sql += `SET FOREIGN_KEY_CHECKS=0;
-
-`;
+        const NL = '\n';
+        let sql = '-- Royal ERP Backup' + NL + '-- Tenant: ' + (tenantId||'ALL') + NL + '-- Date: ' + new Date().toISOString() + NL + NL;
+        sql += 'SET FOREIGN_KEY_CHECKS=0;' + NL + NL;
         for (const [table, rows] of Object.entries(backup.tables) as [string,any[]][]) {
           if (!rows.length) continue;
-          const cols = Object.keys(rows[0]).map(c => `\`${c}\``).join(', ');
-          sql += `-- ${table} (${rows.length} rows)
-`;
+          const cols = Object.keys(rows[0]).map((c:string) => '`' + c + '`').join(', ');
+          sql += '-- ' + table + ' (' + rows.length + ' rows)' + NL;
           for (const row of rows) {
             const vals = Object.values(row).map((v: any) => {
               if (v === null || v === undefined) return 'NULL';
               if (typeof v === 'number') return String(v);
               return "'" + String(v).split('\\').join('\\\\').split("'").join("''") + "'";
             }).join(', ');
-            sql += `INSERT INTO \`${table}\` (${cols}) VALUES (${vals}) ON DUPLICATE KEY UPDATE ${Object.keys(rows[0]).filter(k=>k!=='id').map(k=>`\`${k}\`=VALUES(\`${k}\`)`).join(', ')};
-`;
+            const updates = Object.keys(rows[0]).filter((k:string)=>k!=='id').map((k:string)=>'`'+k+'`=VALUES(`'+k+'`)').join(', ');
+            sql += 'INSERT INTO `' + table + '` (' + cols + ') VALUES (' + vals + ') ON DUPLICATE KEY UPDATE ' + updates + ';' + NL;
           }
-          sql += '
-';
+          sql += NL;
         }
-        sql += `SET FOREIGN_KEY_CHECKS=1;
-`;
+        sql += 'SET FOREIGN_KEY_CHECKS=1;' + NL;
         const slug = tenantId ? tenantId.replace(/[^a-z0-9]/gi,'-') : 'full';
         res.setHeader('Content-Type','text/plain');
-        res.setHeader('Content-Disposition',`attachment; filename="royal-erp-backup-${slug}-${Date.now()}.sql"`);
+        res.setHeader('Content-Disposition','attachment; filename="royal-erp-backup-' + slug + '-' + Date.now() + '.sql"');
         return res.send(sql);
       }
 
