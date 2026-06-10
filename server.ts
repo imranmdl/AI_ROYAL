@@ -2891,32 +2891,40 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  /** POST /api/admin/reset-user-password?key=test
-   * Emergency: reset a user's password by email + tenantId.
-   */
+  /** POST /api/admin/reset-user-password?key=test */
   app.post('/api/admin/reset-user-password', async (req: Request, res: Response) => {
     if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
     const { email, newPassword, tenantId } = req.body;
     if (!email || !newPassword) return res.status(400).json({ error:'email + newPassword required' });
     if (!pool || !dbHealthy) return res.status(503).json({ error:'DB not connected' });
+    const log: string[] = [];
     try {
       const [rows]: any = await pool.query(
         'SELECT id, data, tenant_id FROM users WHERE LOWER(email)=LOWER(?)', [email.trim()]);
-      if (!rows.length) return res.status(404).json({ error:'User not found: ' + email });
+      log.push(`found ${rows.length} rows`);
+      if (!rows.length) return res.status(404).json({ error:'User not found', log });
+
+      const targets = tenantId ? rows.filter((r: any) => r.tenant_id === tenantId) : rows;
+      log.push(`targets after filter: ${targets.length}`);
+      if (!targets.length) return res.status(404).json({
+        error: 'No user for this tenant', log,
+        allTenants: rows.map((r:any) => r.tenant_id)
+      });
+
       const results = [];
-      for (const row of rows) {
-        if (tenantId && row.tenant_id !== tenantId) continue;
+      for (const row of targets) {
         const d = parseData(row.data) || {};
         d.password = newPassword;
-        // Write to BOTH data json AND dedicated password_col
+        d.updatedAt = Date.now();
         await pool.query(
-          'UPDATE users SET data=?, password_col=?, updated_at=? WHERE id=?',
-          [JSON.stringify(d), newPassword, Date.now(), row.id]);
+          'UPDATE users SET data=?, updated_at=? WHERE id=?',
+          [JSON.stringify(d), Date.now(), row.id]);
+        log.push(`updated id=${row.id}`);
         results.push({ id: row.id, tenant_id: row.tenant_id });
       }
-      if (!results.length) return res.status(404).json({ error:'No matching user for tenantId: ' + tenantId });
-      res.json({ success: true, updated: results });
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+      syncResponseCache = null;
+      res.json({ success: true, updated: results, log });
+    } catch (e: any) { res.status(500).json({ error: e.message, log }); }
   });
 
   /** POST /api/admin/migrate-default-tenant?key=test */
