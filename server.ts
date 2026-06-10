@@ -832,7 +832,10 @@ async function startServer() {
       };
 
       // Recovery Check: If in-memory data is newer, it means we had offline writes.
-      if (inMemoryDb && inMemoryDb.lastUpdated > (dbData.lastUpdated || 0)) {
+      // Only run recovery if inMemoryDb has real default-tenant data
+      // After migration, default tenant is empty so DB always shows v0 — skip recovery
+      const hasDefaultData = inMemoryDb?.products?.length > 0 || inMemoryDb?.sales?.length > 0;
+      if (hasDefaultData && inMemoryDb && inMemoryDb.lastUpdated > (dbData.lastUpdated || 0)) {
         console.log(`[RECOVERY] In-memory data (v${inMemoryDb.lastUpdated}) is newer than DB (v${dbData.lastUpdated}).`);
         const recoveryData = { ...inMemoryDb };
         syncInMemoryToRelationalDb(recoveryData).catch(err => console.error('[RECOVERY SYNC FAILED]', err.message));
