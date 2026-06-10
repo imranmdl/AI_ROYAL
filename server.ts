@@ -3284,11 +3284,34 @@ app.post('/api/sync', async (req: Request, res: Response) => {
               const entries = Object.entries(row).filter(([k]) => !skipCols.has(k));
               const cols = entries.map(([k]) => k);
               // JSON-type columns need to be serialized back to string for MySQL
-              const vals = entries.map(([,v]) => {
+              let vals = entries.map(([,v]) => {
                 if (v !== null && typeof v === 'object') return JSON.stringify(v);
                 return v;
               });
               if (!cols.length) continue;
+
+              // For users table: use tenant-scoped ID to avoid collision (id='1' shared across tenants)
+              if (table === 'users' && tenantId) {
+                const idIdx = cols.indexOf('id');
+                if (idIdx >= 0) {
+                  const origId = String(vals[idIdx]);
+                  // Only prefix if the ID looks like a simple number or doesn't have tenant prefix
+                  if (!origId.startsWith(tenantId.slice(0,8))) {
+                    vals = [...vals];
+                    vals[idIdx] = `${tenantId.slice(0,8)}-${origId}`;
+                    // Also update the data JSON to reflect new id
+                    const dataIdx = cols.indexOf('data');
+                    if (dataIdx >= 0) {
+                      try {
+                        const d = typeof vals[dataIdx]==='string' ? JSON.parse(vals[dataIdx]) : vals[dataIdx];
+                        d.id = vals[idIdx];
+                        vals[dataIdx] = JSON.stringify(d);
+                      } catch {}
+                    }
+                  }
+                }
+              }
+
               const placeholders = cols.map(()=>'?').join(',');
               const updates = cols.filter(c=>c!=='id').map(c=>`\`${c}\`=VALUES(\`${c}\`)`).join(',');
               await conn.query(
