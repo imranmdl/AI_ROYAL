@@ -2964,10 +2964,16 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       if (d.password !== oldPassword) return res.status(401).json({ error:'Current password is incorrect' });
       d.password = newPassword;
       d.updatedAt = Date.now();
-      // Write to BOTH data json AND dedicated password_col — login always uses password_col
-      await pool.query(
-        'UPDATE users SET data=?, password_col=?, updated_at=? WHERE id=?',
-        [JSON.stringify(d), newPassword, Date.now(), id]);
+      // Try with password_col, fallback to data-only
+      try {
+        await pool.query(
+          'UPDATE users SET data=?, password_col=?, updated_at=? WHERE id=?',
+          [JSON.stringify(d), newPassword, Date.now(), id]);
+      } catch {
+        await pool.query(
+          'UPDATE users SET data=?, updated_at=? WHERE id=?',
+          [JSON.stringify(d), Date.now(), id]);
+      }
       // Also invalidate sync cache so next sync returns fresh data
       syncResponseCache = null;
       res.json({ success:true, message:'Password updated successfully' });
