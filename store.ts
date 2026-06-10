@@ -204,7 +204,7 @@ class DataStore {
     // ── Tenant guard: runs BEFORE first sync ─────────────────────────────────
     const rawUrlTenant = new URLSearchParams(window.location.search).get('tenant') || '';
     const urlTenant    = rawUrlTenant === 'default' ? '' : rawUrlTenant;
-    const storedJwt    = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+    const storedJwt    = typeof localStorage !== 'undefined' ? this.getJwt() : '';
     const storedSlug   = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_tenant_slug') || '' : '';
     const isCapacitorApp = !!(window as any).Capacitor ||
       navigator.userAgent.includes('RoyalERP-Android') ||
@@ -217,15 +217,15 @@ class DataStore {
           const payload = JSON.parse(atob(storedJwt.split('.')[1]));
           if (payload.tenantId && payload.tenantId !== 'default') {
             console.log('[STORE] Base URL: clearing cross-tenant JWT', payload.tenantId);
-            localStorage.setItem('royal_jwt', '');
+            this.clearJwt();
           }
-        } catch { localStorage.setItem('royal_jwt', ''); }
+        } catch { this.clearJwt(); }
 
       } else if (urlTenant && storedSlug && storedSlug !== urlTenant) {
         // URL tenant slug changed — ALWAYS clear JWT to prevent data leak
         // e.g. stored=mudhol but URL=taps-and-tiles2-54f8 → wipe immediately
         console.log(`[STORE] Tenant switch detected (${storedSlug} → ${urlTenant}): clearing JWT`);
-        localStorage.setItem('royal_jwt', '');
+        this.clearJwt();
         localStorage.setItem('royal_tenant_slug', urlTenant);
         localStorage.removeItem('royal_erp_cache');
         this.products = []; this.sales = []; this.purchases = [];
@@ -251,6 +251,34 @@ class DataStore {
     }
   }
 
+  // ── Tenant-scoped JWT key ────────────────────────────────────────────────
+  // Each tenant slug gets its own localStorage key so two browser tabs
+  // with different tenants can never read each other's JWT.
+  private getJwtKey(): string {
+    const slug = typeof window !== 'undefined'
+      ? (new URLSearchParams(window.location.search).get('tenant') || 
+         localStorage.getItem('royal_app_tenant') || 'default')
+      : 'default';
+    return `royal_jwt_${slug}`;
+  }
+  private getJwt(): string {
+    if (typeof localStorage === 'undefined') return '';
+    // Try tenant-scoped key first, fall back to legacy key for backwards compat
+    return localStorage.getItem(this.getJwtKey())
+        || localStorage.getItem('royal_jwt')  // legacy fallback
+        || '';
+  }
+  private setJwt(token: string) {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(this.getJwtKey(), token);
+    localStorage.setItem('royal_jwt', token); // keep legacy key in sync
+  }
+  private clearJwt() {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem(this.getJwtKey());
+    localStorage.setItem('royal_jwt', '');
+  }
+
   private getApiUrl(path: string) {
     const base = (this.settings as any).backendUrl || '';
     if (!base) return path;
@@ -268,7 +296,7 @@ class DataStore {
         ...(filters?.stockStatus && { stockStatus: filters.stockStatus }),
         ...(filters?.grade && { grade: filters.grade }), ...(filters?.status && { status: filters.status }),
       });
-      const jwt = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+      const jwt = typeof localStorage !== 'undefined' ? this.getJwt() : '';
       const headers: Record<string,string> = {};
       if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
       const r = await fetch(this.getApiUrl(`/api/products?${q}`), { headers });
@@ -277,7 +305,7 @@ class DataStore {
   }
   public async fetchSalesPage(page = 1, limit = 50, search = '') {
     try {
-      const jwt = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+      const jwt = typeof localStorage !== 'undefined' ? this.getJwt() : '';
       const headers: Record<string,string> = {};
       if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
       const r = await fetch(this.getApiUrl(`/api/sales?${new URLSearchParams({ page: String(page), limit: String(limit), search })}`), { headers });
@@ -291,7 +319,7 @@ class DataStore {
         ...(filters?.endDate && { endDate: filters.endDate }),
         ...(filters?.dailyLatest && { dailyLatest: 'true' }),
       });
-      const jwt2 = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+      const jwt2 = typeof localStorage !== 'undefined' ? this.getJwt() : '';
       const gh: Record<string,string> = {}; if (jwt2) gh['Authorization'] = `Bearer ${jwt2}`;
       const r = await fetch(this.getApiUrl(`/api/gallery-leads?${q}`), { headers: gh });
       return r.ok ? r.json() : { data: [], total: 0, page, limit };
@@ -327,7 +355,7 @@ class DataStore {
       // Only send JWT when actually on a tenant URL or running inside the mobile app
       // Never send JWT on the default base URL — would filter to wrong tenant
       const jwt = (currentUrlTenant || isCapacitorApp)
-        ? (typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '')
+        ? (typeof localStorage !== 'undefined' ? this.getJwt() : '')
         : '';
       const headers: Record<string,string> = { 'Accept-Encoding': 'gzip' };
       if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
@@ -460,7 +488,7 @@ class DataStore {
       }
       // Store JWT token for subsequent API calls
       if (data.token) {
-        localStorage.setItem('royal_jwt', data.token);
+        this.setJwt(data.token);
         localStorage.setItem('royal_tenant_slug', tenantSlug);
         localStorage.setItem('royal_tenant_id', data.user?.tenantId || '');
       }
@@ -494,7 +522,7 @@ class DataStore {
     // ── Single-tenant path: existing flow (admin@royal.com at base URL) ─────
     // Clear any tenant JWT that might be leftover from testing another shop
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('royal_jwt', '');
+      this.clearJwt();
       localStorage.removeItem('royal_app_tenant');
     }
     try {
@@ -573,7 +601,7 @@ class DataStore {
 
     // Direct DB endpoint — guaranteed to update the users table
     try {
-      const jwt = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+      const jwt = typeof localStorage !== 'undefined' ? this.getJwt() : '';
       const headers: Record<string,string> = { 'Content-Type': 'application/json' };
       if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
       const r = await fetch(this.getApiUrl(`/api/users/${this.currentUser?.id}/change-password`), {
