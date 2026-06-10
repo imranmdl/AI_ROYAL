@@ -268,13 +268,19 @@ class DataStore {
         ...(filters?.stockStatus && { stockStatus: filters.stockStatus }),
         ...(filters?.grade && { grade: filters.grade }), ...(filters?.status && { status: filters.status }),
       });
-      const r = await fetch(this.getApiUrl(`/api/products?${q}`));
+      const jwt = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+      const headers: Record<string,string> = {};
+      if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+      const r = await fetch(this.getApiUrl(`/api/products?${q}`), { headers });
       return r.ok ? r.json() : { data: [], total: 0, page, limit };
     } catch { return { data: [], total: 0, page, limit }; }
   }
   public async fetchSalesPage(page = 1, limit = 50, search = '') {
     try {
-      const r = await fetch(this.getApiUrl(`/api/sales?${new URLSearchParams({ page: String(page), limit: String(limit), search })}`));
+      const jwt = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+      const headers: Record<string,string> = {};
+      if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+      const r = await fetch(this.getApiUrl(`/api/sales?${new URLSearchParams({ page: String(page), limit: String(limit), search })}`), { headers });
       return r.ok ? r.json() : { data: [], total: 0, page, limit };
     } catch { return { data: [], total: 0, page, limit }; }
   }
@@ -285,7 +291,9 @@ class DataStore {
         ...(filters?.endDate && { endDate: filters.endDate }),
         ...(filters?.dailyLatest && { dailyLatest: 'true' }),
       });
-      const r = await fetch(this.getApiUrl(`/api/gallery-leads?${q}`));
+      const jwt2 = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+      const gh: Record<string,string> = {}; if (jwt2) gh['Authorization'] = `Bearer ${jwt2}`;
+      const r = await fetch(this.getApiUrl(`/api/gallery-leads?${q}`), { headers: gh });
       return r.ok ? r.json() : { data: [], total: 0, page, limit };
     } catch { return { data: [], total: 0, page, limit }; }
   }

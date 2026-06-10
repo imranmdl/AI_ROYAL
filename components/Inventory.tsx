@@ -135,7 +135,9 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
   useEffect(() => {
     const fetchFilters = async () => {
       try {
-        const res = await fetch('/api/products/filters');
+        const jwtF = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+        const hF: Record<string,string> = {}; if (jwtF) hF['Authorization'] = `Bearer ${jwtF}`;
+        const res = await fetch('/api/products/filters', { headers: hF });
         if (res.ok) {
           const data = await res.ok ? await res.json() : null;
           if (data) setFilterOptions(data);
