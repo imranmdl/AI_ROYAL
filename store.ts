@@ -557,7 +557,23 @@ class DataStore {
   async updateUser(id: string, up: Partial<User>) { const now = Date.now(); this.users = this.users.map(u => u.id === id ? { ...u, ...up, updatedAt: now } : u); const upd = this.users.find(u => u.id === id); if (upd) await this.persistUser(upd); await this.save(); }
   async updatePermissions(id: string, p: UserPermissions) { const now = Date.now(); this.users = this.users.map(u => u.id === id ? { ...u, permissions: p, updatedAt: now } : u); const upd = this.users.find(u => u.id === id); if (upd) await this.persistUser(upd); await this.save(); }
   async deleteUser(id: string) { this.users = this.users.filter(u => u.id !== id); this.save(); try { await fetch(this.getApiUrl(`/api/users/${id}`), { method: 'DELETE' }); } catch {} }
-  async updateSelfPassword(o: string, n: string) { if (this.currentUser?.password === o) { this.users = this.users.map(u => u.id === this.currentUser?.id ? { ...u, password: n } : u); await this.save(); return true; } return false; }
+  async updateSelfPassword(o: string, n: string) {
+    // Get the actual stored password — currentUser from login may not have it
+    const storedUser = this.users.find(u => u.id === this.currentUser?.id);
+    const storedPass = storedUser?.password || this.currentUser?.password;
+
+    if (storedPass === o) {
+      this.users = this.users.map(u => u.id === this.currentUser?.id
+        ? { ...u, password: n, updatedAt: Date.now() } : u);
+      const upd = this.users.find(u => u.id === this.currentUser?.id);
+      // Persist new password to users table — login reads from there
+      if (upd) await this.persistUser(upd);
+      if (this.currentUser) (this.currentUser as any).password = n;
+      await this.save();
+      return true;
+    }
+    return false;
+  }
 
   addProduct(p: Product) {
     // Duplicate guard: block if same name+size already exists
