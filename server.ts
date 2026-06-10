@@ -582,7 +582,6 @@ async function initDatabase(config: DbConfig = activeDbConfig) {
 
     // Ensure default admin user exists
     const [userCountRows]: any = await connection.query('SELECT COUNT(*) as count FROM users');
-    const [userCountRows]: any = await connection.query('SELECT COUNT(*) as count FROM users');
     // Only provision default admin if NO users exist at all in the entire users table
     if (userCountRows[0].count === 0) {
       console.log('💡 [SYSTEM] No users found. Provisioning default Administrator node...');
