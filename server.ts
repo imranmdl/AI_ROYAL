@@ -3252,10 +3252,12 @@ app.post('/api/sync', async (req: Request, res: Response) => {
           log.push(`Cleared existing data for tenant ${tenantId}`);
         }
 
-        // Generated/virtual columns that must be excluded from INSERT
         const GENERATED_COLS: Record<string, string[]> = {
           products: ['size', 'grade', 'shade_no', 'batch_no'],
         };
+        // sourceTenantId: only restore rows from this tenant in the backup
+        // If not provided, restore all rows (useful for per-tenant backups)
+        const sourceTenantId = (req.query.sourceTenantId as string) || '';
 
         for (const [table, rows] of Object.entries(backup.tables) as [string,any[]][]) {
           if (!Array.isArray(rows) || !rows.length) { results[table]=0; continue; }
@@ -3263,11 +3265,11 @@ app.post('/api/sync', async (req: Request, res: Response) => {
           let count = 0;
           for (const row of rows) {
             try {
-              // If target tenant specified AND this row belongs to a DIFFERENT tenant, skip it
-              // This prevents cross-tenant contamination when restoring from a full DB backup
-              if (tenantId && 'tenant_id' in row && row.tenant_id && row.tenant_id !== tenantId) {
-                continue; // skip — this row belongs to another tenant
+              // Filter by source tenant if specified (for full-DB backups)
+              if (sourceTenantId && 'tenant_id' in row && row.tenant_id && row.tenant_id !== sourceTenantId) {
+                continue; // belongs to a different tenant in this backup
               }
+              // Remap to target tenant
               if (tenantId && 'tenant_id' in row) row.tenant_id = tenantId;
               // Filter out generated/virtual columns
               const entries = Object.entries(row).filter(([k]) => !skipCols.has(k));

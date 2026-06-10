@@ -79,11 +79,13 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ tenants, superAdminKey = 
   const [backupMsg,     setBackupMsg]     = useState('');
 
   // ── Restore state ───────────────────────────────────────────────────────────
-  const [restoreFile,    setRestoreFile]    = useState<File|null>(null);
-  const [restoreTenant,  setRestoreTenant]  = useState<string>('');
-  const [restoreMode,    setRestoreMode]    = useState<'merge'|'replace'>('merge');
-  const [restoreLoading, setRestoreLoading] = useState(false);
-  const [restoreResult,  setRestoreResult]  = useState<any>(null);
+  const [restoreFile,        setRestoreFile]        = useState<File|null>(null);
+  const [restoreTenant,      setRestoreTenant]      = useState<string>('');
+  const [restoreMode,        setRestoreMode]        = useState<'merge'|'replace'>('merge');
+  const [restoreLoading,     setRestoreLoading]     = useState(false);
+  const [restoreResult,      setRestoreResult]      = useState<any>(null);
+  const [backupTenants,      setBackupTenants]      = useState<string[]>([]);   // tenants found in uploaded backup
+  const [sourceTenant,       setSourceTenant]       = useState<string>('');     // which tenant to pull from backup
   const fileRef = useRef<HTMLInputElement>(null);
 
   // ── Download helper ─────────────────────────────────────────────────────────
@@ -127,7 +129,7 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ tenants, superAdminKey = 
     try {
       const text   = await restoreFile.text();
       const parsed = JSON.parse(text);
-      const query  = `?key=${KEY}&tenantId=${restoreTenant}&mode=${restoreMode}`;
+      const query  = `?key=${KEY}&tenantId=${restoreTenant}&mode=${restoreMode}${sourceTenant ? `&sourceTenantId=${sourceTenant}` : ''}`;
       const r      = await fetch(`${BASE}/api/admin/restore${query}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -233,7 +235,26 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ tenants, superAdminKey = 
             className={`relative border-2 border-dashed rounded-xl p-6 cursor-pointer transition-all text-center ${restoreFile ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-white/20 hover:border-white/40 bg-white/5'}`}>
             <input ref={fileRef} type="file" accept=".json"
               className="hidden"
-              onChange={e=>{ const f=e.target.files?.[0]; if(f) setRestoreFile(f); }} />
+              onChange={async e=>{ 
+                const f=e.target.files?.[0]; 
+                if(!f) return;
+                setRestoreFile(f);
+                setBackupTenants([]);
+                setSourceTenant('');
+                try {
+                  const text = await f.text();
+                  const parsed = JSON.parse(text);
+                  // Collect all unique tenant_ids across all tables
+                  const ids = new Set<string>();
+                  for (const rows of Object.values(parsed.tables||{}) as any[][]) {
+                    if (!Array.isArray(rows)) continue;
+                    rows.forEach((r:any) => { if (r.tenant_id) ids.add(r.tenant_id); });
+                  }
+                  const found = [...ids];
+                  setBackupTenants(found);
+                  if (found.length === 1) setSourceTenant(found[0]); // auto-select if only one
+                } catch {}
+              }} />
             {restoreFile ? (
               <div className="space-y-1">
                 <div className="text-emerald-400 font-black text-sm"><i className="fas fa-check-circle mr-2"></i>{restoreFile.name}</div>
@@ -247,6 +268,27 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ tenants, superAdminKey = 
               </div>
             )}
           </div>
+
+          {/* Source tenant (from backup) */}
+          {backupTenants.length > 1 && (
+            <div className="space-y-2">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                Source Tenant in Backup
+                <span className="ml-2 text-amber-400 normal-case font-bold text-[9px]">({backupTenants.length} tenants found)</span>
+              </label>
+              <select value={sourceTenant} onChange={e=>setSourceTenant(e.target.value)}
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white font-bold text-sm outline-none focus:border-amber-400">
+                <option value="">All tenants (restore everything)</option>
+                {backupTenants.map(id=><option key={id} value={id}>{id}</option>)}
+              </select>
+            </div>
+          )}
+          {backupTenants.length === 1 && (
+            <div className="text-emerald-400 text-[10px] font-bold px-1 flex items-center gap-1">
+              <i className="fas fa-check-circle"></i>
+              Single-tenant backup: {sourceTenant}
+            </div>
+          )}
 
           {/* Target tenant */}
           <div className="space-y-2">
