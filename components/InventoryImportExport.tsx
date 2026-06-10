@@ -127,86 +127,104 @@ const InventoryImportExport: React.FC = () => {
   };
 
   // ── Export ────────────────────────────────────────────────────────────
+  const fetchAllProducts = async (): Promise<any[]> => {
+    try {
+      const jwt = localStorage.getItem('royal_jwt') || '';
+      const headers: Record<string,string> = {};
+      if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+      let all: any[] = [];
+      let page = 1;
+      while (true) {
+        const r = await fetch(`/api/products?page=${page}&limit=100&status=All&category=All&brand=All&size=All&stockStatus=All&grade=All`, { headers });
+        const d = await r.json();
+        if (!d.data?.length) break;
+        all = [...all, ...d.data];
+        if (all.length >= d.total || d.data.length < 100) break;
+        page++;
+      }
+      return all.length > 0 ? all : store.products;
+    } catch { return store.products; }
+  };
+
+  const mapProductCol = (p: any, col: string, cat: string): string => {
+    switch (col) {
+      case 'Product Name':          return p.name || '';
+      case 'Brand':                 return p.brand || '';
+      case 'Size':                  return p.size || '';
+      case 'Grade':                 return p.grade || 'Premium';
+      case 'Shade No':              return p.shadeNo || '';
+      case 'Tiles Per Box':         return String(p.tilesPerBox || 4);
+      case 'Sqft Per Box':          return String(p.sqftPerBox || 16);
+      case 'Purchase Price':        return String(p.purchasePrice || 0);
+      case 'Purchase Rate Per Sqft':return String(p.costPerSqft || 0);
+      case 'Transport Pct':         return String(p.transportCost || 0);
+      case 'Selling Price':         return String(p.sellingPrice || 0);
+      case 'Selling Price Per Sqft':return String(p.sellingPricePerSqft || 0);
+      case 'Stock Boxes':           return String(p.stockBoxes || 0);
+      case 'Stock Slabs':           return String(p.slabs?.filter((s: any) => !s.isSold).length || 0);
+      case 'Stock':                 return String(p.stockBoxes || 0);
+      case 'Reorder Level':         return String(p.reorderLevel || 10);
+      case 'Vendor Name':           return p.lastPurchaseVendor || '';
+      case 'Finish Type':           return p.kadapaType || p.finish || '';
+      case 'Height (Ft)':           return String(p.slabHeightFt || (p.slabs?.[0]?.heightFt) || '');
+      case 'Width (Ft)':            return String(p.slabLengthFt || (p.slabs?.[0]?.lengthFt) || '');
+      case 'Unit':                  return p.unitType || 'Box';
+      case 'Weight Grams':          return String(p.baseWeightGrams || '');
+      case 'Category':              return p.category || cat;
+      case 'Status':                return p.status || 'Active';
+      default:                      return '';
+    }
+  };
+
   const exportCategory_ = (cat: string) => {
     const cols = CATEGORY_COLUMNS[cat] || CATEGORY_COLUMNS['Wall Tile'];
     if (includeStock) {
-      // Fill with live inventory data — deduplicate by name+size
-      const seen = new Set<string>();
-      const products = store.products
-        .filter(p => p.category === cat)
-        .filter(p => {
-          const key = `${p.name.trim().toLowerCase()}|${(p.size||'').trim().toLowerCase()}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-      const rows = products.map(p => cols.map(col => {
-        switch (col) {
-          case 'Product Name':          return p.name;
-          case 'Brand':                 return p.brand || '';
-          case 'Size':                  return p.size || '';
-          case 'Grade':                 return (p as any).grade || 'Premium';
-          case 'Shade No':              return (p as any).shadeNo || '';
-          case 'Tiles Per Box':         return p.tilesPerBox?.toString() || '4';
-          case 'Sqft Per Box':          return p.sqftPerBox?.toString() || '16';
-          case 'Purchase Price':        return p.purchasePrice?.toString() || '0';
-          case 'Purchase Rate Per Sqft':return (p as any).costPerSqft?.toString() || '0';
-          case 'Transport Pct':         return p.transportCost?.toString() || '0';
-          case 'Selling Price':         return p.sellingPrice?.toString() || '0';
-          case 'Selling Price Per Sqft':return (p as any).sellingPricePerSqft?.toString() || '0';
-          case 'Stock Boxes':           return p.stockBoxes?.toString() || '0';
-          case 'Stock Slabs':           return (p.slabs?.filter(s => !s.isSold).length || 0).toString();
-          case 'Stock':                 return p.stockBoxes?.toString() || '0';
-          case 'Reorder Level':         return p.reorderLevel?.toString() || '10';
-          case 'Vendor Name':           return (p as any).lastPurchaseVendor || '';
-          case 'Finish Type':           return (p as any).kadapaType || (p as any).finish || '';
-          case 'Height (Ft)':           return (p as any).slabHeightFt?.toString()
-                                          || ((p.slabs?.[0] as any)?.heightFt)?.toString()
-                                          || '';
-          case 'Width (Ft)':            return (p as any).slabLengthFt?.toString()
-                                          || ((p.slabs?.[0] as any)?.lengthFt)?.toString()
-                                          || '';
-          case 'Unit':                  return p.unitType || 'Bag';
-          case 'Weight Grams':          return (p as any).baseWeightGrams?.toString() || '';
-          case 'Category':              return p.category || cat;
-          case 'Status':                return p.status || 'Active';
-          default:                      return '';
-        }
-      }));
-      const sample = rows.length === 0 ? (SAMPLE_ROWS[cat] || []) : [];
-      const content = buildCsv(cols, [...(rows.length > 0 ? rows : sample)]);
-      downloadCsv(`Royal_${cat.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.csv`, content);
+      fetchAllProducts().then(allProds => {
+        const seen = new Set<string>();
+        const products = allProds
+          .filter((p: any) => p.category === cat)
+          .filter((p: any) => {
+            const key = `${(p.name||'').trim().toLowerCase()}|${(p.size||'').trim().toLowerCase()}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        const rows = products.map((p: any) => cols.map(col => mapProductCol(p, col, cat)));
+        const sample = rows.length === 0 ? (SAMPLE_ROWS[cat] || []) : [];
+        const csvContent = buildCsv(cols, rows.length > 0 ? rows : sample);
+        downloadCsv(`Royal_${cat.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.csv`, csvContent);
+      });
     } else {
-      // Download template only
       const sample = SAMPLE_ROWS[cat] || [];
-      const content = buildCsv(cols, sample);
-      downloadCsv(`Template_${cat.replace(/\s+/g,'_')}.csv`, content);
+      const csvContent = buildCsv(cols, sample);
+      downloadCsv(`Template_${cat.replace(/\s+/g,'_')}.csv`, csvContent);
     }
   };
 
   const exportAll = () => {
-    // Multi-sheet: one CSV with Sheet column — deduplicated by name+size+category
     const allCols = ['Sheet', 'Product Name', 'Brand', 'Category', 'Size', 'Unit', 'Purchase Price', 'Selling Price', 'Stock', 'Status', 'Vendor Name'];
-    const rows: string[][] = [];
-    const seen = new Set<string>();
-    store.products
-      .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))  // stable order
-      .forEach(p => {
-        const key = `${p.name.trim().toLowerCase()}|${(p.size||'').trim().toLowerCase()}|${(p.category||'').trim().toLowerCase()}`;
-        if (seen.has(key)) return;  // skip duplicate
-        seen.add(key);
-        rows.push([
-          p.category, p.name, p.brand || '', p.category, p.size || '',
-          p.unitType || 'Box',
-          p.purchasePrice?.toString() || '0',
-          p.sellingPrice?.toString() || '0',
-          p.stockBoxes?.toString() || '0',
-          p.status || 'Active',
-          (p as any).lastPurchaseVendor || '',
-        ]);
-      });
-    downloadCsv(`Royal_Full_Inventory_${new Date().toISOString().slice(0,10)}.csv`, buildCsv(allCols, rows));
+    fetchAllProducts().then(allProds => {
+      const rows: string[][] = [];
+      const seen = new Set<string>();
+      allProds
+        .slice()
+        .sort((a: any, b: any) => (a.name||'').localeCompare(b.name||''))
+        .forEach((p: any) => {
+          const key = `${(p.name||'').trim().toLowerCase()}|${(p.size||'').trim().toLowerCase()}|${(p.category||'').trim().toLowerCase()}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          rows.push([
+            p.category, p.name, p.brand || '', p.category, p.size || '',
+            p.unitType || 'Box',
+            String(p.purchasePrice || 0),
+            String(p.sellingPrice || 0),
+            String(p.stockBoxes || 0),
+            p.status || 'Active',
+            p.lastPurchaseVendor || '',
+          ]);
+        });
+      downloadCsv(`Royal_Full_Inventory_${new Date().toISOString().slice(0,10)}.csv`, buildCsv(allCols, rows));
+    });
   };
 
   // ── File parsing ──────────────────────────────────────────────────────
