@@ -558,21 +558,28 @@ class DataStore {
   async updatePermissions(id: string, p: UserPermissions) { const now = Date.now(); this.users = this.users.map(u => u.id === id ? { ...u, permissions: p, updatedAt: now } : u); const upd = this.users.find(u => u.id === id); if (upd) await this.persistUser(upd); await this.save(); }
   async deleteUser(id: string) { this.users = this.users.filter(u => u.id !== id); this.save(); try { await fetch(this.getApiUrl(`/api/users/${id}`), { method: 'DELETE' }); } catch {} }
   async updateSelfPassword(o: string, n: string) {
-    // Get the actual stored password — currentUser from login may not have it
-    const storedUser = this.users.find(u => u.id === this.currentUser?.id);
-    const storedPass = storedUser?.password || this.currentUser?.password;
+    // Get stored password — check users array first (has full data from sync)
+    const storedUser = this.users.find((u: any) => u.id === this.currentUser?.id);
+    const storedPass = storedUser?.password || (this.currentUser as any)?.password;
+    if (storedPass !== o) return false;
 
-    if (storedPass === o) {
-      this.users = this.users.map(u => u.id === this.currentUser?.id
-        ? { ...u, password: n, updatedAt: Date.now() } : u);
-      const upd = this.users.find(u => u.id === this.currentUser?.id);
-      // Persist new password to users table — login reads from there
-      if (upd) await this.persistUser(upd);
-      if (this.currentUser) (this.currentUser as any).password = n;
-      await this.save();
-      return true;
-    }
-    return false;
+    // Direct DB endpoint — guaranteed to update the users table
+    try {
+      const jwt = typeof localStorage !== 'undefined' ? localStorage.getItem('royal_jwt') || '' : '';
+      const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+      if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+      const r = await fetch(this.getApiUrl(`/api/users/${this.currentUser?.id}/change-password`), {
+        method: 'POST', headers,
+        body: JSON.stringify({ oldPassword: o, newPassword: n }),
+      });
+      if (!r.ok) { const err = await r.json().catch(()=>({error:'Unknown'})); console.error('[PWD]', err.error); return false; }
+    } catch (e) { console.error('[PWD] network error:', e); return false; }
+
+    // Update in-memory state
+    this.users = this.users.map((u: any) => u.id === this.currentUser?.id ? { ...u, password: n, updatedAt: Date.now() } : u);
+    if (this.currentUser) (this.currentUser as any).password = n;
+    await this.save();
+    return true;
   }
 
   addProduct(p: Product) {

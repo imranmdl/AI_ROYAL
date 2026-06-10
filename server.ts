@@ -2948,6 +2948,26 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  /** POST /api/users/:id/change-password — directly update password in DB */
+  app.post('/api/users/:id/change-password', async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { oldPassword, newPassword } = req.body;
+    if (!oldPassword || !newPassword) return res.status(400).json({ error:'oldPassword and newPassword required' });
+    if (!pool || !dbHealthy) return res.status(503).json({ error:'DB offline' });
+    try {
+      const [rows]: any = await pool.query('SELECT id, data FROM users WHERE id=?', [id]);
+      if (!rows.length) return res.status(404).json({ error:'User not found' });
+      const d = parseData(rows[0].data) || {};
+      if (d.password !== oldPassword) return res.status(401).json({ error:'Current password is incorrect' });
+      d.password = newPassword;
+      d.updatedAt = Date.now();
+      await pool.query('UPDATE users SET data=?, updated_at=? WHERE id=?', [JSON.stringify(d), Date.now(), id]);
+      // Also invalidate sync cache so next sync returns fresh data
+      syncResponseCache = null;
+      res.json({ success:true, message:'Password updated successfully' });
+    } catch (e:any) { res.status(500).json({ error:e.message }); }
+  });
+
   /** GET /api/superadmin/ping — no auth needed, confirms tenant API is active */
   app.get('/api/superadmin/ping', (_req: Request, res: Response) => {
     res.json({
