@@ -523,32 +523,9 @@ const SubscriptionPortal: React.FC<{ onClose?: () => void }> = ({ onClose }) => 
       .then(r => r.json())
       .then(data => {
         const subs: Record<string,Subscription> = load('royal_subscriptions', {});
-
-        // Always include the owner's shop (royal-mudhol) as first entry
-        const defaultShop: Tenant = {
-          id: 'royal-mudhol-d81d2d03', name: 'Royal Tiles & Granites (Owner)', slug: 'royal-mudhol',
-          owner_email: 'admin@royal.com', owner_phone: '',
-          status: 'active', created_at: 0,
-        };
-        const defaultSubs: Record<string,Subscription> = {
-          'royal-mudhol-d81d2d03': subs['royal-mudhol-d81d2d03'] || {
-            tenantId: 'royal-mudhol-d81d2d03', planId: 'pro', status: 'active',
-            billingCycle: 'yearly', startDate: '2024-01-01', endDate: '2099-12-31',
-            featureOverrides: {}, autoRenew: true,
-            notes: 'Owner shop — full Pro access permanently',
-          },
-        };
-
-        const allTenants = [
-          { ...defaultShop, sub: defaultSubs['royal-mudhol-d81d2d03'] },
-          ...(data.tenants||[]).map((t: Tenant) => ({ ...t, sub: subs[t.id] || defaultSub(t.id) })),
-        ];
+        // Use DB as single source of truth — no hardcoded tenants
+        const allTenants = (data.tenants||[]).map((t: Tenant) => ({ ...t, sub: subs[t.id] || defaultSub(t.id) }));
         setTenants(allTenants);
-        // Save default sub if not already saved
-        if (!subs['royal-mudhol-d81d2d03']) {
-          const updated = { ...subs, ...defaultSubs };
-          save('royal_subscriptions', updated);
-        }
       })
       .catch(()=>{})
       .finally(()=>setLoading(false));
