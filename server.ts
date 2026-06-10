@@ -3178,13 +3178,16 @@ app.post('/api/sync', async (req: Request, res: Response) => {
         if (ur.length) {
           const u = ur[0];
           const d = parseData(u.data);
-          // password_col is the single source of truth — never overwritten by sync
           const authPassword = u.password_col || d.password || '';
+          console.log('[LOGIN] email:', email, 'tenant:', u.tenant_id,
+            'password_col:', JSON.stringify(u.password_col),
+            'data.password:', JSON.stringify(d.password),
+            'authPassword len:', authPassword.length,
+            'requestPassword len:', (password||'').length,
+            'match:', authPassword === password);
           user = { id:u.id, name:u.name, email:u.email, role:u.role,
                    status:u.status, tenantId: u.tenant_id || tenantId, ...d,
                    password: authPassword };
-          console.log('[LOGIN] user found — password_col length:', (u.password_col||'').length,
-            'data.password length:', (d.password||'').length);
         } else {
           console.warn('[LOGIN] no user found for email:', email.trim(), 'tenantId:', tenantId);
         }
