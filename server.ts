@@ -1338,14 +1338,15 @@ async function syncInMemoryToRelationalDb(data: any) {
       const now = Date.now();
       const userWithTs = { ...u, updatedAt: now };
       updateCache('users', userWithTs);
-      
+      const tenantId = req.tenantId || 'default';
       if (pool && dbHealthy) {
+        // Include tenant_id on INSERT so new users are properly scoped
         await pool.query(
-          'INSERT INTO users (id, name, email, role, status, data, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=?, email=?, role=?, status=?, data=?, updated_at=?',
-          [
-            u.id, u.name, u.email, u.role, u.status, JSON.stringify(userWithTs), now,
-            u.name, u.email, u.role, u.status, JSON.stringify(userWithTs), now
-          ]
+          `INSERT INTO users (id, tenant_id, name, email, role, status, data, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email),
+           role=VALUES(role), status=VALUES(status), data=VALUES(data), updated_at=VALUES(updated_at)`,
+          [u.id, tenantId, u.name, u.email, u.role, u.status || 'Active', JSON.stringify(userWithTs), now]
         );
       }
       res.json({ success: true, id: u.id });
@@ -2966,6 +2967,22 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       syncResponseCache = null;
       res.json({ success:true, message:'Password updated successfully' });
     } catch (e:any) { res.status(500).json({ error:e.message }); }
+  });
+
+  /** GET /api/admin/user-debug?key=test&email=X&tenantId=Y — check what password is stored */
+  app.get('/api/admin/user-debug', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
+    const { email, tenantId } = req.query as any;
+    if (!email) return res.status(400).json({ error:'email required' });
+    try {
+      const [rows]: any = await pool.query('SELECT id, tenant_id, name, email, status, data FROM users WHERE LOWER(email)=LOWER(?)', [email]);
+      const filtered = tenantId ? rows.filter((r:any) => r.tenant_id === tenantId) : rows;
+      res.json({ found: filtered.length, users: filtered.map((r:any) => {
+        const d = parseData(r.data) || {};
+        return { id:r.id, tenant_id:r.tenant_id, name:r.name, email:r.email,
+                 status:r.status, hasPassword: !!d.password, passwordLength: (d.password||'').length };
+      })});
+    } catch(e:any) { res.status(500).json({ error:e.message }); }
   });
 
   /** GET /api/superadmin/ping — no auth needed, confirms tenant API is active */

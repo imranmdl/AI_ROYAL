@@ -358,9 +358,29 @@ const SubscriptionPortal: React.FC<{ onClose?: () => void }> = ({ onClose }) => 
             </button>
           </div>
 
-          <div className="mt-6 pt-6 border-t border-white/10 text-center">
-            <p className="text-slate-500 text-[10px] font-bold">Default: superadmin@royalerp.in / admin@123</p>
+        {/* Staff login shortcut */}
+        <div className="mt-6 pt-6 border-t border-white/10 space-y-3">
+          <div className="text-slate-500 text-[10px] font-bold text-center uppercase tracking-widest">Staff / Shop Login</div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              className="flex-1 px-3 py-2.5 bg-white/10 border border-white/20 rounded-xl text-white font-mono text-sm outline-none focus:border-amber-400 transition-all placeholder:text-slate-600"
+              placeholder="Shop code (e.g. royal-mudhol)"
+              id="staff-shop-code"
+              autoCapitalize="none" autoCorrect="off"
+            />
+            <button
+              onClick={() => {
+                const code = (document.getElementById('staff-shop-code') as HTMLInputElement)?.value?.trim();
+                if (code) window.location.href = `/?tenant=${code}`;
+                else alert('Enter your shop code first');
+              }}
+              className="px-4 py-2.5 bg-amber-500/20 border border-amber-500/40 text-amber-400 rounded-xl font-black text-[10px] uppercase hover:bg-amber-500/30 transition-all">
+              Go →
+            </button>
           </div>
+          <p className="text-slate-600 text-[9px] font-bold text-center">Ask your admin for your shop code</p>
+        </div>
         </div>
       </div>
     </div>
