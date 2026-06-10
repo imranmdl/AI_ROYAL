@@ -3280,21 +3280,20 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       console.warn('⚠️ [WARNING] You are using an internal database URL (.internal). This may not be accessible from outside your hosting provider.');
     }
     
-    // Ensure password_col exists — safe migration for all MySQL versions
-    if (pool) {
-      // First try to add the column (ignore error if already exists)
-      try { await pool.query("ALTER TABLE users ADD COLUMN password_col VARCHAR(255) DEFAULT NULL"); }
-      catch (e: any) { if (!e.message.includes('Duplicate column')) console.warn('[MIGRATION] password_col:', e.message); }
-      // Backfill from data.password for existing rows
-      try {
-        await pool.query(`UPDATE users SET password_col = JSON_UNQUOTE(JSON_EXTRACT(data, '$.password'))
-          WHERE password_col IS NULL AND JSON_EXTRACT(data, '$.password') IS NOT NULL AND JSON_EXTRACT(data, '$.password') != 'null'`);
-        console.log('[MIGRATION] password_col backfill done');
-      } catch (e: any) { console.warn('[MIGRATION] backfill:', e.message); }
-    }
     // Pre-warm the cache on startup to ensure the first client sync is fast
     readFromDb().catch(err => console.error('[WARMUP FAULT]', err.message));
   });
+
+  // Ensure password_col exists — safe migration for all MySQL versions
+  if (pool) {
+    try { await pool.query('ALTER TABLE users ADD COLUMN password_col VARCHAR(255) DEFAULT NULL'); }
+    catch (e: any) { if (!e.message?.includes('Duplicate column')) console.warn('[MIGRATION] password_col:', e.message); }
+    try {
+      await pool.query(`UPDATE users SET password_col = JSON_UNQUOTE(JSON_EXTRACT(data, '$.password'))
+        WHERE password_col IS NULL AND JSON_EXTRACT(data, '$.password') IS NOT NULL AND JSON_EXTRACT(data, '$.password') != 'null'`);
+      console.log('[MIGRATION] password_col backfill done');
+    } catch (e: any) { console.warn('[MIGRATION] backfill:', e.message); }
+  }
 }
 
 startServer();
