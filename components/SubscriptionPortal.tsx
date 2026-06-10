@@ -54,6 +54,7 @@ const NAV = [
   { id:'tickets',      label:'Support Tickets', icon:'fa-ticket-alt' },
   { id:'admins',       label:'Admin Users',     icon:'fa-user-shield' },
   { id:'analytics',    label:'Analytics',       icon:'fa-chart-pie' },
+  { id:'backups',      label:'Backups',          icon:'fa-database' },
 ];
 
 const STATUS_COLOR: Record<string,string> = {
@@ -920,6 +921,17 @@ const SubscriptionPortal: React.FC<{ onClose?: () => void }> = ({ onClose }) => 
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* ══ BACKUPS ══ */}
+          {page==='backups' && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-white font-black text-xl">Backup &amp; Restore</h2>
+                <p className="text-slate-400 text-sm mt-1 font-bold">Download complete DB backups or restore data per tenant</p>
+              </div>
+              <BackupRestore tenants={tenants.map(t=>({ id:t.id, name:t.name, slug:t.slug }))} />
             </div>
           )}
 
