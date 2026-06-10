@@ -3228,15 +3228,23 @@ app.post('/api/sync', async (req: Request, res: Response) => {
           log.push(`Cleared existing data for tenant ${tenantId}`);
         }
 
+        // Generated/virtual columns that must be excluded from INSERT
+        const GENERATED_COLS: Record<string, string[]> = {
+          products: ['size', 'grade', 'shade_no', 'batch_no'],
+        };
+
         for (const [table, rows] of Object.entries(backup.tables) as [string,any[]][]) {
           if (!Array.isArray(rows) || !rows.length) { results[table]=0; continue; }
+          const skipCols = new Set(GENERATED_COLS[table] || []);
           let count = 0;
           for (const row of rows) {
             try {
-              // Override tenant_id if specified
               if (tenantId && 'tenant_id' in row) row.tenant_id = tenantId;
-              const cols = Object.keys(row);
-              const vals = Object.values(row);
+              // Filter out generated/virtual columns
+              const entries = Object.entries(row).filter(([k]) => !skipCols.has(k));
+              const cols = entries.map(([k]) => k);
+              const vals = entries.map(([,v]) => v);
+              if (!cols.length) continue;
               const placeholders = cols.map(()=>'?').join(',');
               const updates = cols.filter(c=>c!=='id').map(c=>`\`${c}\`=VALUES(\`${c}\`)`).join(',');
               await conn.query(
