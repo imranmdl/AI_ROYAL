@@ -2908,8 +2908,10 @@ app.post('/api/sync', async (req: Request, res: Response) => {
         if (tenantId && row.tenant_id !== tenantId) continue;
         const d = parseData(row.data) || {};
         d.password = newPassword;
-        await pool.query('UPDATE users SET data=?, updated_at=? WHERE id=?',
-          [JSON.stringify(d), Date.now(), row.id]);
+        // Write to BOTH data json AND dedicated password_col
+        await pool.query(
+          'UPDATE users SET data=?, password_col=?, updated_at=? WHERE id=?',
+          [JSON.stringify(d), newPassword, Date.now(), row.id]);
         results.push({ id: row.id, tenant_id: row.tenant_id });
       }
       if (!results.length) return res.status(404).json({ error:'No matching user for tenantId: ' + tenantId });
@@ -2962,7 +2964,10 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       if (d.password !== oldPassword) return res.status(401).json({ error:'Current password is incorrect' });
       d.password = newPassword;
       d.updatedAt = Date.now();
-      await pool.query('UPDATE users SET data=?, updated_at=? WHERE id=?', [JSON.stringify(d), Date.now(), id]);
+      // Write to BOTH data json AND dedicated password_col — login always uses password_col
+      await pool.query(
+        'UPDATE users SET data=?, password_col=?, updated_at=? WHERE id=?',
+        [JSON.stringify(d), newPassword, Date.now(), id]);
       // Also invalidate sync cache so next sync returns fresh data
       syncResponseCache = null;
       res.json({ success:true, message:'Password updated successfully' });
@@ -3131,7 +3136,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
         let ur: any[] = [];
         try {
           const [rows]: any = await pool.query(
-            'SELECT id,name,email,role,status,data,tenant_id FROM users WHERE LOWER(email)=LOWER(?)',
+            'SELECT id,name,email,role,status,data,tenant_id,password_col FROM users WHERE LOWER(email)=LOWER(?)',
             [email.trim()]);
           console.log('[LOGIN] all users with this email:', rows.length,
             rows.map((r:any) => ({ email: r.email, tenant_id: r.tenant_id })));
@@ -3149,9 +3154,13 @@ app.post('/api/sync', async (req: Request, res: Response) => {
         if (ur.length) {
           const u = ur[0];
           const d = parseData(u.data);
+          // password_col is the single source of truth — never overwritten by sync
+          const authPassword = u.password_col || d.password || '';
           user = { id:u.id, name:u.name, email:u.email, role:u.role,
-                   status:u.status, tenantId: u.tenant_id || tenantId, ...d };
-          console.log('[LOGIN] user found — stored password length:', (user.password||'').length);
+                   status:u.status, tenantId: u.tenant_id || tenantId, ...d,
+                   password: authPassword };
+          console.log('[LOGIN] user found — password_col length:', (u.password_col||'').length,
+            'data.password length:', (d.password||'').length);
         } else {
           console.warn('[LOGIN] no user found for email:', email.trim(), 'tenantId:', tenantId);
         }
@@ -3261,6 +3270,13 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       console.warn('⚠️ [WARNING] You are using an internal database URL (.internal). This may not be accessible from outside your hosting provider.');
     }
     
+    // Ensure password_col exists (migration for existing deployments)
+    if (pool) {
+      pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_col VARCHAR(255) DEFAULT NULL").catch(()=>{});
+      // Backfill password_col from existing data.password for any users that have it
+      pool.query(`UPDATE users SET password_col = JSON_UNQUOTE(JSON_EXTRACT(data, '$.password'))
+                  WHERE password_col IS NULL AND JSON_EXTRACT(data, '$.password') IS NOT NULL`).catch(()=>{});
+    }
     // Pre-warm the cache on startup to ensure the first client sync is fast
     readFromDb().catch(err => console.error('[WARMUP FAULT]', err.message));
   });
