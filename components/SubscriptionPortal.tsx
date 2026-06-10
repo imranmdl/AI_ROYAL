@@ -58,8 +58,9 @@ const NAV = [
 ];
 
 
-const BASE = window.location.origin;
-const SK   = 'test'; // must match SUPER_ADMIN_KEY
+
+
+
 
 interface Tenant { id: string; name: string; slug: string; }
 
