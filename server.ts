@@ -878,27 +878,34 @@ async function startServer() {
   return warmupPromise;
 }
 
-async function writeToDb(data: any) {
-  // Merge meta-data into inMemoryDb cache to avoid overwriting relational data
-  if (!inMemoryDb) inMemoryDb = getInitialData();
-  inMemoryDb = { ...inMemoryDb, ...data };
+async function writeToDb(data: any, tenantId: string = 'default') {
+  const isDefault = !tenantId || tenantId === 'default';
 
-  if (!dbHealthy || !pool) {
-    return;
+  // Only update inMemoryDb for the default tenant to prevent contamination
+  if (isDefault) {
+    if (!inMemoryDb) inMemoryDb = getInitialData();
+    inMemoryDb = { ...inMemoryDb, ...data };
   }
 
+  if (!dbHealthy || !pool) return;
+
   try {
-    // CRITICAL: Always save the FULL meta-data state from inMemoryDb to prevent partial overwrites
-    // We exclude relational tables that have their own dedicated tables
-    const { products, sales, purchases, vendorOrders, loadingCharges, galleryLeads, users, ...metaData } = inMemoryDb;
+    const { products, sales, purchases, vendorOrders, loadingCharges, galleryLeads, users, ...metaData } = data;
     const jsonStr = JSON.stringify(metaData);
     const now = Date.now();
-    await pool.query(
-      'INSERT INTO system_persistence (id, tenant_id, payload, updated_at) VALUES ("global_master", "default", ?, ?) ON DUPLICATE KEY UPDATE payload = ?, updated_at = ?',
-      [jsonStr, now, jsonStr, now]
-    );
-    
-    // Invalidate sync cache whenever we write to DB
+
+    if (isDefault) {
+      await pool.query(
+        'INSERT INTO system_persistence (id, tenant_id, payload, updated_at) VALUES ("global_master", "default", ?, ?) ON DUPLICATE KEY UPDATE payload = ?, updated_at = ?',
+        [jsonStr, now, jsonStr, now]
+      );
+    } else {
+      // Named tenant: save to their own system_persistence row
+      await pool.query(
+        'INSERT INTO system_persistence (id, tenant_id, payload, updated_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE payload = ?, updated_at = ?',
+        [`global_master_${tenantId}`, tenantId, jsonStr, now, jsonStr, now]
+      );
+    }
     syncResponseCache = null;
   } catch (err: any) {
     console.error('[WRITE FAULT]', err.message);
@@ -1932,13 +1939,86 @@ app.get('/api/sync/version', async (req: Request, res: Response) => {
 
 app.post('/api/sync', async (req: Request, res: Response) => {
   try {
-    const data = req.body;
+    const data    = req.body;
+    const tenantId = req.tenantId || 'default';
+    const isDefault = tenantId === 'default';
     data.lastUpdated = Date.now();
-    await writeToDb(data);
-    syncResponseCache = null; // Invalidate cache after sync
+
+    // Save meta (settings, etc.) to system_persistence for this tenant
+    await writeToDb(data, tenantId);
+
+    // Save relational tables with correct tenant_id
+    if (pool && dbHealthy && data) {
+      const now = Date.now();
+
+      // Products
+      if (data.products?.length > 0) {
+        for (const p of data.products) {
+          try {
+            await pool.query(
+              `INSERT INTO products (id, tenant_id, name, category, brand, stock_boxes, stock_loose, selling_price, status, data, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), name=VALUES(name), category=VALUES(category),
+               brand=VALUES(brand), stock_boxes=VALUES(stock_boxes), stock_loose=VALUES(stock_loose),
+               selling_price=VALUES(selling_price), status=VALUES(status), data=VALUES(data), updated_at=VALUES(updated_at)`,
+              [p.id, tenantId, p.name||'', p.category||'', p.brand||'', p.stockBoxes||0,
+               p.stockLoose||0, p.sellingPrice||0, p.status||'Active', JSON.stringify(p), now]
+            );
+          } catch {}
+        }
+        // Only update inMemoryDb for default tenant
+        if (isDefault) data.products.forEach((p: any) => updateCache('products', p));
+      }
+
+      // Sales
+      if (data.sales?.length > 0) {
+        for (const s of data.sales) {
+          try {
+            await pool.query(
+              `INSERT INTO sales (id, tenant_id, invoice_no, customer_name, date, total_amount, data, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), invoice_no=VALUES(invoice_no),
+               customer_name=VALUES(customer_name), date=VALUES(date), total_amount=VALUES(total_amount),
+               data=VALUES(data), updated_at=VALUES(updated_at)`,
+              [s.id, tenantId, s.invoiceNo||'', s.customerName||'', s.date||'', s.totalAmount||0, JSON.stringify(s), now]
+            );
+          } catch {}
+        }
+        if (isDefault) data.sales.forEach((s: any) => updateCache('sales', s));
+      }
+
+      // Users — preserve existing password
+      if (data.users?.length > 0) {
+        for (const u of data.users) {
+          try {
+            const [existing]: any = await pool.query('SELECT data FROM users WHERE id=?', [u.id]);
+            let userData = { ...u };
+            if (existing.length) {
+              const ex = parseData(existing[0].data) || {};
+              if (ex.password && !userData.password) userData.password = ex.password;
+            }
+            await pool.query(
+              `INSERT INTO users (id, tenant_id, name, email, role, status, data, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email),
+               role=VALUES(role), status=VALUES(status), data=VALUES(data), updated_at=VALUES(updated_at)`,
+              [u.id, tenantId, u.name||'', u.email||'', u.role||'Manager', u.status||'Active', JSON.stringify(userData), now]
+            );
+          } catch {}
+        }
+      }
+
+      // Purchases, VendorOrders etc — update cache only for default
+      if (isDefault) {
+        if (data.purchases) data.purchases.forEach((p: any) => updateCache('purchases', p));
+        if (data.vendorOrders) data.vendorOrders.forEach((v: any) => updateCache('vendorOrders', v));
+      }
+    }
+
+    syncResponseCache = null;
     res.json({ success: true, timestamp: data.lastUpdated });
   } catch (err: any) {
-    res.status(500).json({ error: "Storage failure", details: err.message });
+    res.status(500).json({ error: 'Storage failure', details: err.message });
   }
 });
 
