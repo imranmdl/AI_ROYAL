@@ -3183,22 +3183,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
           password:user.password,
           twoFactorEnabled:user.twoFactorEnabled||false,
         },
-        expiresAt: new Date(Date.now() + 30*86400*1000).toISOString() }); NextFunction } from 'express';
-import cors from 'cors';
-import compression from 'compression';
-import bodyParser from 'body-parser';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import mysql from 'mysql2/promise';
-import type { Pool, Connection } from 'mysql2/promise';
-import * as dotenv from 'dotenv';
-import { createServer as createViteServer } from 'vite';
-import fs from 'fs-extra';
-import crypto from 'crypto';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
+        expiresAt: new Date(Date.now() + 30*86400*1000).toISOString() });
 // Load environment variables from .env file
 dotenv.config();
 
