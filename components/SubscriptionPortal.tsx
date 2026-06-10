@@ -985,6 +985,22 @@ const SubscriptionPortal: React.FC<{ onClose?: () => void }> = ({ onClose }) => 
                         className={`${btn} bg-slate-900 text-white hover:bg-amber-600`}>
                         <i className="fas fa-qrcode text-[9px] mr-1"></i>QR
                       </button>
+                      <button onClick={async ()=>{
+                        if (!confirm(`⚠️ PERMANENTLY DELETE "${t.name}"?\n\nThis will remove the shop and ALL its data (products, sales, users) forever.\n\nType the shop name to confirm.`) ) return;
+                        const check = window.prompt(`Type "${t.slug}" to confirm permanent deletion:`);
+                        if (check !== t.slug) { alert('Cancelled — slug did not match.'); return; }
+                        try {
+                          const r = await fetch(`${BASE}/api/superadmin/tenants/${t.id}`, {
+                            method:'DELETE', headers:{'x-super-admin-key':SK}
+                          });
+                          const d = await r.json();
+                          if (d.success) { alert(`✓ "${t.name}" deleted permanently.`); loadTenants(); }
+                          else alert('Error: ' + JSON.stringify(d));
+                        } catch(e:any) { alert('Error: ' + e.message); }
+                      }}
+                        className={`${btn} bg-red-50 text-red-600 border border-red-200 hover:bg-red-600 hover:text-white`}>
+                        <i className="fas fa-trash text-[9px] mr-1"></i>Delete
+                      </button>
                     </div>
                   </div>
                 );

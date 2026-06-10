@@ -3570,7 +3570,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     } catch (err: any) { res.status(500).json({ error:err.message }); }
   });
 
-  /** DELETE /api/superadmin/tenants/:id — remove a shop and its users permanently */
+  /** DELETE /api/superadmin/tenants/:id — remove a shop and ALL its data permanently */
   app.delete('/api/superadmin/tenants/:id', async (req: Request, res: Response) => {
     if (req.headers['x-super-admin-key'] !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Unauthorized' });
     const id = req.params.id;
@@ -3578,13 +3578,18 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       if (pool && dbHealthy) {
         const conn = await pool.getConnection();
         try {
-          await conn.query('DELETE FROM users WHERE tenant_id=?', [id]);
-          await conn.query('DELETE FROM system_persistence WHERE tenant_id=?', [id]);
+          await conn.query('SET FOREIGN_KEY_CHECKS=0');
+          // Delete ALL data belonging to this tenant
+          for (const table of ['products','sales','purchases','vendor_orders','users','loading_charges','gallery_leads','system_persistence']) {
+            await conn.query(`DELETE FROM ${table} WHERE tenant_id=?`, [id]);
+          }
           await conn.query('DELETE FROM tenants WHERE id=? OR slug=?', [id, id]);
+          await conn.query('SET FOREIGN_KEY_CHECKS=1');
         } finally { conn.release(); }
       }
       tenantCache.delete(id);
-      res.json({ success: true, message: `Shop ${id} deleted` });
+      syncResponseCache = null;
+      res.json({ success: true, message: `Shop ${id} and all its data deleted permanently` });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
