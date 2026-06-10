@@ -1056,7 +1056,8 @@ async function syncInMemoryToRelationalDb(data: any) {
 
       if (!pool || !dbHealthy) {
         // Fallback to in-memory if DB is down
-        let all = inMemoryDb?.products || [];
+        const fallbackTenantId = req.tenantId || 'default';
+        let all = (inMemoryDb?.products || []).filter((p: any) => !p.tenant_id || p.tenant_id === fallbackTenantId);
         
         if (search && typeof search === 'string') {
           const words = search.toLowerCase().trim().split(/\s+/);
@@ -1089,9 +1090,10 @@ async function syncInMemoryToRelationalDb(data: any) {
         });
       }
 
-      let query = 'SELECT id, name, category, brand, stock_boxes, stock_loose, selling_price, status, data, updated_at FROM products WHERE 1=1';
-      let countQuery = 'SELECT COUNT(*) as count FROM products WHERE 1=1';
-      const params: any[] = [];
+      const tenantId = req.tenantId || 'default';
+      let query = 'SELECT id, name, category, brand, stock_boxes, stock_loose, selling_price, status, data, updated_at FROM products WHERE tenant_id=?';
+      let countQuery = 'SELECT COUNT(*) as count FROM products WHERE tenant_id=?';
+      const params: any[] = [tenantId];
 
       if (search && typeof search === 'string') {
         const words = search.trim().split(/\s+/);
@@ -1188,8 +1190,10 @@ async function syncInMemoryToRelationalDb(data: any) {
 
   app.get('/api/products/filters', async (req: Request, res: Response) => {
     try {
+      const tenantId = req.tenantId || 'default';
       if (!pool || !dbHealthy) {
-        const products = inMemoryDb?.products || [];
+        const products = (inMemoryDb?.products || []).filter((p: any) =>
+          !p.tenant_id || p.tenant_id === tenantId);
         return res.json({
           brands: Array.from(new Set(products.map((p: any) => p.brand))).filter(Boolean).sort(),
           categories: Array.from(new Set(products.map((p: any) => p.category))).filter(Boolean).sort(),
@@ -1198,10 +1202,11 @@ async function syncInMemoryToRelationalDb(data: any) {
         });
       }
 
-      const [brandRows]: any = await pool.query('SELECT DISTINCT brand FROM products WHERE brand IS NOT NULL AND brand != "" ORDER BY brand');
-      const [categoryRows]: any = await pool.query('SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND category != "" ORDER BY category');
-      const [sizeRows]: any = await pool.query('SELECT DISTINCT size FROM products WHERE size IS NOT NULL AND size != "" ORDER BY size');
-      const [gradeRows]: any = await pool.query('SELECT DISTINCT grade FROM products WHERE grade IS NOT NULL AND grade != "" ORDER BY grade');
+      const searchTenantId = req.tenantId || 'default';
+      const [brandRows]: any = await pool.query('SELECT DISTINCT brand FROM products WHERE tenant_id=? AND brand IS NOT NULL AND brand != "" ORDER BY brand', [searchTenantId]);
+      const [categoryRows]: any = await pool.query('SELECT DISTINCT category FROM products WHERE tenant_id=? AND category IS NOT NULL AND category != "" ORDER BY category', [searchTenantId]);
+      const [sizeRows]: any = await pool.query('SELECT DISTINCT size FROM products WHERE tenant_id=? AND size IS NOT NULL AND size != "" ORDER BY size', [searchTenantId]);
+      const [gradeRows]: any = await pool.query('SELECT DISTINCT grade FROM products WHERE tenant_id=? AND grade IS NOT NULL AND grade != "" ORDER BY grade', [searchTenantId]);
 
       res.json({
         brands: brandRows.map((r: any) => r.brand),
@@ -1234,7 +1239,7 @@ async function syncInMemoryToRelationalDb(data: any) {
       try {
         await conn.query('SET SESSION sort_buffer_size = 33554432'); // 32MB
         const [rows]: any = await conn.query(
-          'SELECT id, invoice_no, customer_name, date, total_amount, data, updated_at FROM sales ORDER BY date DESC LIMIT ? OFFSET ?',
+          `SELECT id, invoice_no, customer_name, date, total_amount, data, updated_at FROM sales WHERE tenant_id=? ORDER BY date DESC LIMIT ? OFFSET ?`,
           [limit, offset]
         );
         const [[{ count }]]: any = await conn.query('SELECT COUNT(*) as count FROM sales');
@@ -1316,7 +1321,7 @@ async function syncInMemoryToRelationalDb(data: any) {
     }
 
     try {
-      await pool.query('DELETE FROM products WHERE id = ?', [id]);
+      await pool.query('DELETE FROM products WHERE id=? AND tenant_id=?', [id, req.tenantId || 'default']);
       res.json({ success: true });
     } catch (e: any) {
       dbHealthy = false;
@@ -1330,7 +1335,7 @@ async function syncInMemoryToRelationalDb(data: any) {
       let users: any[] = [];
       if (pool && dbHealthy) {
         const [rows]: any = await pool.query(
-          'SELECT id, name, email, role, status, data, updated_at FROM users'
+          `SELECT id, name, email, role, status, data, updated_at FROM users WHERE tenant_id=?`
         );
         users = rows.map((u: any) => {
           const d = parseData(u.data);
@@ -1388,7 +1393,7 @@ async function syncInMemoryToRelationalDb(data: any) {
       updateCache('users', id, true);
       
       if (pool && dbHealthy) {
-        await pool.query('DELETE FROM users WHERE id = ?', [id]);
+        await pool.query('DELETE FROM users WHERE id=? AND tenant_id=?', [id, req.tenantId || 'default']);
       }
       res.json({ success: true });
     } catch (err: any) {
@@ -2736,7 +2741,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
         } catch {
           // tenant_id column may not exist yet — return all active products
           const [rows]: any = await pool.query(
-            'SELECT id,name,category,brand,data,selling_price,stock_boxes,status FROM products WHERE status="Active"');
+            `SELECT id,name,category,brand,data,selling_price,stock_boxes,status FROM products WHERE status="Active" AND tenant_id=?`, [req.tenantId || 'default']);
           products = rows.map((p: any) => {
             const d = parseData(p.data);
             return { ...d, id: p.id, name: p.name, category: p.category, brand: p.brand,
