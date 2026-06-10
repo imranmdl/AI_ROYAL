@@ -3009,11 +3009,17 @@ app.post('/api/sync', async (req: Request, res: Response) => {
   /** POST /api/admin/reset-user-password?key=test */
   app.post('/api/admin/reset-user-password', async (req: Request, res: Response) => {
     if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
-    const { email, newPassword, tenantId } = req.body;
+    const { email, newPassword } = req.body;
+    let { tenantId } = req.body;
     if (!email || !newPassword) return res.status(400).json({ error:'email + newPassword required' });
     if (!pool || !dbHealthy) return res.status(503).json({ error:'DB not connected' });
     const log: string[] = [];
     try {
+      // Auto-resolve slug to tenant ID (e.g. 'newshop-965d' → 'newshop-3622247e')
+      if (tenantId && !tenantId.match(/^[a-f0-9]{8}$/) && !tenantId.includes('-d81d')) {
+        const [tr]: any = await pool.query('SELECT id FROM tenants WHERE slug=? OR id=?', [tenantId, tenantId]);
+        if (tr.length) { log.push(`resolved slug ${tenantId} → ${tr[0].id}`); tenantId = tr[0].id; }
+      }
       const [rows]: any = await pool.query(
         'SELECT id, data, tenant_id FROM users WHERE LOWER(email)=LOWER(?)', [email.trim()]);
       log.push(`found ${rows.length} rows`);
