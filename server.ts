@@ -3119,6 +3119,28 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     } catch(e:any) { res.status(500).json({ error:e.message }); }
   });
 
+  /** POST /api/admin/fix-null-tenants?key=test&tenantId=newshop-3622247e
+   * Assigns all NULL/empty tenant_id products/users to a specific tenant.
+   * Run once after importing data before the tenant isolation fix.
+   */
+  app.post('/api/admin/fix-null-tenants', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
+    const { tenantId } = req.query as any;
+    if (!tenantId) return res.status(400).json({ error:'tenantId required as query param' });
+    if (!pool || !dbHealthy) return res.status(503).json({ error:'DB not connected' });
+    const results: any = {};
+    for (const table of ['products','sales','purchases','vendor_orders','users','gallery_leads']) {
+      try {
+        const [r]: any = await pool.query(
+          `UPDATE ${table} SET tenant_id=? WHERE tenant_id IS NULL OR tenant_id=''`,
+          [tenantId]);
+        results[table] = r.affectedRows;
+      } catch(e:any) { results[table] = 'error: '+e.message; }
+    }
+    syncResponseCache = null;
+    res.json({ success:true, tenantId, fixed: results });
+  });
+
   /** GET /api/superadmin/ping — no auth needed, confirms tenant API is active */
   app.get('/api/superadmin/ping', (_req: Request, res: Response) => {
     res.json({
