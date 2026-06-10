@@ -3186,11 +3186,11 @@ app.post('/api/sync', async (req: Request, res: Response) => {
           sql += `-- ${table} (${rows.length} rows)
 `;
           for (const row of rows) {
-            const vals = Object.values(row).map(v =>
-              v === null ? 'NULL' :
-              typeof v === 'number' ? String(v) :
-              `'${String(v).replace(/'/g,"''").replace(/\/g,'\\')}'`
-            ).join(', ');
+            const vals = Object.values(row).map((v: any) => {
+              if (v === null || v === undefined) return 'NULL';
+              if (typeof v === 'number') return String(v);
+              return "'" + String(v).split('\\').join('\\\\').split("'").join("''") + "'";
+            }).join(', ');
             sql += `INSERT INTO \`${table}\` (${cols}) VALUES (${vals}) ON DUPLICATE KEY UPDATE ${Object.keys(rows[0]).filter(k=>k!=='id').map(k=>`\`${k}\`=VALUES(\`${k}\`)`).join(', ')};
 `;
           }
