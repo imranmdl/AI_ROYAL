@@ -582,12 +582,14 @@ async function initDatabase(config: DbConfig = activeDbConfig) {
 
     // Ensure default admin user exists
     const [userCountRows]: any = await connection.query('SELECT COUNT(*) as count FROM users');
+    const [userCountRows]: any = await connection.query('SELECT COUNT(*) as count FROM users');
+    // Only provision default admin if NO users exist at all in the entire users table
     if (userCountRows[0].count === 0) {
       console.log('💡 [SYSTEM] No users found. Provisioning default Administrator node...');
       const defaultAdmin = getInitialData().users[0];
       await connection.query(
-        'INSERT INTO users (id, name, email, role, status, data, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [defaultAdmin.id, defaultAdmin.name, defaultAdmin.email, defaultAdmin.role, defaultAdmin.status, JSON.stringify(defaultAdmin), Date.now()]
+        'INSERT INTO users (id, tenant_id, name, email, role, status, data, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [defaultAdmin.id, 'default', defaultAdmin.name, defaultAdmin.email, defaultAdmin.role, defaultAdmin.status, JSON.stringify(defaultAdmin), Date.now()]
       );
     }
     
@@ -978,15 +980,30 @@ async function syncInMemoryToRelationalDb(data: any) {
       );
     }
 
-    // 7. Users (Bulk)
+    // 7. Users (Bulk) — MUST preserve existing passwords; use merge strategy
     if (data.users && data.users.length > 0) {
-      const values = data.users.map((u: any) => [
-        u.id, u.name, u.email, u.role, u.status, JSON.stringify(u), Date.now()
-      ]);
-      await pool.query(
-        'INSERT INTO users (id, name, email, role, status, data, updated_at) VALUES ? ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), role=VALUES(role), status=VALUES(status), data=VALUES(data), updated_at=VALUES(updated_at)',
-        [values]
-      );
+      for (const u of data.users) {
+        try {
+          // Read existing password from DB before overwriting
+          const [existing]: any = await pool.query(
+            'SELECT data FROM users WHERE id=?', [u.id]);
+          let userData = { ...u };
+          if (existing.length) {
+            const existingData = parseData(existing[0].data) || {};
+            // Preserve existing password — never let recovery sync wipe it
+            if (existingData.password && !userData.password) {
+              userData.password = existingData.password;
+            }
+          }
+          await pool.query(
+            `INSERT INTO users (id, name, email, role, status, data, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email),
+             role=VALUES(role), status=VALUES(status), data=VALUES(data), updated_at=VALUES(updated_at)`,
+            [u.id, u.name, u.email, u.role, u.status || 'Active', JSON.stringify(userData), Date.now()]
+          );
+        } catch (ue: any) { console.error('[USERS SYNC]', ue.message); }
+      }
     }
 
     console.log('[SYSTEM] Recovery sync completed successfully.');
