@@ -2505,11 +2505,13 @@ app.post('/api/sync', async (req: Request, res: Response) => {
           // Check if product already exists (by name + size)
           let existingId: string | null = null;
           if (pool && dbHealthy) {
-            const [existing]: any = await pool.query('SELECT id FROM products WHERE name = ? AND (size = ? OR size IS NULL)', [name, size]);
+            const dupTenantId = req.tenantId || 'default';
+            const [existing]: any = await pool.query(
+              'SELECT id FROM products WHERE tenant_id=? AND name=? AND (size=? OR size IS NULL)',
+              [dupTenantId, name, size]);
             if (existing.length > 0) existingId = existing[0].id;
           } else {
-            // In-memory: match by name (case-insensitive) + size
-            const found = inMemoryDb?.products?.find((p: any) =>
+            const found = (inMemoryDb?.products || []).find((p: any) =>
               p.name.trim().toLowerCase() === name.toLowerCase() &&
               (!size || (p.size || '').trim().toLowerCase() === size.toLowerCase())
             );
@@ -2562,19 +2564,28 @@ app.post('/api/sync', async (req: Request, res: Response) => {
           };
 
           if (pool && dbHealthy) {
+            const csvTenantId = req.tenantId || 'default';
             await pool.query(
-              'INSERT INTO products (id, name, category, brand, stock_boxes, stock_loose, selling_price, status, data, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=?, category=?, brand=?, stock_boxes=?, stock_loose=?, selling_price=?, status=?, data=?, updated_at=?',
-              [productId, name, category, brand, stockBoxes, 0, sellingPrice, status, JSON.stringify(productData), now,
-               name, category, brand, stockBoxes, 0, sellingPrice, status, JSON.stringify(productData), now]
+              `INSERT INTO products (id, tenant_id, name, category, brand, stock_boxes, stock_loose, selling_price, status, data, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), name=VALUES(name), category=VALUES(category),
+               brand=VALUES(brand), stock_boxes=VALUES(stock_boxes), selling_price=VALUES(selling_price),
+               status=VALUES(status), data=VALUES(data), updated_at=VALUES(updated_at)`,
+              [productId, csvTenantId, name, category, brand, stockBoxes, 0, sellingPrice, status, JSON.stringify(productData), now]
             );
           }
 
-          // Update in-memory
-          if (!inMemoryDb) inMemoryDb = { products: [] };
-          if (!inMemoryDb.products) inMemoryDb.products = [];
-          const memIdx = inMemoryDb.products.findIndex((p: any) => p.id === productId);
-          if (memIdx >= 0) { inMemoryDb.products[memIdx] = productData; results.updated++; }
-          else { inMemoryDb.products.push(productData); results.created++; }
+          // Update in-memory only for default tenant — named tenants read directly from DB
+          const csvIsDefault = !req.tenantId || req.tenantId === 'default';
+          if (csvIsDefault) {
+            if (!inMemoryDb) inMemoryDb = { products: [] };
+            if (!inMemoryDb.products) inMemoryDb.products = [];
+            const memIdx = inMemoryDb.products.findIndex((p: any) => p.id === productId);
+            if (memIdx >= 0) { inMemoryDb.products[memIdx] = productData; results.updated++; }
+            else { inMemoryDb.products.push(productData); results.created++; }
+          } else {
+            if (existingId) results.updated++; else results.created++;
+          }
 
         } catch (rowErr: any) {
           results.errors.push(`Row "${row['Product Name'] || row['name'] || '?'}": ${rowErr.message}`);
