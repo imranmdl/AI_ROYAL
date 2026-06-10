@@ -3230,13 +3230,22 @@ app.post('/api/sync', async (req: Request, res: Response) => {
 
   app.post('/api/admin/restore', async (req: Request, res: Response) => {
     if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
-    const { tenantId, mode = 'merge' } = req.query as any; // mode: merge|replace
+    let { tenantId, mode = 'merge' } = req.query as any; // mode: merge|replace
     const backup = req.body;
     if (!backup?.tables) return res.status(400).json({ error:'Invalid backup file — missing tables' });
     if (!pool || !dbHealthy) return res.status(503).json({ error:'DB not connected' });
 
     const log: string[] = [];
     const results: any = {};
+
+    // Resolve slug → real tenant ID
+    if (tenantId) {
+      const [tr]: any = await pool.query('SELECT id FROM tenants WHERE slug=? OR id=?', [tenantId, tenantId]);
+      if (tr.length && tr[0].id !== tenantId) {
+        log.push(`Resolved tenant ${tenantId} → ${tr[0].id}`);
+        tenantId = tr[0].id;
+      }
+    }
 
     try {
       const conn = await pool.getConnection();
