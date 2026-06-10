@@ -9,7 +9,7 @@
  *  - Dashboard · Subscribers · Plans · Payments · Tickets · Admins · Analytics
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { PLANS, FEATURES, PLAN_MAP, daysRemaining, makeSubscriptionToken } from '../subscription';
 import type { Plan, PlanId, Subscription, PaymentRecord, SupportTicket } from '../types';
 
