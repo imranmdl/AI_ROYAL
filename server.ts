@@ -3141,6 +3141,133 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     res.json({ success:true, tenantId, fixed: results });
   });
 
+
+  /** ─── BACKUP & RESTORE ENDPOINTS ─────────────────────────────────────────
+   * GET  /api/admin/backup?key=test&tenantId=X&format=json|sql
+   * POST /api/admin/restore?key=test&tenantId=X   (body: JSON backup object)
+   */
+
+  app.get('/api/admin/backup', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
+    const { tenantId, format = 'json' } = req.query as any;
+    if (!pool || !dbHealthy) return res.status(503).json({ error:'DB not connected' });
+
+    try {
+      const tables = ['products','sales','purchases','vendor_orders','users',
+                       'loading_charges','gallery_leads','system_persistence','tenants'];
+      const backup: any = { version:2, timestamp: Date.now(), tenantId: tenantId||'ALL', tables:{} };
+
+      for (const table of tables) {
+        try {
+          let q = `SELECT * FROM ${table}`;
+          const params: any[] = [];
+          if (tenantId && table !== 'tenants') {
+            q += ' WHERE tenant_id=?';
+            params.push(tenantId);
+          }
+          const [rows]: any = await pool.query(q, params);
+          backup.tables[table] = rows;
+        } catch(e:any) { backup.tables[table] = []; }
+      }
+
+      if (format === 'sql') {
+        // Generate SQL INSERT statements
+        let sql = `-- Royal ERP Backup
+-- Tenant: ${tenantId||'ALL'}
+-- Date: ${new Date().toISOString()}
+
+`;
+        sql += `SET FOREIGN_KEY_CHECKS=0;
+
+`;
+        for (const [table, rows] of Object.entries(backup.tables) as [string,any[]][]) {
+          if (!rows.length) continue;
+          const cols = Object.keys(rows[0]).map(c => `\`${c}\``).join(', ');
+          sql += `-- ${table} (${rows.length} rows)
+`;
+          for (const row of rows) {
+            const vals = Object.values(row).map(v =>
+              v === null ? 'NULL' :
+              typeof v === 'number' ? String(v) :
+              `'${String(v).replace(/'/g,"''").replace(/\/g,'\\')}'`
+            ).join(', ');
+            sql += `INSERT INTO \`${table}\` (${cols}) VALUES (${vals}) ON DUPLICATE KEY UPDATE ${Object.keys(rows[0]).filter(k=>k!=='id').map(k=>`\`${k}\`=VALUES(\`${k}\`)`).join(', ')};
+`;
+          }
+          sql += '
+';
+        }
+        sql += `SET FOREIGN_KEY_CHECKS=1;
+`;
+        const slug = tenantId ? tenantId.replace(/[^a-z0-9]/gi,'-') : 'full';
+        res.setHeader('Content-Type','text/plain');
+        res.setHeader('Content-Disposition',`attachment; filename="royal-erp-backup-${slug}-${Date.now()}.sql"`);
+        return res.send(sql);
+      }
+
+      // JSON format
+      const slug = tenantId ? tenantId.replace(/[^a-z0-9]/gi,'-') : 'full';
+      res.setHeader('Content-Type','application/json');
+      res.setHeader('Content-Disposition',`attachment; filename="royal-erp-backup-${slug}-${Date.now()}.json"`);
+      res.json(backup);
+    } catch(e:any) { res.status(500).json({ error:e.message }); }
+  });
+
+  app.post('/api/admin/restore', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
+    const { tenantId, mode = 'merge' } = req.query as any; // mode: merge|replace
+    const backup = req.body;
+    if (!backup?.tables) return res.status(400).json({ error:'Invalid backup file — missing tables' });
+    if (!pool || !dbHealthy) return res.status(503).json({ error:'DB not connected' });
+
+    const log: string[] = [];
+    const results: any = {};
+
+    try {
+      const conn = await pool.getConnection();
+      try {
+        await conn.query('SET FOREIGN_KEY_CHECKS=0');
+
+        // Optionally wipe existing tenant data before restore
+        if (mode === 'replace' && tenantId) {
+          const clearTables = ['products','sales','purchases','vendor_orders','users','loading_charges','gallery_leads'];
+          for (const t of clearTables) {
+            await conn.query(`DELETE FROM ${t} WHERE tenant_id=?`, [tenantId]);
+          }
+          log.push(`Cleared existing data for tenant ${tenantId}`);
+        }
+
+        for (const [table, rows] of Object.entries(backup.tables) as [string,any[]][]) {
+          if (!Array.isArray(rows) || !rows.length) { results[table]=0; continue; }
+          let count = 0;
+          for (const row of rows) {
+            try {
+              // Override tenant_id if specified
+              if (tenantId && 'tenant_id' in row) row.tenant_id = tenantId;
+              const cols = Object.keys(row);
+              const vals = Object.values(row);
+              const placeholders = cols.map(()=>'?').join(',');
+              const updates = cols.filter(c=>c!=='id').map(c=>`\`${c}\`=VALUES(\`${c}\`)`).join(',');
+              await conn.query(
+                `INSERT INTO \`${table}\` (\`${cols.join('`,`')}\`) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${updates}`,
+                vals
+              );
+              count++;
+            } catch(re:any) { log.push(`${table} row error: ${re.message.slice(0,80)}`); }
+          }
+          results[table] = count;
+        }
+
+        await conn.query('SET FOREIGN_KEY_CHECKS=1');
+      } finally { conn.release(); }
+
+      syncResponseCache = null;
+      inMemoryDb = null as any;
+      log.push('Sync cache cleared — data will reload on next request');
+      res.json({ success:true, restored:results, tenantId: tenantId||'unchanged', log });
+    } catch(e:any) { res.status(500).json({ error:e.message, log }); }
+  });
+
   /** GET /api/superadmin/ping — no auth needed, confirms tenant API is active */
   app.get('/api/superadmin/ping', (_req: Request, res: Response) => {
     res.json({
