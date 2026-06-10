@@ -3258,6 +3258,11 @@ app.post('/api/sync', async (req: Request, res: Response) => {
           let count = 0;
           for (const row of rows) {
             try {
+              // If target tenant specified AND this row belongs to a DIFFERENT tenant, skip it
+              // This prevents cross-tenant contamination when restoring from a full DB backup
+              if (tenantId && 'tenant_id' in row && row.tenant_id && row.tenant_id !== tenantId) {
+                continue; // skip — this row belongs to another tenant
+              }
               if (tenantId && 'tenant_id' in row) row.tenant_id = tenantId;
               // Filter out generated/virtual columns
               const entries = Object.entries(row).filter(([k]) => !skipCols.has(k));
@@ -3284,6 +3289,37 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       log.push('Sync cache cleared — data will reload on next request');
       res.json({ success:true, restored:results, tenantId: tenantId||'unchanged', log });
     } catch(e:any) { res.status(500).json({ error:e.message, log }); }
+  });
+
+  /** POST /api/admin/cleanup-tenant?key=test
+   * Remove all products/sales that were wrongly assigned to a tenant from a full restore.
+   * Keeps only rows whose product IDs existed in a reference backup.
+   * Use: provide sourceIds (array of correct product IDs) to keep, rest get deleted.
+   */
+  app.post('/api/admin/cleanup-tenant', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
+    const { tenantId, keepIds } = req.body;
+    if (!tenantId) return res.status(400).json({ error:'tenantId required' });
+    if (!pool || !dbHealthy) return res.status(503).json({ error:'DB not connected' });
+    try {
+      const results: any = {};
+      if (keepIds && Array.isArray(keepIds) && keepIds.length > 0) {
+        // Delete products NOT in the keepIds list for this tenant
+        const placeholders = keepIds.map(()=>'?').join(',');
+        const [r]: any = await pool.query(
+          `DELETE FROM products WHERE tenant_id=? AND id NOT IN (${placeholders})`,
+          [tenantId, ...keepIds]
+        );
+        results.products_deleted = r.affectedRows;
+      } else {
+        // No keepIds provided — just show count of current products
+        const [r]: any = await pool.query('SELECT COUNT(*) as c FROM products WHERE tenant_id=?', [tenantId]);
+        results.products_count = r[0].c;
+        results.message = 'Provide keepIds array to delete specific products';
+      }
+      syncResponseCache = null;
+      res.json({ success:true, tenantId, results });
+    } catch(e:any) { res.status(500).json({ error:e.message }); }
   });
 
   /** GET /api/superadmin/ping — no auth needed, confirms tenant API is active */
