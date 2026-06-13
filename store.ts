@@ -599,23 +599,69 @@ class DataStore {
   async createUser(u: User) { const ts = { ...u, updatedAt: Date.now() }; this.users.push(ts); this.logActivity('Users','Create',u.name); await this.persistUser(ts); await this.save(); }
   async saveVendorOrder(order: any) {
     const existing = this.vendorOrders.findIndex((o: any) => o.id === order.id);
+    const prevOrder = existing >= 0 ? this.vendorOrders[existing] : null;
     if (existing >= 0) {
       this.vendorOrders = this.vendorOrders.map((o: any) => o.id === order.id ? { ...o, ...order } : o);
     } else {
       this.vendorOrders = [order, ...this.vendorOrders];
     }
-    // Auto-inward received items to inventory
-    if (['Received','Partially Received'].includes(order.status)) {
+
+    // ── Auto-inward received items to inventory ────────────────────────────
+    const wasReceived = prevOrder && ['Received','Partially Received'].includes(prevOrder.status);
+    const isReceived  = ['Received','Partially Received'].includes(order.status);
+    if (isReceived) {
       for (const item of (order.items || [])) {
-        const goodQty = (item.receivedQty||0) - (item.damagedQty||0);
-        if (goodQty > 0 && item.productId) {
+        const prevItem = prevOrder?.items?.find((pi: any) => pi.productId === item.productId);
+        const prevRecv = prevItem?.receivedQty || 0;
+        const newRecv  = item.receivedQty || 0;
+        const newGood  = newRecv - (item.damagedQty || 0);
+        const addedQty = newGood - Math.max(0, prevRecv - (prevItem?.damagedQty || 0));
+
+        if (item.productId) {
           const prod = this.products.find(p => p.id === item.productId);
           if (prod) {
-            const updatedProd = { ...prod,
-              stockBoxes: (prod.stockBoxes||0) + goodQty,
+            // Add to stock
+            const stockBoxes = (prod.stockBoxes || 0) + Math.max(0, addedQty);
+            // Add to purchase history
+            const purchaseEntry = {
+              id: `ph-${order.id}-${item.id||item.productId}-${Date.now()}`,
+              date: order.receivedDate || new Date().toISOString().slice(0,10),
+              vendor: order.vendorName,
+              qty: newGood,
+              rate: item.actualRate || 0,
+              landedCost: item.landedCostPerUnit || item.actualRate || 0,
+              totalValue: (item.landedCostPerUnit||item.actualRate||0) * newGood,
+              invoiceNo: order.actualInvoice?.invoiceNo || order.orderNo,
+              orderId: order.id,
+            };
+            const purchaseHistory = [
+              ...(prod.purchaseHistory || []).filter((ph: any) => ph.orderId !== order.id),
+              purchaseEntry,
+            ];
+            // Add damage to inventory damage history
+            const damageEntries = (order.damagedItems || [])
+              .filter((d: any) => d.productId === item.productId)
+              .map((d: any) => ({
+                id: d.id || `dmg-${order.id}-${Date.now()}`,
+                date: d.date || order.receivedDate || new Date().toISOString().slice(0,10),
+                qty: d.qtyDamaged || 0,
+                reason: d.reason || '',
+                vendorName: order.vendorName,
+                orderId: order.id,
+                actionTaken: d.actionTaken || '',
+              }));
+            const damageHistory = [
+              ...(prod.damageHistory || []).filter((dh: any) => dh.orderId !== order.id),
+              ...damageEntries,
+            ];
+            const updatedProd = {
+              ...prod,
+              stockBoxes,
               purchasePrice: item.landedCostPerUnit || item.actualRate || prod.purchasePrice,
               lastPurchaseVendor: order.vendorName,
               lastPurchaseDate: order.receivedDate || new Date().toISOString().slice(0,10),
+              purchaseHistory,
+              damageHistory,
               updatedAt: Date.now(),
             };
             this.products = this.products.map(p => p.id === item.productId ? updatedProd : p);
@@ -623,6 +669,7 @@ class DataStore {
         }
       }
     }
+
     this.lastUpdated = Date.now();
     this.notify();
     await this.save();

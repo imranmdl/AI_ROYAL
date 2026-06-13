@@ -2023,10 +2023,27 @@ app.post('/api/sync', async (req: Request, res: Response) => {
         }
       }
 
-      // Purchases, VendorOrders etc — update cache only for default
+      // VendorOrders — save to vendor_orders table with tenant_id
+      if (data.vendorOrders?.length > 0) {
+        for (const o of data.vendorOrders) {
+          try {
+            await pool.query(
+              `INSERT INTO vendor_orders (id, tenant_id, order_no, vendor_name, status, payment_status, data, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), order_no=VALUES(order_no),
+               vendor_name=VALUES(vendor_name), status=VALUES(status), payment_status=VALUES(payment_status),
+               data=VALUES(data), updated_at=VALUES(updated_at)`,
+              [o.id, tenantId, o.orderNo||'', o.vendorName||'', o.status||'Ordered',
+               o.paymentStatus||'Pending', JSON.stringify(o), now]
+            );
+          } catch {}
+        }
+        if (isDefault) data.vendorOrders.forEach((v: any) => updateCache('vendorOrders', v));
+      }
+
+      // Purchases — update cache only for default
       if (isDefault) {
         if (data.purchases) data.purchases.forEach((p: any) => updateCache('purchases', p));
-        if (data.vendorOrders) data.vendorOrders.forEach((v: any) => updateCache('vendorOrders', v));
       }
     }
 
