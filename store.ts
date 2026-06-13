@@ -430,7 +430,10 @@ class DataStore {
       userName: this.currentUser?.name || 'System', action, details: action, timestamp: new Date().toISOString(), module };
     this.activityLogs.unshift(log);
     if (this.activityLogs.length > 200) this.activityLogs = this.activityLogs.slice(0, 200);
-    fetch(this.getApiUrl('/api/activity-logs'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(log) }).catch(() => {});
+    const actJwt = this.getJwt();
+      const actH: Record<string,string> = {'Content-Type':'application/json'};
+      if (actJwt) actH['Authorization'] = `Bearer ${actJwt}`;
+      fetch(this.getApiUrl('/api/activity-logs'), { method: 'POST', headers: actH, body: JSON.stringify(log) }).catch(() => {});
   }
   logActivity(module: ActivityLog['module'], action: string, details: string) {
     if (!this.currentUser) return;

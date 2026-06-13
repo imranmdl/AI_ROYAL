@@ -1842,12 +1842,18 @@ app.get('/api/sync/version', async (req: Request, res: Response) => {
       const [purchRows]: any = await pool.query('SELECT id,data,vendor_name,invoice_no,date,updated_at FROM purchases WHERE tenant_id=?', [tenantId]);
       const [voRows]:    any = await pool.query('SELECT id,data,order_no,vendor_name,status,payment_status,updated_at FROM vendor_orders WHERE tenant_id=?', [tenantId]);
       const [userRows]:  any = await pool.query('SELECT id,name,email,role,status,data,updated_at FROM users WHERE tenant_id=?', [tenantId]);
+      // gallery_leads and loading_charges
+      let glRows: any[] = [], lcRows: any[] = [];
+      try { [glRows] = await pool.query('SELECT id,data FROM gallery_leads WHERE tenant_id=?', [tenantId]) as any; } catch {}
+      try { [lcRows] = await pool.query('SELECT id,data FROM loading_charges WHERE tenant_id=?', [tenantId]) as any; } catch {}
 
       base.products    = prodRows.map((p: any)  => ({ ...parseData(p.data),  id:p.id, name:p.name, category:p.category, brand:p.brand, sellingPrice:parseFloat(p.selling_price)||0, stockBoxes:p.stock_boxes||0, stockLoose:p.stock_loose||0, status:p.status }));
       base.sales       = saleRows.map((s: any)  => ({ ...parseData(s.data),  id:s.id, invoiceNo:s.invoice_no, customerName:s.customer_name, date:s.date, totalAmount:parseFloat(s.total_amount)||0 }));
       base.purchases   = purchRows.map((p: any) => ({ ...parseData(p.data),  id:p.id, vendorName:p.vendor_name, date:p.date }));
       base.vendorOrders= voRows.map((v: any)    => ({ ...parseData(v.data),  id:v.id, orderNo:v.order_no, vendorName:v.vendor_name, status:v.status, paymentStatus:v.payment_status }));
       base.users       = userRows.map((u: any)  => ({ ...parseData(u.data),  id:u.id, name:u.name, email:u.email, role:u.role, status:u.status }));
+      base.galleryLeads  = glRows.map((r: any)  => parseData(r.data)).filter(Boolean);
+      base.loadingCharges= lcRows.map((r: any)  => parseData(r.data)).filter(Boolean);
       base._tenant     = tenantId;
       data             = base;
 
@@ -2019,6 +2025,32 @@ app.post('/api/sync', async (req: Request, res: Response) => {
                 [u.id, tenantId, u.name||'', u.email||'', u.role||'Manager', u.status||'Active', JSON.stringify(userData), now]
               );
             }
+          } catch {}
+        }
+      }
+
+      // GalleryLeads
+      if (data.galleryLeads?.length > 0) {
+        for (const g of data.galleryLeads) {
+          try {
+            await pool.query(
+              `INSERT INTO gallery_leads (id, tenant_id, data, updated_at) VALUES (?,?,?,?)
+               ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), data=VALUES(data), updated_at=VALUES(updated_at)`,
+              [g.id, tenantId, JSON.stringify(g), now]
+            );
+          } catch {}
+        }
+      }
+
+      // LoadingCharges
+      if (data.loadingCharges?.length > 0) {
+        for (const lc of data.loadingCharges) {
+          try {
+            await pool.query(
+              `INSERT INTO loading_charges (id, tenant_id, data, updated_at) VALUES (?,?,?,?)
+               ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), data=VALUES(data), updated_at=VALUES(updated_at)`,
+              [lc.id, tenantId, JSON.stringify(lc), now]
+            );
           } catch {}
         }
       }
