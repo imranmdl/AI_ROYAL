@@ -555,7 +555,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
   };
 
   const handleAddStockFromPurchase = () => {
-    if (newPurchase.items.length === 0 || !newPurchase.vendorName) return;
+    if (newPurchase.items.length === 0 || newPurchase.items.some(i => !i.productId)) { alert('Please select a product for each item'); return; }
     
     const isLinkedOrder = newPurchase.gstInvoiceNo.startsWith('ORDER_');
     
@@ -563,7 +563,23 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
       const orderId = newPurchase.gstInvoiceNo.split('_')[1];
       // When receiving via Inventory inward for a linked order, we assume 0 damages for this specific quick inward
       // For detailed damage reporting, use the Vendor Tracking module
-      store.receiveVendorOrder(orderId, newPurchase.godownId, newPurchase.date, newPurchase.vehicleNumber, []);
+      // Mark the linked vendor order as received via the new supply chain module
+      const linkedOrder = store.vendorOrders.find(o => o.id === orderId);
+      if (linkedOrder) {
+        const updatedOrder = {
+          ...linkedOrder,
+          status: 'Received' as any,
+          receivedDate: newPurchase.date,
+          items: linkedOrder.items.map((it: any) => ({
+            ...it,
+            receivedQty: it.receivedQty || it.actualQty || it.qtyBoxes || 0,
+            damagedQty: 0,
+            goodQty: it.actualQty || it.qtyBoxes || 0,
+          })),
+          updatedAt: Date.now(),
+        };
+        store.saveVendorOrder(updatedOrder);
+      }
     } else {
       if (newPurchase.syncToSupplyChain) {
         // Create a SINGLE VendorOrder to "sync" with Supply Chain for all items
@@ -605,7 +621,23 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
         
         store.addVendorOrder(newOrder);
         // Immediately receive it to update stock and show in supply chain
-        store.receiveVendorOrder(orderId, newPurchase.godownId, newPurchase.date, newPurchase.vehicleNumber, []);
+        // Mark the linked vendor order as received via the new supply chain module
+      const linkedOrder = store.vendorOrders.find(o => o.id === orderId);
+      if (linkedOrder) {
+        const updatedOrder = {
+          ...linkedOrder,
+          status: 'Received' as any,
+          receivedDate: newPurchase.date,
+          items: linkedOrder.items.map((it: any) => ({
+            ...it,
+            receivedQty: it.receivedQty || it.actualQty || it.qtyBoxes || 0,
+            damagedQty: 0,
+            goodQty: it.actualQty || it.qtyBoxes || 0,
+          })),
+          updatedAt: Date.now(),
+        };
+        store.saveVendorOrder(updatedOrder);
+      }
       } else {
         // Create a purchase record and update stock
         const purchase: Purchase = {
@@ -625,15 +657,15 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
         
         store.addPurchase(purchase);
 
-        // Update product last purchase info
+        // Update stock and product info for each item
         newPurchase.items.forEach(it => {
-          const product = products.find(p => p.id === it.productId);
-          if (product) {
+          const product = store.products.find(p => p.id === it.productId);
+          if (product && it.qtyBoxes > 0) {
             store.updateProduct(product.id, {
-              lastPurchaseVendor: newPurchase.vendorName,
+              stockBoxes: (product.stockBoxes || 0) + it.qtyBoxes,
+              purchasePrice: it.rate || product.purchasePrice,
               lastPurchaseDate: newPurchase.date,
-              lastPurchaseVehicle: newPurchase.vehicleNumber,
-              purchasePrice: it.rate
+              updatedAt: Date.now(),
             });
           }
         });
@@ -1027,14 +1059,6 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                              </div>
                           )}
                        </div>
-                    </div>
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Vendor Name</label>
-                       <input type="text" className="w-full px-5 py-4 bg-slate-100 rounded-2xl font-bold" value={newPurchase.vendorName} onChange={e => setNewPurchase({...newPurchase, vendorName: e.target.value})} />
-                    </div>
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Vehicle Number</label>
-                       <input type="text" className="w-full px-5 py-4 bg-slate-100 rounded-2xl font-bold" value={newPurchase.vehicleNumber} onChange={e => setNewPurchase({...newPurchase, vehicleNumber: e.target.value})} />
                     </div>
                     <div className="space-y-2">
                        <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Inward Date</label>
