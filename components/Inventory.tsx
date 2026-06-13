@@ -656,19 +656,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
         };
         
         store.addPurchase(purchase);
-
-        // Update stock and product info for each item
-        newPurchase.items.forEach(it => {
-          const product = store.products.find(p => p.id === it.productId);
-          if (product && it.qtyBoxes > 0) {
-            store.updateProduct(product.id, {
-              stockBoxes: (product.stockBoxes || 0) + it.qtyBoxes,
-              purchasePrice: it.rate || product.purchasePrice,
-              lastPurchaseDate: newPurchase.date,
-              updatedAt: Date.now(),
-            });
-          }
-        });
+        // Note: addPurchase already updates stockBoxes via adjustStock — no need to update here
       }
     }
     
@@ -699,17 +687,26 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
     if (!showAdjustStock) return;
     const { actionType, godownId, qtyBoxes, qtyLoose, notes, vendorOrderId } = adjustForm;
     if (qtyBoxes === 0 && qtyLoose === 0) return;
-    
+
+    // Use store.products as source of truth (not serverProducts which may lag)
+    const currentProd = store.products.find(p => p.id === showAdjustStock.id);
+    const currentStock = currentProd?.stockBoxes ?? showAdjustStock.stockBoxes ?? 0;
+
     if (actionType === 'Damage') {
+      const newStock = Math.max(0, currentStock - qtyBoxes);
       store.reportDamage(showAdjustStock.id, qtyBoxes, qtyLoose, godownId, vendorOrderId || undefined);
-      setServerProducts(prev => prev.map(p => p.id === showAdjustStock.id ? { ...p, stockBoxes: p.stockBoxes - qtyBoxes, stockLoose: p.stockLoose - qtyLoose, damagedPieces: p.damagedPieces + (qtyBoxes * p.tilesPerBox) + qtyLoose } : p));
+      setServerProducts(prev => prev.map(p => p.id === showAdjustStock.id
+        ? { ...p, stockBoxes: newStock, stockLoose: Math.max(0,(p.stockLoose||0) - qtyLoose), damagedPieces: (p.damagedPieces||0) + (qtyBoxes * p.tilesPerBox) + qtyLoose }
+        : p));
       refreshProducts(700);
     } else {
       store.adjustStock(showAdjustStock.id, godownId, qtyBoxes, qtyLoose, actionType, notes);
-      setServerProducts(prev => prev.map(p => p.id === showAdjustStock.id ? { ...p, stockBoxes: p.stockBoxes + qtyBoxes, stockLoose: p.stockLoose + qtyLoose } : p));
+      setServerProducts(prev => prev.map(p => p.id === showAdjustStock.id
+        ? { ...p, stockBoxes: Math.max(0, (currentStock) + qtyBoxes), stockLoose: Math.max(0,(p.stockLoose||0) + qtyLoose) }
+        : p));
       refreshProducts(700);
     }
-    
+
     setShowAdjustStock(null);
     setAdjustForm({ actionType: 'Correction', godownId: 'g1', qtyBoxes: 0, qtyLoose: 0, notes: '', vendorOrderId: '' });
   };
