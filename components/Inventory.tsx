@@ -688,25 +688,28 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
     const { actionType, godownId, qtyBoxes, qtyLoose, notes, vendorOrderId } = adjustForm;
     if (qtyBoxes === 0 && qtyLoose === 0) return;
 
-    // Use store.products as source of truth (not serverProducts which may lag)
-    const currentProd = store.products.find(p => p.id === showAdjustStock.id);
-    const currentStock = currentProd?.stockBoxes ?? showAdjustStock.stockBoxes ?? 0;
-
     if (actionType === 'Damage') {
-      const newStock = Math.max(0, currentStock - qtyBoxes);
+      // reportDamage calls adjustStock(-qty) which updates store.products internally
       store.reportDamage(showAdjustStock.id, qtyBoxes, qtyLoose, godownId, vendorOrderId || undefined);
-      setServerProducts(prev => prev.map(p => p.id === showAdjustStock.id
-        ? { ...p, stockBoxes: newStock, stockLoose: Math.max(0,(p.stockLoose||0) - qtyLoose), damagedPieces: (p.damagedPieces||0) + (qtyBoxes * p.tilesPerBox) + qtyLoose }
-        : p));
-      refreshProducts(700);
+      // Read updated value directly from store (not serverProducts which may be stale)
+      const updated = store.products.find(p => p.id === showAdjustStock.id);
+      if (updated) {
+        setServerProducts(prev => prev.map(p =>
+          p.id === showAdjustStock.id ? { ...p, stockBoxes: updated.stockBoxes, stockLoose: updated.stockLoose } : p
+        ));
+      }
     } else {
+      // adjustStock(+/-qty) updates store.products internally
       store.adjustStock(showAdjustStock.id, godownId, qtyBoxes, qtyLoose, actionType, notes);
-      setServerProducts(prev => prev.map(p => p.id === showAdjustStock.id
-        ? { ...p, stockBoxes: Math.max(0, (currentStock) + qtyBoxes), stockLoose: Math.max(0,(p.stockLoose||0) + qtyLoose) }
-        : p));
-      refreshProducts(700);
+      const updated = store.products.find(p => p.id === showAdjustStock.id);
+      if (updated) {
+        setServerProducts(prev => prev.map(p =>
+          p.id === showAdjustStock.id ? { ...p, stockBoxes: updated.stockBoxes, stockLoose: updated.stockLoose } : p
+        ));
+      }
     }
 
+    refreshProducts(800);
     setShowAdjustStock(null);
     setAdjustForm({ actionType: 'Correction', godownId: 'g1', qtyBoxes: 0, qtyLoose: 0, notes: '', vendorOrderId: '' });
   };

@@ -577,7 +577,13 @@ class DataStore {
   updateCategories(cats: string[]) { this.settings.categories = cats; this.save(); }
   updateIndividualSlabManagement(e: boolean) { this.settings.enableIndividualSlabManagement = e; this.save(); }
 
-  private post(path: string, body: any) { fetch(this.getApiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(e => console.error(`POST ${path}:`, e)); }
+  private post(path: string, body: any) {
+    const jwt = this.getJwt();
+    const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+    if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+    fetch(this.getApiUrl(path), { method: 'POST', headers, body: JSON.stringify(body) })
+      .catch(e => console.error(`POST ${path}:`, e));
+  }
   private async persistUser(u: User) {
     // Keep password in the data JSON blob so it survives DB → sync → client round-trips.
     // The /api/users endpoint stores the full object in the `data` column.
