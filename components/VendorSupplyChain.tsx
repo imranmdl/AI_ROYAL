@@ -35,14 +35,17 @@ const calcTransport = (t: VendorTransport): VendorTransport => {
 };
 
 const calcItem = (item: VendorOrderItem, transportPerUnit: number, laborPerUnit: number): VendorOrderItem => {
-  const billed  = (item.billedQty||0) * (item.billedRate||0);
-  const actual  = (item.actualQty||0) * (item.actualRate||0);
-  const good    = Math.max(0, (item.receivedQty||0) - (item.damagedQty||0));
-  const landed  = good > 0 ? ((actual) + (transportPerUnit * (item.actualQty||0)) + (laborPerUnit * (item.actualQty||0))) / good : 0;
-  const margin  = item.sellingPrice > 0 ? ((item.sellingPrice - landed) / item.sellingPrice) * 100 : 0;
+  const billed   = (item.billedQty||0) * (item.billedRate||0);
+  const actual   = (item.actualQty||0) * (item.actualRate||0);
+  const good     = Math.max(0, (item.receivedQty||0) - (item.damagedQty||0));
+  // Use actualQty as denominator when not yet received (good=0) so landed is always shown
+  const denom    = good > 0 ? good : (item.actualQty||0);
+  const transAmt = transportPerUnit * (item.actualQty||0);
+  const laborAmt = laborPerUnit * (item.actualQty||0);
+  const landed   = denom > 0 ? (actual + transAmt + laborAmt) / denom : 0;
+  const margin   = item.sellingPrice > 0 ? ((item.sellingPrice - landed) / item.sellingPrice) * 100 : 0;
   return { ...item, billedAmount: billed, actualAmount: actual, goodQty: good,
-    transportShare: transportPerUnit * (item.actualQty||0),
-    laborShare: laborPerUnit * (item.actualQty||0),
+    transportShare: transAmt, laborShare: laborAmt,
     landedCostPerUnit: landed, marginPct: margin };
 };
 
@@ -70,23 +73,42 @@ const VendorSupplyChain: React.FC = () => {
   // ── Analytics data ─────────────────────────────────────────────────────────
   const analytics = useMemo(() => {
     const src = analyticsVendor === 'ALL' ? orders : orders.filter(o => o.vendorName === analyticsVendor);
-    const received = src.filter(o => ['Received','Closed'].includes(o.status));
-    const totalActual   = received.reduce((s,o) => s+(o.totalActualAmount||0), 0);
-    const totalTransport = received.reduce((s,o) => s+(o.totalTransportCost||0), 0);
-    const totalLabor    = received.reduce((s,o) => s+(o.laborCharges||0), 0);
-    const totalLanded   = totalActual + totalTransport + totalLabor;
+    const received = src.filter(o => ['Received','Closed','Partially Received'].includes(o.status));
+    const totalActual    = src.reduce((s,o) => s+(o.totalActualAmount||0), 0);
+    const totalTransport = src.reduce((s,o) => s+(o.totalTransportCost||0), 0);
+    const totalLabor     = src.reduce((s,o) => s+(o.laborCharges||0), 0);
+    const totalLanded    = totalActual + totalTransport + totalLabor;
+
+    // Potential revenue based on selling prices set in order items
+    const tPerUnitAll = totalActual > 0 ? totalTransport / src.reduce((s,o)=>s+o.items.reduce((si,i)=>si+(i.actualQty||0),0),0) : 0;
+    const potentialRevenue = src.reduce((s,o) => {
+      const tpu = o.items.length > 0 ? (o.totalTransportCost||0) / o.items.reduce((si,i)=>si+(i.actualQty||0),1) : 0;
+      const lpu = o.items.length > 0 ? (o.laborCharges||0) / o.items.reduce((si,i)=>si+(i.actualQty||0),1) : 0;
+      return s + o.items.reduce((is,i) => {
+        const qty = i.actualQty||0;
+        const selling = i.sellingPrice||0;
+        return is + (qty * selling);
+      }, 0);
+    }, 0);
+    const potentialProfit = potentialRevenue - totalLanded;
+    const potentialMargin = potentialRevenue > 0 ? (potentialProfit/potentialRevenue)*100 : 0;
+
+    // Realized revenue from actual sales of vendor products
     const sales = store.sales || [];
     const vendorProductIds = new Set(src.flatMap(o=>o.items.map(i=>i.productId)));
-    const vendorSales = sales.filter(s => s.items?.some((i:any)=>vendorProductIds.has(i.productId)));
+    const vendorSales = (sales as any[]).filter((s:any) => s.items?.some((i:any)=>vendorProductIds.has(i.productId)));
     const totalSaleValue = vendorSales.reduce((s:number,sale:any)=>s+(sale.totalAmount||0),0);
-    const profit = totalSaleValue - totalLanded;
-    const marginPct = totalSaleValue > 0 ? (profit/totalSaleValue)*100 : 0;
+    const realizedProfit = totalSaleValue - totalLanded;
+    const realizedMargin = totalSaleValue > 0 ? (realizedProfit/totalSaleValue)*100 : 0;
+
     const totalDamaged = src.reduce((s,o)=>s+o.damagedItems.reduce((ds,d)=>ds+(d.qtyDamaged||0),0),0);
     const allItems = src.flatMap(o=>o.items);
     const avgQuality = allItems.filter(i=>i.qualityRating).length
       ? allItems.reduce((s,i)=>s+(i.qualityRating||0),0)/allItems.filter(i=>i.qualityRating).length : 0;
-    return { totalOrders:src.length, totalActual, totalTransport, totalLanded,
-             totalSaleValue, profit, marginPct, totalDamaged, avgQuality };
+    const totalOrders = src.length;
+    return { totalOrders, totalActual, totalTransport, totalLanded,
+             potentialRevenue, potentialProfit, potentialMargin,
+             totalSaleValue, realizedProfit, realizedMargin, totalDamaged, avgQuality };
   }, [orders, analyticsVendor]);
 
   const vendors = [...new Set(orders.map(o=>o.vendorName).filter(Boolean))].sort();
@@ -131,9 +153,10 @@ const VendorSupplyChain: React.FC = () => {
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
-              { label:'Total Landed Cost', val:fmt(analytics.totalLanded), icon:'fa-rupee-sign', color:'text-amber-400', sub:`Transport: ${fmt(analytics.totalTransport)}` },
-              { label:'Total Sales', val:fmt(analytics.totalSaleValue), icon:'fa-shopping-cart', color:'text-emerald-400', sub:'From vendor products' },
-              { label:'Net Profit', val:fmt(analytics.profit), icon:'fa-chart-line', color: analytics.profit>=0?'text-emerald-400':'text-rose-400', sub:`Margin: ${pct(analytics.marginPct)}` },
+              { label:'Total Landed Cost', val:fmt(analytics.totalLanded), icon:'fa-rupee-sign', color:'text-amber-400', sub:`Actual: ${fmt(analytics.totalActual)} + Transport: ${fmt(analytics.totalTransport)}` },
+              { label:'Potential Revenue', val:fmt(analytics.potentialRevenue), icon:'fa-chart-pie', color:'text-blue-400', sub:`Based on selling prices in orders` },
+              { label:'Potential Profit', val:fmt(analytics.potentialProfit), icon:'fa-chart-line', color: analytics.potentialProfit>=0?'text-emerald-400':'text-rose-400', sub:`Margin: ${pct(analytics.potentialMargin)}` },
+              { label:'Realized Profit', val:fmt(analytics.realizedProfit), icon:'fa-check-circle', color: analytics.realizedProfit>=0?'text-emerald-400':'text-rose-400', sub:`Sales: ${fmt(analytics.totalSaleValue)} · Margin: ${pct(analytics.realizedMargin)}` },
               { label:'Damaged Items', val:analytics.totalDamaged.toString(), icon:'fa-exclamation-triangle', color:'text-rose-400', sub:`Avg quality: ${analytics.avgQuality.toFixed(1)}/5` },
             ].map(c=>(
               <div key={c.label} className="bg-slate-900 border border-white/10 rounded-2xl p-5">
@@ -155,7 +178,7 @@ const VendorSupplyChain: React.FC = () => {
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead className="bg-white/5">
-                  <tr>{['Vendor','Orders','Billed','Actual','Transport','Landed','Sales','Profit','Margin','Damaged'].map(h=>(
+                  <tr>{['Vendor','Orders','Billed','Actual','Transport','Landed','Potential Rev','Potential Profit','Margin','Realized Sales','Damaged'].map(h=>(
                     <th key={h} className="px-4 py-2.5 text-left text-[9px] font-black text-slate-400 uppercase whitespace-nowrap">{h}</th>
                   ))}</tr>
                 </thead>
@@ -163,16 +186,16 @@ const VendorSupplyChain: React.FC = () => {
                   {vendors.map(v=>{
                     const vo = orders.filter(o=>o.vendorName===v);
                     const rc = vo.filter(o=>['Received','Closed'].includes(o.status));
-                    const billed = rc.reduce((s,o)=>s+(o.totalBilledAmount||0),0);
-                    const actual = rc.reduce((s,o)=>s+(o.totalActualAmount||0),0);
-                    const trans  = rc.reduce((s,o)=>s+(o.totalTransportCost||0),0);
-                    const labor  = rc.reduce((s,o)=>s+(o.laborCharges||0),0);
+                    const billed = vo.reduce((s,o)=>s+(o.totalBilledAmount||0),0);
+                    const actual = vo.reduce((s,o)=>s+(o.totalActualAmount||0),0);
+                    const trans  = vo.reduce((s,o)=>s+(o.totalTransportCost||0),0);
+                    const labor  = vo.reduce((s,o)=>s+(o.laborCharges||0),0);
                     const landed = actual+trans+labor;
+                    const potRev = vo.reduce((s,o)=>s+o.items.reduce((is,i)=>is+(i.actualQty||0)*(i.sellingPrice||0),0),0);
+                    const potProfit = potRev - landed;
+                    const potMargin = potRev>0?(potProfit/potRev)*100:0;
                     const pids   = new Set(vo.flatMap(o=>o.items.map(i=>i.productId)));
-                    const sales  = (store.sales||[]).filter((s:any)=>s.items?.some((i:any)=>pids.has(i.productId)));
-                    const sv     = sales.reduce((s:number,x:any)=>s+(x.totalAmount||0),0);
-                    const profit = sv - landed;
-                    const margin = sv>0?(profit/sv)*100:0;
+                    const sv     = (store.sales||[]).filter((s:any)=>s.items?.some((i:any)=>pids.has(i.productId))).reduce((s:number,x:any)=>s+(x.totalAmount||0),0);
                     const damaged= vo.reduce((s,o)=>s+o.damagedItems.reduce((d,x)=>d+(x.qtyDamaged||0),0),0);
                     return (
                       <tr key={v} className="hover:bg-white/5 transition-colors cursor-pointer" onClick={()=>{ setAnalyticsVendor(v); }}>
@@ -182,9 +205,10 @@ const VendorSupplyChain: React.FC = () => {
                         <td className="px-4 py-3 text-blue-400">{fmt(actual)}</td>
                         <td className="px-4 py-3 text-slate-300">{fmt(trans)}</td>
                         <td className="px-4 py-3 text-white font-bold">{fmt(landed)}</td>
+                        <td className="px-4 py-3 text-purple-400">{fmt(potRev)}</td>
+                        <td className={`px-4 py-3 font-bold ${potProfit>=0?'text-emerald-400':'text-rose-400'}`}>{fmt(potProfit)} <span className="text-[9px] opacity-70">{pct(potMargin)}</span></td>
+                        <td className="px-4 py-3 text-slate-400 text-[9px]">potential</td>
                         <td className="px-4 py-3 text-emerald-400">{fmt(sv)}</td>
-                        <td className={`px-4 py-3 font-bold ${profit>=0?'text-emerald-400':'text-rose-400'}`}>{fmt(profit)}</td>
-                        <td className="px-4 py-3 text-purple-400">{pct(margin)}</td>
                         <td className={`px-4 py-3 ${damaged>0?'text-rose-400':'text-slate-500'}`}>{damaged}</td>
                       </tr>
                     );
