@@ -15,7 +15,7 @@ const Reports = lazy(() => import('./components/Reports'));
 const UserManagement = lazy(() => import('./components/UserManagement'));
 const CustomerConnect = lazy(() => import('./components/CustomerConnect'));
 const Expenses = lazy(() => import('./components/Expenses'));
-const VendorTracking = lazy(() => import('./components/VendorTracking'));
+const VendorTracking = lazy(() => import('./components/VendorSupplyChain'));
 const SystemControl = lazy(() => import('./components/SystemControl'));
 const DiagnosticsTerminal = lazy(() => import('./components/DiagnosticsTerminal'));
 const Login = lazy(() => import('./components/Login'));

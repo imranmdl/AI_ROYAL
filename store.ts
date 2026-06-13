@@ -590,6 +590,37 @@ class DataStore {
   private async persistGalleryLead(l: GalleryLead): Promise<boolean> { try { const r = await fetch(this.getApiUrl('/api/gallery-leads'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(l) }); return r.ok; } catch { return false; } }
 
   async createUser(u: User) { const ts = { ...u, updatedAt: Date.now() }; this.users.push(ts); this.logActivity('Users','Create',u.name); await this.persistUser(ts); await this.save(); }
+  async saveVendorOrder(order: any) {
+    const existing = this.vendorOrders.findIndex((o: any) => o.id === order.id);
+    if (existing >= 0) {
+      this.vendorOrders = this.vendorOrders.map((o: any) => o.id === order.id ? { ...o, ...order } : o);
+    } else {
+      this.vendorOrders = [order, ...this.vendorOrders];
+    }
+    // Auto-inward received items to inventory
+    if (['Received','Partially Received'].includes(order.status)) {
+      for (const item of (order.items || [])) {
+        const goodQty = (item.receivedQty||0) - (item.damagedQty||0);
+        if (goodQty > 0 && item.productId) {
+          const prod = this.products.find(p => p.id === item.productId);
+          if (prod) {
+            const updatedProd = { ...prod,
+              stockBoxes: (prod.stockBoxes||0) + goodQty,
+              purchasePrice: item.landedCostPerUnit || item.actualRate || prod.purchasePrice,
+              lastPurchaseVendor: order.vendorName,
+              lastPurchaseDate: order.receivedDate || new Date().toISOString().slice(0,10),
+              updatedAt: Date.now(),
+            };
+            this.products = this.products.map(p => p.id === item.productId ? updatedProd : p);
+          }
+        }
+      }
+    }
+    this.lastUpdated = Date.now();
+    this.notify();
+    await this.save();
+  }
+
   async updateUser(id: string, up: Partial<User>) { const now = Date.now(); this.users = this.users.map(u => u.id === id ? { ...u, ...up, updatedAt: now } : u); const upd = this.users.find(u => u.id === id); if (upd) await this.persistUser(upd); await this.save(); }
   async updatePermissions(id: string, p: UserPermissions) { const now = Date.now(); this.users = this.users.map(u => u.id === id ? { ...u, permissions: p, updatedAt: now } : u); const upd = this.users.find(u => u.id === id); if (upd) await this.persistUser(upd); await this.save(); }
   async deleteUser(id: string) { this.users = this.users.filter(u => u.id !== id); this.save(); try { await fetch(this.getApiUrl(`/api/users/${id}`), { method: 'DELETE' }); } catch {} }

@@ -873,45 +873,143 @@ export interface DamagedItemTracking {
   photos?: string[];
 }
 
+// ── Vendor Supply Chain — Dual Invoice System ───────────────────────────────
 export interface VendorOrderItem {
+  id: string;
   productId: string;
   productName: string;
-  qtyBoxes: number;
-  rate: number;
-  receivedQty?: number;
-  sellingPrice?: number;    // manual selling price per box set at order time
-  transportShare?: number;  // % of transport cost allocated to this item (auto-calc)
-  landedCost?: number;      // landed cost per box = (item cost + transport share) / qty
+  category?: string;
+  unit: 'Box' | 'Slab' | 'Piece' | 'Ton' | 'Kg' | 'Bag';
+
+  // Ordered quantity
+  orderedQty: number;
+
+  // BILLING INVOICE (what vendor bills — may include markup/GST)
+  billedQty: number;
+  billedRate: number;     // rate per unit in billing invoice
+  billedAmount: number;   // billedQty × billedRate
+
+  // ACTUAL / DISPATCH INVOICE (real cost without markup)
+  actualQty: number;
+  actualRate: number;     // actual cost per unit
+  actualAmount: number;   // actualQty × actualRate
+
+  // Receiving
+  receivedQty: number;
+  damagedQty: number;
+  goodQty: number;        // receivedQty - damagedQty
+
+  // Cost tracking (auto-calculated)
+  weightKg?: number;           // for transport allocation
+  transportShare: number;      // transport cost allocated to this item
+  laborShare: number;          // labor cost allocated to this item
+  landedCostPerUnit: number;   // (actualAmount + transportShare + laborShare) / goodQty
+
+  // Selling price at time of order
+  sellingPrice: number;
+  marginPct?: number;          // (sellingPrice - landedCostPerUnit) / sellingPrice × 100
+
+  // Quality
+  qualityRating?: 1 | 2 | 3 | 4 | 5;
+  qualityNotes?: string;
+
+  // Legacy compat
+  qtyBoxes?: number;
+  rate?: number;
+  landedCost?: number;
+}
+
+export interface VendorInvoice {
+  invoiceNo: string;
+  invoiceDate: string;
+  invoiceFile?: string;   // base64
+  subtotal: number;
+  gstPct: number;
+  gstAmount: number;
+  total: number;
+  notes?: string;
+}
+
+export interface VendorTransport {
+  vehicleNo: string;
+  driverName?: string;
+  driverPhone?: string;
+  transporterName?: string;
+  totalWeightTons: number;       // total weight of shipment
+  ratePerTon: number;            // transport rate ₹/ton
+  freightCost: number;           // totalWeightTons × ratePerTon
+  loadingCharges: number;        // at source
+  unloadingCharges: number;      // at destination
+  driverExpenses: number;        // extra cash given to driver (daily need, toll, etc.)
+  totalTransportCost: number;    // freightCost + loading + unloading + driverExpenses
 }
 
 export interface VendorOrder {
   id: string;
   orderNo: string;
+
+  // Vendor details
   vendorName: string;
-  vendorPhone?: string;       // vendor contact number
-  vendorGst?: string;         // vendor GST number
+  vendorPhone?: string;
+  vendorGst?: string;
+  vendorAddress?: string;
+
+  // Dates
   orderDate: string;
   expectedDeliveryDate?: string;
+  receivedDate?: string;
+
+  // Status
   status: VendorOrderStatus;
   paymentStatus: VendorPaymentStatus;
-  creditDays?: number;
+
+  // Dual invoices
+  billingInvoice?: VendorInvoice;   // what vendor sends (may have markup)
+  actualInvoice?: VendorInvoice;    // actual dispatch/cost invoice
+
+  // Items (linked to inventory)
+  items: VendorOrderItem[];
+
+  // Transport
+  transport?: VendorTransport;
+
+  // Extra charges
+  laborCharges: number;
+  miscCharges: number;
+  miscDescription?: string;
+
+  // Totals
+  totalBilledAmount: number;    // sum of billedAmount across items
+  totalActualAmount: number;    // sum of actualAmount across items
+  totalTransportCost: number;
+  grandTotal: number;           // actualAmount + transport + labor + misc
+
+  // Payment
   cashAmount: number;
   rtgsAmount: number;
-  transportPayment: number;   // payment made specifically for transport
-  transportationCost: number;
-  otherCosts: number;
-  invoiceFile?: string;       // base64
-  totalAmount: number;        // Item total (excl. transport/other)
   paidAmount: number;
   balanceAmount: number;
+  creditDays?: number;
   paymentHistory: VendorPaymentRecord[];
-  items: VendorOrderItem[];
-  vehicleNumber?: string;
-  receivedDate?: string;
+
+  // Receiving
   receivedGodownId?: string;
+  isFullyReceived?: boolean;
+
+  // Damage & quality
   damagedItems: DamagedItemTracking[];
-  trackingDetails?: string;
+
+  // Notes
   remarks?: string;
+  invoiceFile?: string;         // legacy compat
+
+  // Analytics (computed)
+  totalItemsCost?: number;
+  totalSellingValue?: number;
+  totalProfit?: number;
+  avgMarginPct?: number;
+
+  updatedAt?: number;
 }
 
 export interface User {
