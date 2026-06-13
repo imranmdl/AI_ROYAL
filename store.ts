@@ -405,15 +405,22 @@ class DataStore {
     if (!this._savePending) return;
     this._savePending = false;
     const { backendUrl, ...cleanSettings } = this.settings as any;
-    const safeUsers = this.users.map(({ password, ...rest }) => rest);
+    // Keep passwords in the sync payload so the server can preserve them
+    // Server POST /api/sync reads existing password before overwriting (never wipes)
     try {
-      await fetch(this.getApiUrl(SYNC_URL), { method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ users: safeUsers, quotations: this.quotations, payments: this.payments,
-          expenses: this.expenses, offers: this.offers, commissionRules: this.commissionRules,
-          customers: this.customers, advances: this.advances, payrollRecords: this.payrollRecords,
-          returns: this.returns, vendorOrders: this.vendorOrders, galleryLeads: this.galleryLeads, customCredits: this.customCredits, paymentReminders: this.paymentReminders,
-          loadingCharges: this.loadingCharges, settings: cleanSettings, lastUpdated: this.lastUpdated }),
+      const jwt = this.getJwt();
+      const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+      if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+      await fetch(this.getApiUrl(SYNC_URL), { method: 'POST', headers,
+        body: JSON.stringify({ users: this.users,
+          products: this.products, sales: this.sales, purchases: this.purchases,
+          vendorOrders: this.vendorOrders, quotations: this.quotations,
+          customers: this.customers, activityLogs: this.activityLogs,
+          galleryLeads: this.galleryLeads, returns: this.returns, offers: this.offers,
+          advances: this.advances, payrollRecords: this.payrollRecords,
+          incentiveEntries: this.incentiveEntries, paymentReminders: this.paymentReminders,
+          loadingCharges: this.loadingCharges, settings: cleanSettings,
+          lastUpdated: this.lastUpdated }),
       });
     } catch (e) { console.warn('[STORE] Save failed:', e); }
   }

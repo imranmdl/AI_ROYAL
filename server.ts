@@ -1992,23 +1992,33 @@ app.post('/api/sync', async (req: Request, res: Response) => {
         if (isDefault) data.sales.forEach((s: any) => updateCache('sales', s));
       }
 
-      // Users — preserve existing password
+      // Users — preserve password AND tenant_id for existing rows
       if (data.users?.length > 0) {
         for (const u of data.users) {
           try {
-            const [existing]: any = await pool.query('SELECT data FROM users WHERE id=?', [u.id]);
+            const [existing]: any = await pool.query('SELECT data, tenant_id FROM users WHERE id=?', [u.id]);
             let userData = { ...u };
             if (existing.length) {
+              // Preserve password if the incoming user doesn't have one
               const ex = parseData(existing[0].data) || {};
               if (ex.password && !userData.password) userData.password = ex.password;
+              // Keep existing tenant_id — NEVER let a no-JWT sync change it to 'default'
+              const existingTenantId = existing[0].tenant_id || tenantId;
+              await pool.query(
+                `INSERT INTO users (id, tenant_id, name, email, role, status, data, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email),
+                 role=VALUES(role), status=VALUES(status), data=VALUES(data), updated_at=VALUES(updated_at)`,
+                [u.id, existingTenantId, u.name||'', u.email||'', u.role||'Manager', u.status||'Active', JSON.stringify(userData), now]
+              );
+            } else {
+              // New user — use current tenant
+              await pool.query(
+                `INSERT INTO users (id, tenant_id, name, email, role, status, data, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [u.id, tenantId, u.name||'', u.email||'', u.role||'Manager', u.status||'Active', JSON.stringify(userData), now]
+              );
             }
-            await pool.query(
-              `INSERT INTO users (id, tenant_id, name, email, role, status, data, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-               ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email),
-               role=VALUES(role), status=VALUES(status), data=VALUES(data), updated_at=VALUES(updated_at)`,
-              [u.id, tenantId, u.name||'', u.email||'', u.role||'Manager', u.status||'Active', JSON.stringify(userData), now]
-            );
           } catch {}
         }
       }
