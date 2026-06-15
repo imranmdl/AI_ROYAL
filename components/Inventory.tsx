@@ -12,6 +12,7 @@ import GraniteManager from './GraniteManager';
 import UnitConfig from './UnitConfig';
 import DependentItemsManager from './DependentItemsManager';
 import InventoryImportExport from './InventoryImportExport';
+import QuickAddInward from './QuickAddInward';
 
 interface InventoryProps {
   currentRole: UserRole;
@@ -96,6 +97,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
   const [showAddStock, setShowAddStock] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showImportExport, setShowImportExport] = useState(false);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [ledgerProduct, setLedgerProduct]         = useState<Product | null>(null);
   const [photoProduct,  setPhotoProduct]          = useState<Product | null>(null);
   const { takePhoto, loading: camLoading }         = useCamera();
@@ -718,13 +720,18 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
           <p className="text-slate-500 font-bold uppercase text-[10px] tracking-widest mt-2 italic">Industry Traceability • Shade & Batch Management</p>
         </div>
         <div className="flex flex-wrap gap-3 w-full lg:w-auto">
+            <button onClick={() => setShowQuickAdd(true)}
+              className="flex-1 lg:flex-none bg-emerald-600 text-white px-8 py-3 rounded-2xl font-black text-[9px] uppercase tracking-widest hover:bg-emerald-700 shadow-xl flex items-center justify-center gap-2">
+              <i className="fas fa-bolt text-xs"></i>
+              Add &amp; Inward Item
+            </button>
             <button onClick={() => { 
               setEditProduct(null); 
               setProductForm(initialFormState); 
               setErrorMessage(null);
               setShowAddProduct(true); 
             }} className="flex-1 lg:flex-none bg-white text-slate-800 border-2 border-slate-100 px-6 py-3 rounded-2xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-50">Create Master</button>
-            <button onClick={() => setShowAddStock(true)} className="flex-1 lg:flex-none bg-amber-600 text-white px-8 py-3 rounded-2xl font-black text-[9px] uppercase tracking-widest hover:bg-amber-700 shadow-xl">Inward Stock</button>
+            <button onClick={() => setShowAddStock(true)} className="flex-1 lg:flex-none bg-amber-600 text-white px-8 py-3 rounded-2xl font-black text-[9px] uppercase tracking-widest hover:bg-amber-700 shadow-xl">Inward Stock (Advanced)</button>
             <button onClick={() => setShowImportExport(v => !v)}
               className={`flex-1 lg:flex-none px-6 py-3 rounded-2xl font-black text-[9px] uppercase tracking-widest transition-all flex items-center gap-2 ${showImportExport ? 'bg-blue-600 text-white shadow-xl' : 'bg-blue-50 text-blue-600 border border-blue-100 hover:bg-blue-100'}`}>
               <i className="fas fa-file-import text-xs"></i>
@@ -936,6 +943,14 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
           </div>
         )}
       </div>
+
+      {/* Quick Add & Inward — one-screen flow */}
+      {showQuickAdd && (
+        <QuickAddInward
+          onClose={() => setShowQuickAdd(false)}
+          onDone={() => refreshProducts(500)}
+        />
+      )}
 
       {/* Inward Stock Modal */}
       {showAddStock && (

@@ -9,6 +9,7 @@
  */
 import React, { useState, useEffect, useMemo } from 'react';
 import { store } from '../store';
+import QuickAddInward from './QuickAddInward';
 import type { VendorOrder, VendorOrderItem, VendorTransport, VendorInvoice } from '../types';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -362,6 +363,7 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
 
   const [damagedItems,  setDamagedItems]  = useState(order?.damagedItems || []);
   const [productSearch, setProductSearch] = useState('');
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
 
   // ── Computed totals ───────────────────────────────────────────────────────
   const t = calcTransport(transport);
@@ -587,10 +589,28 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
                     <i className="fas fa-plus text-amber-400 text-xs"></i>
                   </button>
                 ))}
-                {filteredProds.length === 0 && <div className="text-slate-500 text-xs text-center py-2">No products found</div>}
+                {filteredProds.length === 0 && (
+                  <div className="px-3 py-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-400 text-xs font-bold flex items-center justify-between">
+                    No matching product found.
+                    <button onClick={()=>setShowQuickAdd(true)} className="underline font-black">+ New Product</button>
+                  </div>
+                )}
               </div>
             )}
+            <button onClick={()=>setShowQuickAdd(true)}
+              className="w-full py-2.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl font-black text-[10px] uppercase hover:bg-emerald-500/20 transition-all flex items-center justify-center gap-2">
+              <i className="fas fa-plus"></i> Create New Item &amp; Inward Directly
+            </button>
           </div>
+
+          {/* Quick Add & Inward modal — creates product + records this vendor's inward in one step */}
+          {showQuickAdd && (
+            <QuickAddInward
+              onClose={()=>setShowQuickAdd(false)}
+              defaultVendorName={vendorName}
+              onDone={(p)=>{ addItem(p); }}
+            />
+          )}
 
           {/* Items table */}
           {items.length > 0 && (
