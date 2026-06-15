@@ -100,7 +100,7 @@ const InventoryImportExport: React.FC = () => {
   const currentUser = store.currentUser;
 
   // ── Import state
-  const [activeTab, setActiveTab]       = useState<'export'|'import'|'history'>('export');
+  const [activeTab, setActiveTab]       = useState<'export'|'import'|'history'|'mapping'>('export');
   const [dragOver, setDragOver]         = useState(false);
   const [parsedRows, setParsedRows]     = useState<ParsedRow[]>([]);
   const [fileName, setFileName]         = useState('');
@@ -118,6 +118,18 @@ const InventoryImportExport: React.FC = () => {
   const [includeStock, setIncludeStock] = useState(true);
 
   const [duplicateWarning, setDuplicateWarning] = useState('');
+  const [existingDuplicates, setExistingDuplicates] = useState<string[]>([]);   // names that already exist in inventory
+  const [skipExisting, setSkipExisting] = useState(false);                       // if true, don't import rows that already exist
+
+  // ── Vendor Mapping (shown after successful import) ─────────────────────
+  const [importedProducts, setImportedProducts] = useState<any[]>([]);
+  const [mapVendorName, setMapVendorName] = useState('');
+  const [mapDate, setMapDate] = useState(new Date().toISOString().slice(0,10));
+  const [mapInvoiceNo, setMapInvoiceNo] = useState('');
+  const [mapItems, setMapItems] = useState<{ productId:string; name:string; category:string; qty:number; purchaseRate:number; sellingPrice:number }[]>([]);
+  const [mapTransport, setMapTransport] = useState({ totalWeightTons: 0, ratePerTon: 3500, loadingCharges: 0, unloadingCharges: 0, driverExpenses: 0 });
+  const [mapLaborCharges, setMapLaborCharges] = useState(0);
+  const [mapSaving, setMapSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // ── Save import history ────────────────────────────────────────────────
@@ -279,6 +291,17 @@ const InventoryImportExport: React.FC = () => {
       } else {
         setDuplicateWarning('');
       }
+
+      // ── Check against EXISTING inventory — flag items that already exist ──
+      const existingNames = dedupedRows
+        .map(row => {
+          const n = (row['Product Name'] || row['name'] || row['Name'] || '').toString().trim();
+          const s = (row['Size'] || row['size'] || '').toString().trim();
+          return store.productExists(n, s) ? n : '';
+        })
+        .filter(Boolean);
+      setExistingDuplicates(existingNames);
+
       setParsedRows(dedupedRows);
     };
 
@@ -302,12 +325,31 @@ const InventoryImportExport: React.FC = () => {
     setIsImporting(true);
     setImportResult(null);
 
+    // If "skip existing" is enabled, filter out rows that already exist in inventory
+    const rowsToSend = skipExisting
+      ? parsedRows.filter(row => {
+          const n = (row['Product Name'] || row['name'] || row['Name'] || '').toString().trim();
+          const s = (row['Size'] || row['size'] || '').toString().trim();
+          return !store.productExists(n, s);
+        })
+      : parsedRows;
+
+    if (rowsToSend.length === 0) {
+      setImportResult({ error: 'All rows already exist in inventory and "Skip existing items" is enabled. Nothing to import.' });
+      setIsImporting(false);
+      return;
+    }
+
+    const jwt = localStorage.getItem(Object.keys(localStorage).find(k=>k.startsWith('royal_jwt_')) || 'royal_jwt') || '';
+    const importHeaders: Record<string,string> = { 'Content-Type': 'application/json' };
+    if (jwt) importHeaders['Authorization'] = `Bearer ${jwt}`;
+
     const base = (store.settings as any).backendUrl || '';
     try {
       const res = await fetch(`${base}/api/admin/import-products-csv`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: parsedRows, category: selectedCategory }),
+        headers: importHeaders,
+        body: JSON.stringify({ rows: rowsToSend, category: selectedCategory }),
       });
       const data = await res.json();
 
@@ -329,8 +371,24 @@ const InventoryImportExport: React.FC = () => {
 
       if (res.ok) {
         await store.refreshFromServer(true);
+
+        // ── Set up the Vendor Mapping screen with the imported items ──
+        const imported = (data.importedProducts || []) as any[];
+        if (imported.length > 0) {
+          setImportedProducts(imported);
+          setMapItems(imported.map(p => ({
+            productId: p.id, name: p.name, category: p.category,
+            qty: p.qty || 0, purchaseRate: p.purchasePrice || 0, sellingPrice: p.sellingPrice || 0,
+          })));
+          // Prefill vendor name from CSV if all rows share the same vendor
+          const vendors = [...new Set(imported.map(p=>p.vendorName).filter(Boolean))];
+          setMapVendorName(vendors.length === 1 ? vendors[0] : '');
+          setActiveTab('mapping');
+        }
+
         setParsedRows([]);
         setFileName('');
+        setExistingDuplicates([]);
         if (fileRef.current) fileRef.current.value = '';
       }
     } catch (e: any) {
@@ -376,6 +434,7 @@ const InventoryImportExport: React.FC = () => {
         <div className="flex gap-2 flex-wrap">
           {TAB('export',  'Export / Templates', 'fa-file-export')}
           {TAB('import',  'Import Data',        'fa-file-import')}
+          {importedProducts.length > 0 && TAB('mapping', `Vendor Mapping (${importedProducts.length})`, 'fa-link')}
           {TAB('history', `History (${importHistory.length})`, 'fa-history')}
         </div>
       </div>
@@ -514,6 +573,26 @@ const InventoryImportExport: React.FC = () => {
             </div>
           )}
 
+          {/* Existing-inventory duplicate banner */}
+          {existingDuplicates.length > 0 && (
+            <div className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-2xl px-5 py-3.5">
+              <i className="fas fa-info-circle text-blue-500 text-sm mt-0.5 shrink-0"></i>
+              <div className="flex-1">
+                <div className="font-black text-blue-700 text-sm">{existingDuplicates.length} item(s) already exist in inventory</div>
+                <div className="text-[10px] text-blue-600 font-bold mt-0.5">
+                  {existingDuplicates.slice(0,5).join(', ')}{existingDuplicates.length > 5 ? '…' : ''}
+                </div>
+                <label className="flex items-center gap-2 mt-3 cursor-pointer">
+                  <input type="checkbox" className="w-4 h-4 accent-blue-600"
+                    checked={skipExisting} onChange={e=>setSkipExisting(e.target.checked)} />
+                  <span className="text-[10px] font-black text-blue-700 uppercase tracking-wide">
+                    Skip these — only import new items (uncheck to update existing prices/stock)
+                  </span>
+                </label>
+              </div>
+            </div>
+          )}
+
           {/* Category confirmation + import controls */}
           {parsedRows.length > 0 && (
             <div className="bg-white border border-slate-100 rounded-2xl p-5 space-y-4">
@@ -636,6 +715,164 @@ const InventoryImportExport: React.FC = () => {
               <div>• Status column: Active or Suspended (defaults to Active if blank)</div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── VENDOR MAPPING TAB (shown after a successful import) ─────────── */}
+      {activeTab === 'mapping' && (
+        <div className="space-y-5">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl px-5 py-4 flex items-start gap-3">
+            <i className="fas fa-check-circle text-emerald-500 text-lg mt-0.5"></i>
+            <div>
+              <div className="font-black text-emerald-700 text-sm">{importedProducts.length} item(s) imported successfully</div>
+              <div className="text-[10px] text-emerald-600 font-bold mt-0.5">
+                Now map this batch to a vendor — set purchase rates, selling prices, and transport so
+                landed cost and vendor analytics are accurate. Stock levels from the CSV are kept as-is
+                (this step will NOT add stock again).
+              </div>
+            </div>
+          </div>
+
+          {/* Vendor + date */}
+          <div className="bg-white border border-slate-100 rounded-2xl p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Vendor Name</label>
+              <input className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400"
+                list="import-vendor-list" value={mapVendorName} onChange={e=>setMapVendorName(e.target.value)} placeholder="e.g. Pradeep Suppliers" />
+              <datalist id="import-vendor-list">
+                {[...new Set((store.vendorOrders||[]).map(o=>o.vendorName))].filter(Boolean).map(v=><option key={v} value={v} />)}
+              </datalist>
+            </div>
+            <div>
+              <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Date</label>
+              <input type="date" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400"
+                value={mapDate} onChange={e=>setMapDate(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Invoice / Ref No (optional)</label>
+              <input className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400"
+                value={mapInvoiceNo} onChange={e=>setMapInvoiceNo(e.target.value)} placeholder="INV-1234" />
+            </div>
+          </div>
+
+          {/* Items table — qty, purchase rate, selling price, landed cost (live) */}
+          <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-100 font-black text-sm text-slate-900">Items — Review Pricing</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr>
+                    {['Item','Category','Qty','Purchase Rate','Selling Price','Landed Cost','Margin'].map(h=>(
+                      <th key={h} className="px-4 py-2.5 text-left text-[9px] font-black text-slate-400 uppercase">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(() => {
+                    const totalQty = mapItems.reduce((s,i)=>s+(i.qty||0),0);
+                    const freight = (mapTransport.totalWeightTons||0) * (mapTransport.ratePerTon||0);
+                    const totalTransport = freight + (mapTransport.loadingCharges||0) + (mapTransport.unloadingCharges||0) + (mapTransport.driverExpenses||0);
+                    const transportPerUnit = totalQty>0 ? totalTransport/totalQty : 0;
+                    const laborPerUnit = totalQty>0 ? mapLaborCharges/totalQty : 0;
+                    return mapItems.map((it, idx) => {
+                      const landed = it.purchaseRate + transportPerUnit + laborPerUnit;
+                      const margin = it.sellingPrice>0 ? ((it.sellingPrice-landed)/it.sellingPrice)*100 : 0;
+                      return (
+                        <tr key={it.productId}>
+                          <td className="px-4 py-2.5 font-bold text-slate-900">{it.name}</td>
+                          <td className="px-4 py-2.5 text-slate-500">{it.category}</td>
+                          <td className="px-4 py-2.5">
+                            <input type="number" className="w-20 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs"
+                              value={it.qty} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,qty:+e.target.value}:x))} />
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <input type="number" className="w-24 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs"
+                              value={it.purchaseRate} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,purchaseRate:+e.target.value}:x))} />
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <input type="number" className="w-24 px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg font-bold text-xs"
+                              value={it.sellingPrice} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,sellingPrice:+e.target.value}:x))} />
+                          </td>
+                          <td className="px-4 py-2.5 font-black text-purple-600">₹{landed.toFixed(2)}</td>
+                          <td className={`px-4 py-2.5 font-black ${margin>=20?'text-emerald-600':margin>=10?'text-amber-600':'text-rose-600'}`}>{margin.toFixed(1)}%</td>
+                        </tr>
+                      );
+                    });
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Transport */}
+          <div className="bg-white border border-slate-100 rounded-2xl p-5 space-y-4">
+            <div className="font-black text-sm text-slate-900 flex items-center gap-2">
+              <i className="fas fa-truck text-purple-500"></i> Transport &amp; Logistics (allocated across all items)
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div>
+                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Total Weight (Tons)</label>
+                <input type="number" step="0.1" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm"
+                  value={mapTransport.totalWeightTons||''} onChange={e=>setMapTransport(p=>({...p,totalWeightTons:+e.target.value}))} />
+              </div>
+              <div>
+                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Rate / Ton (₹)</label>
+                <input type="number" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm"
+                  value={mapTransport.ratePerTon||''} onChange={e=>setMapTransport(p=>({...p,ratePerTon:+e.target.value}))} />
+              </div>
+              <div>
+                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Loading (₹)</label>
+                <input type="number" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm"
+                  value={mapTransport.loadingCharges||''} onChange={e=>setMapTransport(p=>({...p,loadingCharges:+e.target.value}))} />
+              </div>
+              <div>
+                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Unloading (₹)</label>
+                <input type="number" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm"
+                  value={mapTransport.unloadingCharges||''} onChange={e=>setMapTransport(p=>({...p,unloadingCharges:+e.target.value}))} />
+              </div>
+              <div>
+                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Driver Extra (₹)</label>
+                <input type="number" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm"
+                  value={mapTransport.driverExpenses||''} onChange={e=>setMapTransport(p=>({...p,driverExpenses:+e.target.value}))} />
+              </div>
+            </div>
+            <div>
+              <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Labor Charges (₹)</label>
+              <input type="number" className="w-full md:w-48 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm"
+                value={mapLaborCharges||''} onChange={e=>setMapLaborCharges(+e.target.value)} />
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={async ()=>{
+                setMapSaving(true);
+                try {
+                  await store.linkImportBatchToVendor({
+                    vendorName: mapVendorName, date: mapDate, invoiceNo: mapInvoiceNo || undefined,
+                    items: mapItems.map(i=>({ productId:i.productId, qty:i.qty, purchaseRate:i.purchaseRate, sellingPrice:i.sellingPrice })),
+                    transport: mapTransport, laborCharges: mapLaborCharges,
+                  });
+                  await store.refreshFromServer(true);
+                  setImportedProducts([]);
+                  setMapItems([]);
+                  setActiveTab('import');
+                } finally { setMapSaving(false); }
+              }}
+              disabled={mapSaving || !mapVendorName.trim()}
+              className="px-8 py-3.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2">
+              {mapSaving ? <><i className="fas fa-spinner fa-spin"></i> Saving…</> : <><i className="fas fa-link"></i> Confirm Mapping — Link to Vendor</>}
+            </button>
+            <button
+              onClick={()=>{ setImportedProducts([]); setMapItems([]); setActiveTab('import'); }}
+              className="px-8 py-3.5 bg-white border-2 border-slate-200 text-slate-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all">
+              Skip — Map Later from Vendor Supply Chain
+            </button>
+          </div>
+          {!mapVendorName.trim() && (
+            <div className="text-[10px] font-bold text-rose-500 uppercase">Enter a vendor name to confirm mapping</div>
+          )}
         </div>
       )}
 

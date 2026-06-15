@@ -2464,6 +2464,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       }
 
       const results = { created: 0, updated: 0, skipped: 0, errors: [] as string[] };
+      const importedProducts: any[] = [];
       const now = Date.now();
 
       // ── Server-side deduplication: remove duplicate rows within this batch ──
@@ -2654,6 +2655,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
 
           // Update in-memory only for default tenant — named tenants read directly from DB
           const csvIsDefault = !req.tenantId || req.tenantId === 'default';
+          const isNewProduct = !existingId;
           if (csvIsDefault) {
             if (!inMemoryDb) inMemoryDb = { products: [] };
             if (!inMemoryDb.products) inMemoryDb.products = [];
@@ -2664,6 +2666,14 @@ app.post('/api/sync', async (req: Request, res: Response) => {
             if (existingId) results.updated++; else results.created++;
           }
 
+          // Record summary for the post-import Vendor Mapping screen
+          importedProducts.push({
+            id: productId, name, category, brand, size, unitType,
+            qty: effectiveStock, purchasePrice, sellingPrice,
+            costPerSqft, sellingPerSqft, isNew: isNewProduct,
+            vendorName: vendorName || '',
+          });
+
         } catch (rowErr: any) {
           results.errors.push(`Row "${row['Product Name'] || row['name'] || '?'}": ${rowErr.message}`);
           results.skipped++;
@@ -2673,7 +2683,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       inMemoryDb.lastUpdated = Date.now();
       syncResponseCache = null;
 
-      res.json({ success: true, results });
+      res.json({ success: true, results, importedProducts });
     } catch (err: any) {
       console.error('[IMPORT-CSV] Error:', err);
       res.status(500).json({ error: err.message });

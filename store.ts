@@ -619,6 +619,108 @@ class DataStore {
 
   async createUser(u: User) { const ts = { ...u, updatedAt: Date.now() }; this.users.push(ts); this.logActivity('Users','Create',u.name); await this.persistUser(ts); await this.save(); }
   /**
+   * Link a freshly-imported CSV batch to a vendor — creates ONE consolidated
+   * VendorOrder for traceability/analytics WITHOUT re-adding stock (the CSV
+   * import already set stockBoxes). Also updates each product's purchasePrice
+   * (landed cost including transport share), lastPurchaseVendor/Date, and
+   * appends a purchaseHistory entry.
+   */
+  async linkImportBatchToVendor(opts: {
+    vendorName: string;
+    date: string;
+    invoiceNo?: string;
+    items: { productId: string; qty: number; purchaseRate: number; sellingPrice: number }[];
+    transport?: { totalWeightTons: number; ratePerTon: number; loadingCharges: number; unloadingCharges: number; driverExpenses: number };
+    laborCharges?: number;
+  }): Promise<string> {
+    const { vendorName, date, items } = opts;
+    const transport = opts.transport || { totalWeightTons: 0, ratePerTon: 3500, loadingCharges: 0, unloadingCharges: 0, driverExpenses: 0 };
+    const laborCharges = opts.laborCharges || 0;
+
+    const freightCost = (transport.totalWeightTons || 0) * (transport.ratePerTon || 0);
+    const totalTransportCost = freightCost + (transport.loadingCharges||0) + (transport.unloadingCharges||0) + (transport.driverExpenses||0);
+    const totalQty = items.reduce((s, i) => s + (i.qty || 0), 0);
+    const transportPerUnit = totalQty > 0 ? totalTransportCost / totalQty : 0;
+    const laborPerUnit     = totalQty > 0 ? laborCharges / totalQty : 0;
+
+    const orderItems: VendorOrderItem[] = items.map((it, idx) => {
+      const actualAmount = it.qty * it.purchaseRate;
+      const landed = it.purchaseRate + transportPerUnit + laborPerUnit;
+      const margin = it.sellingPrice > 0 ? ((it.sellingPrice - landed) / it.sellingPrice) * 100 : 0;
+      const prod = this.products.find(p => p.id === it.productId);
+      return {
+        id: `item-import-${Date.now()}-${idx}`,
+        productId: it.productId, productName: prod?.name || it.productId,
+        category: prod?.category || '', unit: prod?.unitType || 'Box',
+        orderedQty: it.qty,
+        billedQty: it.qty, billedRate: it.purchaseRate, billedAmount: actualAmount,
+        actualQty: it.qty, actualRate: it.purchaseRate, actualAmount,
+        receivedQty: it.qty, damagedQty: 0, goodQty: it.qty,
+        transportShare: transportPerUnit * it.qty, laborShare: laborPerUnit * it.qty,
+        landedCostPerUnit: landed,
+        sellingPrice: it.sellingPrice, marginPct: margin,
+      };
+    });
+
+    const totalActual = orderItems.reduce((s,i)=>s+(i.actualAmount||0),0);
+    const grandTotal  = totalActual + totalTransportCost + laborCharges;
+
+    const order: VendorOrder = {
+      id: `imp-${Date.now()}`,
+      orderNo: opts.invoiceNo || `IMP-${Date.now().toString().slice(-6)}`,
+      vendorName: vendorName.trim() || 'Import Batch',
+      orderDate: date, receivedDate: date,
+      status: 'Received' as any, paymentStatus: 'Pending' as any,
+      items: orderItems,
+      transport: { vehicleNo:'', driverName:'', driverPhone:'', transporterName:'',
+        totalWeightTons: transport.totalWeightTons||0, ratePerTon: transport.ratePerTon||0,
+        freightCost, loadingCharges: transport.loadingCharges||0, unloadingCharges: transport.unloadingCharges||0,
+        driverExpenses: transport.driverExpenses||0, totalTransportCost },
+      laborCharges, miscCharges: 0,
+      totalBilledAmount: totalActual, totalActualAmount: totalActual,
+      totalTransportCost, grandTotal,
+      cashAmount: 0, rtgsAmount: 0, paidAmount: 0, balanceAmount: grandTotal,
+      paymentHistory: [], damagedItems: [],
+      receivedGodownId: 'g1',
+      remarks: 'Linked from CSV Import — stock already set during import (no auto re-inward)',
+      isFullyReceived: true, updatedAt: Date.now(),
+    };
+
+    // Push directly — do NOT go through saveVendorOrder's auto-inward (would double-count stock)
+    this.vendorOrders = [order, ...this.vendorOrders];
+    this.persistVendorOrder(order);
+
+    // Update each product: landed cost, vendor info, purchase history (no stock change)
+    for (const item of orderItems) {
+      const prod = this.products.find(p => p.id === item.productId);
+      if (!prod) continue;
+      const purchaseEntry = {
+        id: `ph-${order.id}-${item.productId}-${Date.now()}`,
+        date, vendor: order.vendorName, qty: item.goodQty,
+        rate: item.actualRate, landedCost: item.landedCostPerUnit,
+        totalValue: item.landedCostPerUnit * item.goodQty,
+        invoiceNo: order.orderNo, orderId: order.id,
+      };
+      const updatedProd = {
+        ...prod,
+        purchasePrice: item.landedCostPerUnit,
+        sellingPrice: item.sellingPrice || prod.sellingPrice,
+        lastPurchaseVendor: order.vendorName,
+        lastPurchaseDate: date,
+        purchaseHistory: [...(prod.purchaseHistory || []).filter((ph:any)=>ph.orderId!==order.id), purchaseEntry],
+        updatedAt: Date.now(),
+      };
+      this.products = this.products.map(p => p.id === item.productId ? updatedProd : p);
+      this.persistProduct(updatedProd);
+    }
+
+    this.lastUpdated = Date.now();
+    this.notify();
+    await this.save();
+    return order.id;
+  }
+
+  /**
    * Delete a vendor order. If reverseStock=true, also subtracts each item's
    * goodQty from the linked product's stockBoxes and removes the associated
    * purchaseHistory/damageHistory entries (use when deleting a duplicate that
