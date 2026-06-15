@@ -1343,7 +1343,7 @@ class DataStore {
     this.vendorOrders = this.vendorOrders.map(o => { if (o.id !== id) return o; const updated = { ...o, ...up }; if (o.status === 'Received' && (up.items || up.damagedItems)) { if (up.items) { o.items.forEach(it => this.adjustStock(it.productId, o.receivedGodownId || 'g1', -it.qtyBoxes, 0, 'Correction', `Order Reverse: ${o.orderNo}`)); updated.items.forEach(it => this.adjustStock(it.productId, o.receivedGodownId || 'g1', it.qtyBoxes, 0, 'Correction', `Order Apply: ${o.orderNo}`)); } if (up.damagedItems) { o.damagedItems.forEach(d => this.adjustStock(d.productId, o.receivedGodownId || 'g1', d.type === 'Box' ? d.qtyDamaged : 0, d.type === 'Piece' ? d.qtyDamaged : 0, 'Correction', `Damage Reverse: ${o.orderNo}`)); updated.damagedItems.forEach(d => this.adjustStock(d.productId, o.receivedGodownId || 'g1', d.type === 'Box' ? -d.qtyDamaged : 0, d.type === 'Piece' ? -d.qtyDamaged : 0, 'Correction', `Damage Apply: ${o.orderNo}`)); } } this.persistVendorOrder(updated); return updated; });
     this.save();
   }
-  async deleteVendorOrder(id: string) { this.vendorOrders = this.vendorOrders.filter(o => o.id !== id); this.save(); try { await fetch(this.getApiUrl(`/api/vendor-orders/${id}`), { method: 'DELETE' }); } catch {} }
+  // deleteVendorOrder defined earlier (with reverseStock + JWT auth) — legacy duplicate removed
   receiveVendorOrder(id: string, godownId: string, receivedDate: string, vehicleNumber: string, damagedItems: DamagedItemTracking[]) {
     const order = this.vendorOrders.find(o => o.id === id); if (!order) return;
     this.updateVendorOrder(id, { status: 'Received', receivedDate, vehicleNumber, receivedGodownId: godownId, damagedItems: [...(order.damagedItems || []), ...damagedItems] });
