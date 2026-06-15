@@ -141,9 +141,7 @@ const InventoryImportExport: React.FC = () => {
   // ── Export ────────────────────────────────────────────────────────────
   const fetchAllProducts = async (): Promise<any[]> => {
     try {
-      const jwt = localStorage.getItem('royal_jwt') || '';
-      const headers: Record<string,string> = {};
-      if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+      const headers: Record<string,string> = store.getAuthHeaders();
       let all: any[] = [];
       let page = 1;
       while (true) {
@@ -340,9 +338,7 @@ const InventoryImportExport: React.FC = () => {
       return;
     }
 
-    const jwt = localStorage.getItem(Object.keys(localStorage).find(k=>k.startsWith('royal_jwt_')) || 'royal_jwt') || '';
-    const importHeaders: Record<string,string> = { 'Content-Type': 'application/json' };
-    if (jwt) importHeaders['Authorization'] = `Bearer ${jwt}`;
+    const importHeaders: Record<string,string> = { 'Content-Type': 'application/json', ...store.getAuthHeaders() };
 
     const base = (store.settings as any).backendUrl || '';
     try {

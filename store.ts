@@ -266,7 +266,14 @@ class DataStore {
       : 'default';
     return `royal_jwt_${slug}`;
   }
-  private getJwt(): string {
+  /** Public: returns { Authorization: 'Bearer ...' } if logged in, else {} */
+  getAuthHeaders(): Record<string,string> {
+    const jwt = this.getJwt();
+    return jwt ? { 'Authorization': `Bearer ${jwt}` } : {};
+  }
+
+  /** Public: returns the JWT for the CURRENT tenant (from URL ?tenant= slug). */
+  getJwt(): string {
     if (typeof localStorage === 'undefined') return '';
     // Try tenant-scoped key first, fall back to legacy key for backwards compat
     return localStorage.getItem(this.getJwtKey())

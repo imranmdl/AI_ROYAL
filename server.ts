@@ -1281,8 +1281,11 @@ async function syncInMemoryToRelationalDb(data: any) {
 
   app.post('/api/products', async (req: Request, res: Response) => {
     const p = req.body;
-    updateCache('products', p);  // updates inMemoryDb + invalidates syncResponseCache
-    
+    const tenantId = req.tenantId || 'default';
+    const isDefault = !req.tenantId || req.tenantId === 'default';
+    if (isDefault) updateCache('products', p);  // updates inMemoryDb + invalidates syncResponseCache
+    else syncResponseCache = null;
+
     if (!pool || !dbHealthy) {
       return res.json({ success: true, mode: 'offline' });
     }
@@ -1290,17 +1293,16 @@ async function syncInMemoryToRelationalDb(data: any) {
     try {
       const now = Date.now();
       await pool.query(
-        'INSERT INTO products (id, name, category, brand, stock_boxes, stock_loose, selling_price, status, data, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=?, category=?, brand=?, stock_boxes=?, stock_loose=?, selling_price=?, status=?, data=?, updated_at=?',
+        `INSERT INTO products (id, tenant_id, name, category, brand, stock_boxes, stock_loose, selling_price, status, data, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), name=VALUES(name), category=VALUES(category),
+         brand=VALUES(brand), stock_boxes=VALUES(stock_boxes), stock_loose=VALUES(stock_loose),
+         selling_price=VALUES(selling_price), status=VALUES(status), data=VALUES(data), updated_at=VALUES(updated_at)`,
         [
-          p.id, p.name, p.category, p.brand,
+          p.id, tenantId, p.name, p.category, p.brand,
           p.stockBoxes ?? 0, p.stockLoose ?? 0,
           p.sellingPrice ?? 0, p.status ?? 'Active',
           JSON.stringify(p), now,
-          // ON DUPLICATE KEY UPDATE:
-          p.name, p.category, p.brand,
-          p.stockBoxes ?? 0, p.stockLoose ?? 0,
-          p.sellingPrice ?? 0, p.status ?? 'Active',
-          JSON.stringify(p), now
         ]
       );
       syncResponseCache = null; // ensure next GET /api/products returns fresh data
@@ -1467,16 +1469,22 @@ async function syncInMemoryToRelationalDb(data: any) {
 
   app.post('/api/vendor-orders', async (req: Request, res: Response) => {
     const o = req.body;
-    updateCache('vendorOrders', o);
-    
+    const tenantId = req.tenantId || 'default';
+    const isDefault = !req.tenantId || req.tenantId === 'default';
+    if (isDefault) updateCache('vendorOrders', o);
+    else syncResponseCache = null;
+
     if (!pool || !dbHealthy) {
       return res.json({ success: true, mode: 'offline' });
     }
 
     try {
       await pool.query(
-        'INSERT INTO vendor_orders (id, order_no, vendor_name, status, payment_status, data, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE order_no=?, vendor_name=?, status=?, payment_status=?, data=?, updated_at=?',
-        [o.id, o.orderNo, o.vendorName, o.status, o.paymentStatus, JSON.stringify(o), Date.now(), o.orderNo, o.vendorName, o.status, o.paymentStatus, JSON.stringify(o), Date.now()]
+        `INSERT INTO vendor_orders (id, tenant_id, order_no, vendor_name, status, payment_status, data, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), order_no=VALUES(order_no), vendor_name=VALUES(vendor_name),
+         status=VALUES(status), payment_status=VALUES(payment_status), data=VALUES(data), updated_at=VALUES(updated_at)`,
+        [o.id, tenantId, o.orderNo, o.vendorName, o.status, o.paymentStatus, JSON.stringify(o), Date.now()]
       );
       res.json({ success: true });
     } catch (e: any) {
@@ -2649,7 +2657,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
                ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), name=VALUES(name), category=VALUES(category),
                brand=VALUES(brand), stock_boxes=VALUES(stock_boxes), selling_price=VALUES(selling_price),
                status=VALUES(status), data=VALUES(data), updated_at=VALUES(updated_at)`,
-              [productId, csvTenantId, name, category, brand, stockBoxes, 0, sellingPrice, status, JSON.stringify(productData), now]
+              [productId, csvTenantId, name, category, brand, effectiveStock, 0, sellingPrice, status, JSON.stringify(productData), now]
             );
           }
 
