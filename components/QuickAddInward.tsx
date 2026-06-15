@@ -69,6 +69,7 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
   const [sellingPrice,setSellingPrice]= useState<number>(0);
   const [invoiceNo,   setInvoiceNo]  = useState('');
   const [date,        setDate]       = useState(new Date().toISOString().slice(0,10));
+  const [targetOrderId, setTargetOrderId] = useState('');   // '' = create new / consolidate by date; else append to this existing order
 
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -135,6 +136,7 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
       await store.addQuickVendorItem(vendorName, date, item, {
         invoiceNo: invoiceNo || undefined,
         remarks: 'Quick Add & Inward (single-screen entry)',
+        targetOrderId: targetOrderId || undefined,
       });
 
       // Update selling price on existing product if changed
@@ -297,11 +299,37 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
                 <label className={label}>Vendor Name</label>
-                <input className={inp} list="qa-vendor-list" value={vendorName} onChange={e=>setVendorName(e.target.value)} placeholder="e.g. Pradeep Suppliers" />
+                <input className={inp} list="qa-vendor-list" value={vendorName} onChange={e=>{ setVendorName(e.target.value); setTargetOrderId(''); }} placeholder="e.g. Pradeep Suppliers" />
                 <datalist id="qa-vendor-list">{vendors.map(v=><option key={v} value={v} />)}</datalist>
               </div>
+              {/* Order targeting — append to an existing order for this vendor, or create new */}
+              {vendorName.trim() && (() => {
+                const vendorOrdersForThisVendor = (store.vendorOrders||[]).filter(o =>
+                  (o.vendorName||'').trim().toLowerCase() === vendorName.trim().toLowerCase() &&
+                  o.status !== 'Closed' && o.status !== 'Cancelled'
+                );
+                return (
+                  <div className="col-span-2">
+                    <label className={label}>Add Item To</label>
+                    <select className={inp} value={targetOrderId} onChange={e=>setTargetOrderId(e.target.value)}>
+                      <option value="">+ Create New Order (or consolidate by date)</option>
+                      {vendorOrdersForThisVendor.map(o=>(
+                        <option key={o.id} value={o.orderNo}>
+                          #{o.orderNo} — {o.orderDate} — {o.items.length} item(s) — {o.status}
+                        </option>
+                      ))}
+                    </select>
+                    {targetOrderId && (
+                      <div className="text-[10px] font-bold text-purple-600 mt-1.5 ml-1">
+                        <i className="fas fa-link mr-1"></i>
+                        This item will be added to existing order #{targetOrderId} — no new order will be created.
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               <div><label className={label}>Quantity ({mode==='new'?newUnit:selectedProduct?.unitType||'Box'})</label>
-                <input type="number" className={inp} value={qty||''} onChange={e=>setQty(+e.target.value)} placeholder="100" />
+                <input type="number" min="1" step="1" className={inp} value={qty||''} onChange={e=>setQty(Math.max(0, Math.floor(+e.target.value)))} placeholder="100" />
               </div>
               <div><label className={label}>Purchase Rate (₹/unit)</label>
                 <input type="number" className={inp} value={purchaseRate||''} onChange={e=>setPurchaseRate(+e.target.value)} placeholder="0" />
