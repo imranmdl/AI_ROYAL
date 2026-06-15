@@ -606,6 +606,7 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
           {/* Quick Add & Inward modal — creates product + records this vendor's inward in one step */}
           {showQuickAdd && (
             <QuickAddInward
+              source="vendor"
               onClose={()=>setShowQuickAdd(false)}
               defaultVendorName={vendorName}
               onDone={(p)=>{ addItem(p); }}

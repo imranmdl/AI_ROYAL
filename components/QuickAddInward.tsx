@@ -17,12 +17,14 @@ interface QuickAddInwardProps {
   defaultVendorName?: string;
   /** Called after successful submit with the created/updated product */
   onDone?: (product: Product) => void;
+  /** Which page opened this modal — used to enforce admin item-creation restrictions */
+  source?: 'inventory' | 'vendor';
 }
 
 const inp = "w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl font-bold text-sm outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 transition-all";
 const label = "text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block mb-1.5";
 
-const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorName = '', onDone }) => {
+const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorName = '', onDone, source = 'inventory' }) => {
   const products = store.products || [];
 
   // ── Step 1: product — pick existing or create new ──────────────────────────
@@ -39,11 +41,26 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
   const selectedProduct = products.find(p => p.id === selectedProductId);
 
   // New product fields (only used when mode === 'new')
+  // Size / Brand / Grade / Shade / Batch are admin-controlled registries —
+  // staff pick from dropdowns, they do NOT type free text for these.
+  const predefinedSizes   = store.settings.predefinedSizes   || [];
+  const predefinedBrands  = store.settings.predefinedBrands  || [];
+  const predefinedGrades  = store.settings.predefinedGrades  || [];
+  const predefinedShades  = store.settings.predefinedShades  || [];
+  const predefinedBatches = store.settings.predefinedBatches || [];
+
   const [newName,     setNewName]     = useState('');
   const [newCategory, setNewCategory] = useState(store.settings.categories[0] || 'Floor Tile');
-  const [newBrand,    setNewBrand]    = useState('');
-  const [newSize,     setNewSize]     = useState('');
+  const [newBrand,    setNewBrand]    = useState(predefinedBrands[0] || '');
+  const [newSize,     setNewSize]     = useState(predefinedSizes[0] || '');
   const [newUnit,     setNewUnit]     = useState<'Box'|'Slab'|'Piece'|'Bag'>('Box');
+  const [newGrade,    setNewGrade]    = useState(predefinedGrades[0] || 'Premium');
+  const [newShadeNo,  setNewShadeNo]  = useState(predefinedShades[0] || '');
+  const [newBatchNo,  setNewBatchNo]  = useState(predefinedBatches[0] || '');
+
+  // ── Admin access control ────────────────────────────────────────────────
+  const itemCreationSource = store.settings.itemCreationSource || 'both';
+  const canCreateNewHere = itemCreationSource === 'both' || itemCreationSource === source;
 
   // ── Step 2: vendor + pricing + quantity ─────────────────────────────────────
   const [vendorName, setVendorName] = useState(defaultVendorName);
@@ -59,7 +76,7 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
   const vendors = [...new Set((store.vendorOrders||[]).map(o=>o.vendorName))].filter(Boolean).sort();
 
   const canSubmit = qty > 0
-    && (mode === 'existing' ? !!selectedProductId : newName.trim().length > 0)
+    && (mode === 'existing' ? !!selectedProductId : (canCreateNewHere && newName.trim().length > 0))
     && purchaseRate >= 0;
 
   const submit = async () => {
@@ -85,7 +102,7 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
           unitType: newUnit, isTile: true, tilesPerBox: 4, sqftPerBox: 0,
           purchasePrice: purchaseRate, sellingPrice: sellingPrice || purchaseRate,
           stockBoxes: 0, stockLoose: 0, reorderLevel: 10, status: 'Active',
-          showInGallery: true, grade: 'Premium', shadeNo: '', batchNo: '',
+          showInGallery: true, grade: newGrade as any, shadeNo: newShadeNo, batchNo: newBatchNo,
           images: [], slabs: [], adjustmentLog: [], damageHistory: [], purchaseHistory: [],
           locationStock: store.godowns.map(g=>({ godownId:g.id, boxes:0, loose:0 })),
           costPerSqft: 0, sellingPricePerSqft: 0, transportCost: 0,
@@ -172,8 +189,10 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
                   className={`px-4 py-1.5 rounded-lg font-black text-[10px] uppercase transition-all ${mode==='existing'?'bg-white shadow text-slate-900':'text-slate-400'}`}>
                   Use Existing
                 </button>
-                <button onClick={()=>setMode('new')}
-                  className={`px-4 py-1.5 rounded-lg font-black text-[10px] uppercase transition-all ${mode==='new'?'bg-white shadow text-slate-900':'text-slate-400'}`}>
+                <button onClick={()=>setMode('new')} disabled={!canCreateNewHere}
+                  title={!canCreateNewHere ? `New item creation is restricted to the ${itemCreationSource} page` : ''}
+                  className={`px-4 py-1.5 rounded-lg font-black text-[10px] uppercase transition-all flex items-center gap-1.5 ${mode==='new'?'bg-white shadow text-slate-900':'text-slate-400'} ${!canCreateNewHere?'opacity-50 cursor-not-allowed':''}`}>
+                  {!canCreateNewHere && <i className="fas fa-lock text-[9px]"></i>}
                   New Item
                 </button>
               </div>
@@ -213,9 +232,21 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
                 {search && filtered.length === 0 && !selectedProductId && (
                   <div className="px-4 py-3 bg-amber-50 border border-amber-100 rounded-2xl text-amber-700 text-xs font-bold flex items-center justify-between">
                     No matching product found.
-                    <button onClick={()=>{ setMode('new'); setNewName(search); }} className="underline font-black">Create "{search}" as new item →</button>
+                    {canCreateNewHere ? (
+                      <button onClick={()=>{ setMode('new'); setNewName(search); }} className="underline font-black">Create "{search}" as new item →</button>
+                    ) : (
+                      <span className="text-rose-500 text-[10px] uppercase"><i className="fas fa-lock mr-1"></i>New items: {itemCreationSource} page only</span>
+                    )}
                   </div>
                 )}
+              </div>
+            ) : !canCreateNewHere ? (
+              <div className="px-4 py-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-600 text-xs font-bold flex items-start gap-3">
+                <i className="fas fa-lock mt-0.5"></i>
+                <div>
+                  Creating new items is restricted to the {itemCreationSource === 'vendor' ? 'Vendor Supply Chain' : 'Inventory'} page by your administrator.
+                  Please switch to "Use Existing" or create this item from {itemCreationSource === 'vendor' ? 'a Vendor Purchase Order' : 'the Inventory page'}.
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
@@ -226,12 +257,44 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
                     {store.settings.categories.map((c:string)=><option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
-                <div><label className={label}>Brand</label><input className={inp} value={newBrand} onChange={e=>setNewBrand(e.target.value)} placeholder="Optional" /></div>
-                <div><label className={label}>Size</label><input className={inp} value={newSize} onChange={e=>setNewSize(e.target.value)} placeholder="e.g. 600x600 mm" /></div>
+                <div>
+                  <label className={label}>Brand</label>
+                  <select className={inp} value={newBrand} onChange={e=>setNewBrand(e.target.value)}>
+                    <option value="">Select brand…</option>
+                    {predefinedBrands.map(b=><option key={b} value={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={label}>Size</label>
+                  <select className={inp} value={newSize} onChange={e=>setNewSize(e.target.value)}>
+                    <option value="">Select size…</option>
+                    {predefinedSizes.map(s=><option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
                 <div>
                   <label className={label}>Unit</label>
                   <select className={inp} value={newUnit} onChange={e=>setNewUnit(e.target.value as any)}>
                     {['Box','Slab','Piece','Bag'].map(u=><option key={u} value={u}>{u}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={label}>Grade</label>
+                  <select className={inp} value={newGrade} onChange={e=>setNewGrade(e.target.value)}>
+                    {predefinedGrades.map(g=><option key={g} value={g}>{g}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={label}>Shade No</label>
+                  <select className={inp} value={newShadeNo} onChange={e=>setNewShadeNo(e.target.value)}>
+                    <option value="">Select shade…</option>
+                    {predefinedShades.map(s=><option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={label}>Batch No</label>
+                  <select className={inp} value={newBatchNo} onChange={e=>setNewBatchNo(e.target.value)}>
+                    <option value="">Select batch…</option>
+                    {predefinedBatches.map(b=><option key={b} value={b}>{b}</option>)}
                   </select>
                 </div>
               </div>

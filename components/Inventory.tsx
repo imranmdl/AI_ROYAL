@@ -947,6 +947,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
       {/* Quick Add & Inward — one-screen flow */}
       {showQuickAdd && (
         <QuickAddInward
+          source="inventory"
           onClose={() => setShowQuickAdd(false)}
           onDone={() => refreshProducts(500)}
         />

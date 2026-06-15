@@ -30,6 +30,14 @@ const SystemControl: React.FC = () => {
   const [visibility, setVisibility] = useState(store.settings.dashboardVisibility);
   const [predefinedSizes, setPredefinedSizes] = useState<string[]>(store.settings.predefinedSizes || []);
   const [categories, setCategories] = useState<string[]>(store.settings.categories || []);
+  const [predefinedBrands, setPredefinedBrands]   = useState<string[]>(store.settings.predefinedBrands || []);
+  const [predefinedGrades, setPredefinedGrades]   = useState<string[]>(store.settings.predefinedGrades || []);
+  const [predefinedShades, setPredefinedShades]   = useState<string[]>(store.settings.predefinedShades || []);
+  const [predefinedBatches, setPredefinedBatches] = useState<string[]>(store.settings.predefinedBatches || []);
+  const [newBrand, setNewBrand]   = useState('');
+  const [newGrade, setNewGrade]   = useState('');
+  const [newShade, setNewShade]   = useState('');
+  const [newBatch, setNewBatch]   = useState('');
   const [newSize, setNewSize] = useState('');
   const [newCategory, setNewCategory] = useState('');
 
@@ -906,6 +914,104 @@ const SystemControl: React.FC = () => {
             )}
          </div>
       </div>
+
+
+      {/* ── Item Creation Source Control ── */}
+      <div className="bg-white rounded-[40px] border border-slate-100 shadow-sm p-8 space-y-6">
+        <div>
+          <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">New Item Creation — Access Control</h3>
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+            Control where staff are allowed to create brand-new inventory items
+          </p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {[
+            { val: 'both',      icon: 'fa-unlock',     label: 'Allow Both',           sub: 'New items can be created from Inventory or Vendor Supply Chain' },
+            { val: 'vendor',    icon: 'fa-truck',      label: 'Vendor Page Only',     sub: 'New items can only be created when adding a vendor purchase order' },
+            { val: 'inventory', icon: 'fa-warehouse',  label: 'Inventory Page Only',  sub: 'New items can only be created from the Inventory Ecosystem page' },
+          ].map(opt => {
+            const active = (store.settings.itemCreationSource || 'both') === opt.val;
+            return (
+              <button key={opt.val}
+                onClick={() => { store.updateSettings({ itemCreationSource: opt.val as any }); setStatus({ type:'success', msg:`Item creation set to: ${opt.label}` }); setTimeout(()=>setStatus(null),3000); }}
+                className={`text-left p-5 rounded-2xl border-2 transition-all ${active ? 'border-amber-500 bg-amber-50' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
+                <i className={`fas ${opt.icon} text-lg ${active ? 'text-amber-600' : 'text-slate-400'} mb-2 block`}></i>
+                <div className="text-[11px] font-black text-slate-700 uppercase tracking-tight">{opt.label}</div>
+                <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">{opt.sub}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Predefined Brands / Grades / Shades / Batches ── */}
+      {([
+        { title: 'Brands Registry',      icon: 'fa-tags',     items: predefinedBrands,  setItems: setPredefinedBrands,  newVal: newBrand,  setNewVal: setNewBrand,  updater: 'updatePredefinedBrands',  placeholder: 'Add Brand (e.g. Kajaria)' },
+        { title: 'Grades Registry',      icon: 'fa-medal',    items: predefinedGrades,  setItems: setPredefinedGrades,  newVal: newGrade,  setNewVal: setNewGrade,  updater: 'updatePredefinedGrades',  placeholder: 'Add Grade (e.g. Premium)' },
+        { title: 'Shade Numbers Registry', icon: 'fa-palette', items: predefinedShades,  setItems: setPredefinedShades,  newVal: newShade,  setNewVal: setNewShade,  updater: 'updatePredefinedShades',  placeholder: 'Add Shade No (e.g. SH-06)' },
+        { title: 'Batch Numbers Registry', icon: 'fa-barcode', items: predefinedBatches, setItems: setPredefinedBatches, newVal: newBatch,  setNewVal: setNewBatch,  updater: 'updatePredefinedBatches', placeholder: 'Add Batch No (e.g. B-2025-A)' },
+      ] as const).map(reg => (
+        <div key={reg.title} className="bg-white rounded-[40px] border border-slate-100 shadow-sm p-8 space-y-6">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
+                <i className={`fas ${reg.icon} text-amber-500`}></i>{reg.title}
+              </h3>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                Values shown in dropdowns when adding new items
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <input type="text" placeholder={reg.placeholder}
+                className="px-6 py-3 bg-slate-50 border-2 rounded-2xl font-black focus:border-slate-900 outline-none transition-all text-xs"
+                value={reg.newVal}
+                onChange={e => reg.setNewVal(e.target.value)}
+                onKeyPress={e => {
+                  if (e.key === 'Enter' && reg.newVal.trim()) {
+                    const updated = [...reg.items, reg.newVal.trim()];
+                    reg.setItems(updated);
+                    (store as any)[reg.updater](updated);
+                    reg.setNewVal('');
+                    setStatus({ type:'success', msg:`${reg.title.replace(' Registry','')} added.` });
+                    setTimeout(()=>setStatus(null),3000);
+                  }
+                }} />
+              <button onClick={() => {
+                if (reg.newVal.trim()) {
+                  const updated = [...reg.items, reg.newVal.trim()];
+                  reg.setItems(updated);
+                  (store as any)[reg.updater](updated);
+                  reg.setNewVal('');
+                  setStatus({ type:'success', msg:`${reg.title.replace(' Registry','')} added.` });
+                  setTimeout(()=>setStatus(null),3000);
+                }
+              }} className="px-6 py-3 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg">
+                Add
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {reg.items.length === 0 ? (
+              <div className="w-full p-10 text-center text-slate-300 font-black uppercase italic border-2 border-dashed border-slate-100 rounded-[30px]">No {reg.title.toLowerCase()} configured</div>
+            ) : (
+              reg.items.map((val, idx) => (
+                <div key={idx} className="flex items-center gap-3 px-6 py-3 bg-slate-50 border border-slate-100 rounded-2xl group hover:border-amber-200 transition-all">
+                  <span className="text-[11px] font-black text-slate-700 uppercase tracking-tight">{val}</span>
+                  <button onClick={() => {
+                    const updated = reg.items.filter((_, i) => i !== idx);
+                    reg.setItems(updated);
+                    (store as any)[reg.updater](updated);
+                    setStatus({ type:'success', msg:`${reg.title.replace(' Registry','')} removed.` });
+                    setTimeout(()=>setStatus(null),3000);
+                  }} className="text-slate-300 hover:text-rose-500 transition-colors">
+                    <i className="fas fa-times-circle"></i>
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ))}
 
       <LoadingChargeManager />
     </div>

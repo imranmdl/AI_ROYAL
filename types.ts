@@ -788,7 +788,16 @@ export interface SystemSettings {
   customInvoiceFieldLabels: string[];
   dashboardVisibility: DashboardVisibilitySettings;
   predefinedSizes: string[];
+  predefinedBrands?: string[];
+  predefinedGrades?: string[];     // e.g. Premium, Standard, Commercial, Budget
+  predefinedShades?: string[];     // shade/batch numbers admin maintains
+  predefinedBatches?: string[];
   categories: string[];
+  // ── Item creation control ──────────────────────────────────────────────
+  // 'vendor'    = new items can ONLY be created from Vendor Supply Chain page
+  // 'inventory' = new items can ONLY be created from Inventory page
+  // 'both'      = either page can create new items (default)
+  itemCreationSource?: 'vendor' | 'inventory' | 'both';
   enableIndividualSlabManagement: boolean;
   printShowCompanyGst: boolean;    // show/hide company GST on printed docs
   printShowCustomerGst: boolean;   // show/hide customer GST on printed docs

@@ -81,6 +81,11 @@ class DataStore {
       '600x600 mm','600x1200 mm','800x800 mm','800x1600 mm','1200x1200 mm',
       '1200x1800 mm','1200x2400 mm','2x2 ft','2x4 ft','4x8 ft','10x2 ft','10x3 ft',
     ],
+    predefinedBrands: ['Kajaria','Somany','Orient Bell','Johnson','Nitco','RAK Ceramics','Asian Granito'],
+    predefinedGrades: ['Premium','Standard','Commercial','Budget'],
+    predefinedShades: ['SH-01','SH-02','SH-03','SH-04','SH-05'],
+    predefinedBatches: ['B-2024-A','B-2024-B','B-2024-C'],
+    itemCreationSource: 'both',
     categories: ['Wall Tile','Floor Tile','Floor','Kadapa','Granite','Marble','Adhesive','Grout','Sanitary','Tools'],
     enableIndividualSlabManagement: true,
     marginThresholds: [
@@ -577,6 +582,10 @@ class DataStore {
   }
   updateDashboardVisibility(s: Partial<DashboardVisibilitySettings>) { this.settings.dashboardVisibility = { ...this.settings.dashboardVisibility, ...s }; this.save(); }
   updatePredefinedSizes(sizes: string[]) { this.settings.predefinedSizes = sizes; this.save(); }
+  updatePredefinedBrands(brands: string[]) { this.settings.predefinedBrands = brands; this.save(); }
+  updatePredefinedGrades(grades: string[]) { this.settings.predefinedGrades = grades; this.save(); }
+  updatePredefinedShades(shades: string[]) { this.settings.predefinedShades = shades; this.save(); }
+  updatePredefinedBatches(batches: string[]) { this.settings.predefinedBatches = batches; this.save(); }
   updateCategories(cats: string[]) { this.settings.categories = cats; this.save(); }
   updateIndividualSlabManagement(e: boolean) { this.settings.enableIndividualSlabManagement = e; this.save(); }
 
