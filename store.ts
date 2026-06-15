@@ -636,6 +636,9 @@ class DataStore {
     vendorName: string;
     date: string;
     invoiceNo?: string;
+    /** If provided, items are appended to THIS existing order (by id or orderNo)
+     *  instead of the default same-vendor/same-date consolidation. */
+    targetOrderId?: string;
     items: { productId: string; name?: string; category?: string; unit?: string; qty: number; purchaseRate: number; sellingPrice: number }[];
     transport?: { totalWeightTons: number; ratePerTon: number; loadingCharges: number; unloadingCharges: number; driverExpenses: number };
     laborCharges?: number;
@@ -673,12 +676,26 @@ class DataStore {
 
     // ── Consolidate: find an existing import-batch order for this vendor+date ──
     const vName = vendorName.trim() || 'Import Batch';
-    const existingIdx = this.vendorOrders.findIndex((o: any) =>
-      o.isImportBatch &&
-      (o.vendorName || '').trim().toLowerCase() === vName.toLowerCase() &&
-      o.orderDate === date &&
-      o.status !== 'Closed' && o.status !== 'Cancelled'
-    );
+    let existingIdx = -1;
+    if (opts.targetOrderId) {
+      // Explicit order targeting (by CSV "Order ID" column or UI selection):
+      // append to THIS order regardless of date — match by id or orderNo,
+      // case-insensitive, and require the vendor name to match.
+      existingIdx = this.vendorOrders.findIndex((o: any) =>
+        (o.id === opts.targetOrderId || (o.orderNo || '').toLowerCase() === opts.targetOrderId!.toLowerCase()) &&
+        (o.vendorName || '').trim().toLowerCase() === vName.toLowerCase() &&
+        o.status !== 'Closed' && o.status !== 'Cancelled'
+      );
+    }
+    if (existingIdx < 0) {
+      // Default: consolidate same-vendor/same-date import batches
+      existingIdx = this.vendorOrders.findIndex((o: any) =>
+        o.isImportBatch &&
+        (o.vendorName || '').trim().toLowerCase() === vName.toLowerCase() &&
+        o.orderDate === date &&
+        o.status !== 'Closed' && o.status !== 'Cancelled'
+      );
+    }
 
     let order: VendorOrder;
     if (existingIdx >= 0) {
@@ -902,15 +919,28 @@ class DataStore {
     await this.save();
   }
 
-  async addQuickVendorItem(vendorName: string, date: string, item: VendorOrderItem, opts?: { invoiceNo?: string; remarks?: string }): Promise<string> {
+  async addQuickVendorItem(vendorName: string, date: string, item: VendorOrderItem, opts?: { invoiceNo?: string; remarks?: string; targetOrderId?: string }): Promise<string> {
     const vName = (vendorName || 'Quick Entry').trim();
-    // Find an existing quick-entry order for this vendor + date that's still open
-    const existing = this.vendorOrders.find((o: any) =>
-      o.isQuickEntry &&
-      (o.vendorName || '').trim().toLowerCase() === vName.toLowerCase() &&
-      o.orderDate === date &&
-      o.status !== 'Closed' && o.status !== 'Cancelled'
-    );
+    let existing: any = null;
+    if (opts?.targetOrderId) {
+      // Explicit order targeting: append to THIS order (by id or orderNo),
+      // requiring the vendor name to match — used for re-mapping items and
+      // for "add to existing order" flows from the UI.
+      existing = this.vendorOrders.find((o: any) =>
+        (o.id === opts.targetOrderId || (o.orderNo || '').toLowerCase() === opts.targetOrderId!.toLowerCase()) &&
+        (o.vendorName || '').trim().toLowerCase() === vName.toLowerCase() &&
+        o.status !== 'Closed' && o.status !== 'Cancelled'
+      ) || null;
+    }
+    if (!existing) {
+      // Default: find an existing quick-entry order for this vendor + date that's still open
+      existing = this.vendorOrders.find((o: any) =>
+        o.isQuickEntry &&
+        (o.vendorName || '').trim().toLowerCase() === vName.toLowerCase() &&
+        o.orderDate === date &&
+        o.status !== 'Closed' && o.status !== 'Cancelled'
+      );
+    }
 
     if (existing) {
       // Append item to existing order and recompute totals

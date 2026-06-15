@@ -37,16 +37,16 @@ interface ParsedRow {
 // ── Category sheet definitions ────────────────────────────────────────────
 const CATEGORY_COLUMNS: Record<string, string[]> = {
   // 'Category' column is always first — ensures correct category on re-import
-  'Wall Tile':  ['Category','Product Name','Brand','Size','Grade','Shade No','Tiles Per Box','Sqft Per Box','Purchase Price','Selling Price','Stock Boxes','Reorder Level','Vendor Name','Status'],
-  'Floor Tile': ['Category','Product Name','Brand','Size','Grade','Shade No','Tiles Per Box','Sqft Per Box','Purchase Price','Selling Price','Stock Boxes','Reorder Level','Vendor Name','Status'],
-  'Floor':      ['Category','Product Name','Brand','Size','Grade','Shade No','Tiles Per Box','Sqft Per Box','Purchase Price','Selling Price','Stock Boxes','Reorder Level','Vendor Name','Status'],
-  'Granite':    ['Category','Product Name','Brand','Grade','Purchase Rate Per Sqft','Transport Pct','Selling Price Per Sqft','Vendor Name','Status'],
-  'Marble':     ['Category','Product Name','Brand','Grade','Purchase Rate Per Sqft','Transport Pct','Selling Price Per Sqft','Vendor Name','Status'],
-  'Kadapa':     ['Category','Product Name','Finish Type','Height (Ft)','Width (Ft)','Purchase Rate Per Sqft','Selling Price Per Sqft','Stock Slabs','Vendor Name','Status'],
-  'Adhesive':   ['Category','Product Name','Brand','Unit','Weight Grams','Purchase Price','Selling Price','Stock','Reorder Level','Vendor Name','Status'],
-  'Grout':      ['Category','Product Name','Brand','Unit','Weight Grams','Purchase Price','Selling Price','Stock','Reorder Level','Vendor Name','Status'],
-  'Sanitary':   ['Category','Product Name','Brand','Size','Purchase Price','Selling Price','Stock','Reorder Level','Vendor Name','Status'],
-  'Tools':      ['Category','Product Name','Brand','Purchase Price','Selling Price','Stock','Reorder Level','Vendor Name','Status'],
+  'Wall Tile':  ['Category','Product Name','Brand','Size','Grade','Shade No','Tiles Per Box','Sqft Per Box','Purchase Price','Selling Price','Stock Boxes','Reorder Level','Vendor Name','Order ID','Status'],
+  'Floor Tile': ['Category','Product Name','Brand','Size','Grade','Shade No','Tiles Per Box','Sqft Per Box','Purchase Price','Selling Price','Stock Boxes','Reorder Level','Vendor Name','Order ID','Status'],
+  'Floor':      ['Category','Product Name','Brand','Size','Grade','Shade No','Tiles Per Box','Sqft Per Box','Purchase Price','Selling Price','Stock Boxes','Reorder Level','Vendor Name','Order ID','Status'],
+  'Granite':    ['Category','Product Name','Brand','Grade','Purchase Rate Per Sqft','Transport Pct','Selling Price Per Sqft','Vendor Name','Order ID','Status'],
+  'Marble':     ['Category','Product Name','Brand','Grade','Purchase Rate Per Sqft','Transport Pct','Selling Price Per Sqft','Vendor Name','Order ID','Status'],
+  'Kadapa':     ['Category','Product Name','Finish Type','Height (Ft)','Width (Ft)','Purchase Rate Per Sqft','Selling Price Per Sqft','Stock Slabs','Vendor Name','Order ID','Status'],
+  'Adhesive':   ['Category','Product Name','Brand','Unit','Weight Grams','Purchase Price','Selling Price','Stock','Reorder Level','Vendor Name','Order ID','Status'],
+  'Grout':      ['Category','Product Name','Brand','Unit','Weight Grams','Purchase Price','Selling Price','Stock','Reorder Level','Vendor Name','Order ID','Status'],
+  'Sanitary':   ['Category','Product Name','Brand','Size','Purchase Price','Selling Price','Stock','Reorder Level','Vendor Name','Order ID','Status'],
+  'Tools':      ['Category','Product Name','Brand','Purchase Price','Selling Price','Stock','Reorder Level','Vendor Name','Order ID','Status'],
 };
 
 const SAMPLE_ROWS: Record<string, string[][]> = {
@@ -126,6 +126,7 @@ const InventoryImportExport: React.FC = () => {
   const [mapVendorName, setMapVendorName] = useState('');
   const [mapDate, setMapDate] = useState(new Date().toISOString().slice(0,10));
   const [mapInvoiceNo, setMapInvoiceNo] = useState('');
+  const [mapTargetOrderId, setMapTargetOrderId] = useState('');   // '' = create/consolidate by date; else append to this existing order
   const [mapItems, setMapItems] = useState<{ productId:string; name:string; category:string; qty:number; purchaseRate:number; sellingPrice:number }[]>([]);
   const [mapTransport, setMapTransport] = useState({ totalWeightTons: 0, ratePerTon: 3500, loadingCharges: 0, unloadingCharges: 0, driverExpenses: 0 });
   const [mapLaborCharges, setMapLaborCharges] = useState(0);
@@ -379,6 +380,10 @@ const InventoryImportExport: React.FC = () => {
           // Prefill vendor name from CSV if all rows share the same vendor
           const vendors = [...new Set(imported.map(p=>p.vendorName).filter(Boolean))];
           setMapVendorName(vendors.length === 1 ? vendors[0] : '');
+          // Prefill Order ID from CSV if all rows share the same Order ID/No
+          const orderNos = [...new Set(imported.map(p=>p.orderNo).filter(Boolean))];
+          setMapTargetOrderId(orderNos.length === 1 ? orderNos[0] : '');
+          if (orderNos.length === 1 && !mapInvoiceNo) setMapInvoiceNo(orderNos[0]);
           setActiveTab('mapping');
         }
 
@@ -707,6 +712,7 @@ const InventoryImportExport: React.FC = () => {
               <div>• Each category has different required columns — use the right template</div>
               <div>• Products matched by Name + Size — existing items will be updated, not duplicated</div>
               <div>• Add Vendor Name column to auto-link products to vendor purchase history</div>
+              <div>• Add Order ID column with an EXISTING order's # to append these items to that exact order (instead of creating a new one) — leave blank to create/consolidate by date</div>
               <div>• Leave cells blank to keep existing values (on update)</div>
               <div>• Status column: Active or Suspended (defaults to Active if blank)</div>
             </div>
@@ -750,6 +756,36 @@ const InventoryImportExport: React.FC = () => {
                 value={mapInvoiceNo} onChange={e=>setMapInvoiceNo(e.target.value)} placeholder="INV-1234" />
             </div>
           </div>
+
+          {/* Order targeting — append to an existing order for this vendor, or create a new one */}
+          {mapVendorName.trim() && (() => {
+            const vendorOrdersForThisVendor = (store.vendorOrders||[]).filter(o =>
+              (o.vendorName||'').trim().toLowerCase() === mapVendorName.trim().toLowerCase() &&
+              o.status !== 'Closed' && o.status !== 'Cancelled'
+            );
+            return (
+              <div className="bg-white border border-slate-100 rounded-2xl p-5">
+                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">
+                  Add Items To
+                </label>
+                <select className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400"
+                  value={mapTargetOrderId} onChange={e=>setMapTargetOrderId(e.target.value)}>
+                  <option value="">+ Create New Order (or consolidate by date)</option>
+                  {vendorOrdersForThisVendor.map(o=>(
+                    <option key={o.id} value={o.orderNo}>
+                      #{o.orderNo} — {o.orderDate} — {o.items.length} item(s) — {o.status}
+                    </option>
+                  ))}
+                </select>
+                {mapTargetOrderId && (
+                  <div className="text-[10px] font-bold text-purple-600 mt-2">
+                    <i className="fas fa-link mr-1"></i>
+                    These {mapItems.length} item(s) will be added to existing order #{mapTargetOrderId} — no new order will be created.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Items table — qty, purchase rate, selling price, landed cost (live) */}
           <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden">
@@ -849,6 +885,7 @@ const InventoryImportExport: React.FC = () => {
                   await store.refreshFromServer(true);
                   await store.linkImportBatchToVendor({
                     vendorName: mapVendorName, date: mapDate, invoiceNo: mapInvoiceNo || undefined,
+                    targetOrderId: mapTargetOrderId || undefined,
                     items: mapItems.map(i=>({
                       productId:i.productId, name:i.name, category:i.category, unit:'Box',
                       qty:i.qty, purchaseRate:i.purchaseRate, sellingPrice:i.sellingPrice,
@@ -858,6 +895,7 @@ const InventoryImportExport: React.FC = () => {
                   await store.refreshFromServer(true);
                   setImportedProducts([]);
                   setMapItems([]);
+                  setMapTargetOrderId('');
                   setActiveTab('import');
                 } finally { setMapSaving(false); }
               }}
@@ -866,7 +904,7 @@ const InventoryImportExport: React.FC = () => {
               {mapSaving ? <><i className="fas fa-spinner fa-spin"></i> Saving…</> : <><i className="fas fa-link"></i> Confirm Mapping — Link to Vendor</>}
             </button>
             <button
-              onClick={()=>{ setImportedProducts([]); setMapItems([]); setActiveTab('import'); }}
+              onClick={()=>{ setImportedProducts([]); setMapItems([]); setMapTargetOrderId(''); setActiveTab('import'); }}
               className="px-8 py-3.5 bg-white border-2 border-slate-200 text-slate-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all">
               Skip — Map Later from Vendor Supply Chain
             </button>

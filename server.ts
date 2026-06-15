@@ -2508,6 +2508,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
           const shadeNo  = (row['Shade No'] || row['shadeNo'] || '').toString().trim();
           const status   = (row['Status'] || row['status'] || 'Active').toString().trim();
           const vendorName = (row['Vendor Name'] || row['vendor'] || '').toString().trim();
+          const orderNo    = (row['Order ID'] || row['Order No'] || row['orderNo'] || row['order_id'] || '').toString().trim();
 
           // Category-specific pricing fields
           const isGranite  = ['Granite','Marble'].includes(category);
@@ -2685,6 +2686,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
             qty: effectiveStock, purchasePrice, sellingPrice,
             costPerSqft, sellingPerSqft, isNew: isNewProduct,
             vendorName: vendorName || '',
+            orderNo: orderNo || '',
           });
 
         } catch (rowErr: any) {
