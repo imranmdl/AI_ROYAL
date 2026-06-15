@@ -819,6 +819,89 @@ class DataStore {
    * the item to it — updating totals — rather than creating a new order.
    * Returns the order id that was created/updated.
    */
+  /**
+   * Re-map a single item from its CURRENT vendor order to a NEW vendor (and/or date).
+   * - Removes the item from the old order, recomputing transport/labor
+   *   allocation + totals across the remaining items (if any remain).
+   *   If the old order becomes empty, it's deleted entirely.
+   * - Adds the item to the new vendor's order via addQuickVendorItem (which
+   *   consolidates same-vendor/same-date entries instead of creating duplicates).
+   * - Updates the product's lastPurchaseVendor/Date + purchaseHistory to point
+   *   at the new order, so the OLD vendor's analytics/order no longer shows this item.
+   */
+  async remapItemToVendor(productId: string, oldOrderId: string, newVendorName: string, newDate?: string): Promise<void> {
+    const oldOrder = this.vendorOrders.find((o: any) => o.id === oldOrderId);
+    if (!oldOrder) return;
+    const itemIdx = (oldOrder.items || []).findIndex((i: any) => i.productId === productId);
+    if (itemIdx < 0) return;
+    const movedItem = { ...oldOrder.items[itemIdx] };
+    const remainingItems = oldOrder.items.filter((_: any, i: number) => i !== itemIdx);
+
+    if (remainingItems.length === 0) {
+      // Old order had only this item — remove the order entirely
+      this.vendorOrders = this.vendorOrders.filter((o: any) => o.id !== oldOrderId);
+      try {
+        const headers = this.getAuthHeaders();
+        await fetch(this.getApiUrl(`/api/vendor-orders/${oldOrderId}`), { method: 'DELETE', headers });
+      } catch {}
+    } else {
+      // Recompute transport/labor allocation across the remaining items
+      const remainingQty = remainingItems.reduce((s: number, i: any) => s + (i.actualQty || 0), 0);
+      const transportPerUnit = remainingQty > 0 ? (oldOrder.totalTransportCost || 0) / remainingQty : 0;
+      const laborPerUnit     = remainingQty > 0 ? (oldOrder.laborCharges || 0) / remainingQty : 0;
+      const recalced = remainingItems.map((i: any) => {
+        const landed = (i.actualRate||0) + transportPerUnit + laborPerUnit;
+        const margin = i.sellingPrice > 0 ? ((i.sellingPrice - landed) / i.sellingPrice) * 100 : 0;
+        return { ...i, transportShare: transportPerUnit*(i.actualQty||0), laborShare: laborPerUnit*(i.actualQty||0), landedCostPerUnit: landed, marginPct: margin };
+      });
+      const totalActual = recalced.reduce((s: number,i: any)=>s+(i.actualAmount||0),0);
+      const grandTotal  = totalActual + (oldOrder.totalTransportCost||0) + (oldOrder.laborCharges||0);
+      const updatedOld = {
+        ...oldOrder, items: recalced,
+        totalBilledAmount: totalActual, totalActualAmount: totalActual, grandTotal,
+        balanceAmount: Math.max(0, grandTotal - (oldOrder.paidAmount||0)),
+        updatedAt: Date.now(),
+      };
+      this.vendorOrders = this.vendorOrders.map((o: any) => o.id === oldOrderId ? updatedOld : o);
+      this.persistVendorOrder(updatedOld);
+    }
+
+    // Add the item to the new vendor's order (consolidates by vendor+date)
+    const date = newDate || new Date().toISOString().slice(0,10);
+    const newItem: VendorOrderItem = { ...movedItem, id: `item-remap-${Date.now()}` };
+    const newOrderId = await this.addQuickVendorItem(newVendorName, date, newItem, {
+      remarks: `Re-mapped from vendor "${oldOrder.vendorName}" (#${oldOrder.orderNo})`,
+    });
+
+    // Update the product's vendor linkage so it stops showing under the old vendor
+    const prod = this.products.find(p => p.id === productId);
+    if (prod) {
+      const purchaseEntry = {
+        id: `ph-${newOrderId}-${productId}-${Date.now()}`,
+        date, vendor: newVendorName.trim(), qty: movedItem.goodQty || movedItem.actualQty || 0,
+        rate: movedItem.actualRate, landedCost: movedItem.landedCostPerUnit,
+        totalValue: (movedItem.landedCostPerUnit||0) * (movedItem.goodQty||movedItem.actualQty||0),
+        invoiceNo: newOrderId, orderId: newOrderId,
+      };
+      const updatedProd = {
+        ...prod,
+        lastPurchaseVendor: newVendorName.trim(),
+        lastPurchaseDate: date,
+        purchaseHistory: [
+          ...(prod.purchaseHistory || []).filter((ph: any) => ph.orderId !== oldOrderId),
+          purchaseEntry,
+        ],
+        updatedAt: Date.now(),
+      };
+      this.products = this.products.map(p => p.id === productId ? updatedProd : p);
+      this.persistProduct(updatedProd);
+    }
+
+    this.lastUpdated = Date.now();
+    this.notify();
+    await this.save();
+  }
+
   async addQuickVendorItem(vendorName: string, date: string, item: VendorOrderItem, opts?: { invoiceNo?: string; remarks?: string }): Promise<string> {
     const vName = (vendorName || 'Quick Entry').trim();
     // Find an existing quick-entry order for this vendor + date that's still open

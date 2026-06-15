@@ -338,6 +338,12 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
   const isEdit = !!order;
   const [tab, setTab] = useState<'basic'|'invoices'|'items'|'transport'|'receive'|'damage'>('basic');
 
+  // ── Re-map item to another vendor ───────────────────────────────────────
+  const [remapItem, setRemapItem] = useState<{ productId:string; productName:string } | null>(null);
+  const [remapVendorName, setRemapVendorName] = useState('');
+  const [remapDate, setRemapDate] = useState(new Date().toISOString().slice(0,10));
+  const [remapSaving, setRemapSaving] = useState(false);
+
   // ── Form state ────────────────────────────────────────────────────────────
   const [vendorName,    setVendorName]    = useState(order?.vendorName || '');
   const [vendorPhone,   setVendorPhone]   = useState(order?.vendorPhone || '');
@@ -708,9 +714,18 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
                             <span className={`text-xs font-black ${margin>=20?'text-emerald-400':margin>=10?'text-amber-400':'text-rose-400'}`}>{pct(margin)}</span>
                           </td>
                           <td className="px-2 py-2">
-                            <button onClick={()=>setItems(p=>p.filter((_,i)=>i!==idx))} className="text-rose-400 hover:text-rose-300 transition-colors">
-                              <i className="fas fa-times text-xs"></i>
-                            </button>
+                            <div className="flex items-center gap-2">
+                              {isEdit && (
+                                <button onClick={()=>{ setRemapItem({ productId:item.productId, productName:item.productName }); setRemapVendorName(''); setRemapDate(new Date().toISOString().slice(0,10)); }}
+                                  title="Re-map this item to a different vendor"
+                                  className="text-purple-400 hover:text-purple-300 transition-colors">
+                                  <i className="fas fa-exchange-alt text-xs"></i>
+                                </button>
+                              )}
+                              <button onClick={()=>setItems(p=>p.filter((_,i)=>i!==idx))} className="text-rose-400 hover:text-rose-300 transition-colors">
+                                <i className="fas fa-times text-xs"></i>
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -975,6 +990,54 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* ── Re-map item to another vendor ───────────────────────────────── */}
+      {remapItem && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[700] flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-white/10 rounded-[32px] shadow-2xl w-full max-w-md p-7 space-y-5">
+            <div>
+              <h3 className="text-lg font-black text-white uppercase tracking-tight flex items-center gap-2">
+                <i className="fas fa-exchange-alt text-purple-400"></i> Re-map to Vendor
+              </h3>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                "{remapItem.productName}" will be moved out of this order and linked to the new vendor.
+                It will no longer appear under {vendorName || 'this vendor'}.
+              </p>
+            </div>
+            <div>
+              <label className={label}>New Vendor Name</label>
+              <input className={inp} list="remap-vendor-list" value={remapVendorName} onChange={e=>setRemapVendorName(e.target.value)} placeholder="e.g. Pradeep Suppliers" autoFocus />
+              <datalist id="remap-vendor-list">
+                {[...new Set((store.vendorOrders||[]).map(o=>o.vendorName))].filter(Boolean).map(v=><option key={v} value={v} />)}
+              </datalist>
+            </div>
+            <div>
+              <label className={label}>Date</label>
+              <input type="date" className={inp} value={remapDate} onChange={e=>setRemapDate(e.target.value)} />
+            </div>
+            <div className="flex gap-3">
+              <button onClick={()=>setRemapItem(null)} className="flex-1 py-3 bg-white/5 border border-white/10 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-white/10 transition-all">
+                Cancel
+              </button>
+              <button
+                disabled={!remapVendorName.trim() || remapSaving}
+                onClick={async ()=>{
+                  if (!order?.id) return;
+                  setRemapSaving(true);
+                  try {
+                    await store.remapItemToVendor(remapItem.productId, order.id, remapVendorName.trim(), remapDate);
+                    // Remove the item from THIS form's local state too (order is being re-fetched)
+                    setItems(p => p.filter(i => i.productId !== remapItem.productId));
+                    setRemapItem(null);
+                  } finally { setRemapSaving(false); }
+                }}
+                className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2">
+                {remapSaving ? <><i className="fas fa-spinner fa-spin"></i> Moving…</> : <><i className="fas fa-exchange-alt"></i> Confirm Re-map</>}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
