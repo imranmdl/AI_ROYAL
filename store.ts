@@ -636,7 +636,7 @@ class DataStore {
     vendorName: string;
     date: string;
     invoiceNo?: string;
-    items: { productId: string; qty: number; purchaseRate: number; sellingPrice: number }[];
+    items: { productId: string; name?: string; category?: string; unit?: string; qty: number; purchaseRate: number; sellingPrice: number }[];
     transport?: { totalWeightTons: number; ratePerTon: number; loadingCharges: number; unloadingCharges: number; driverExpenses: number };
     laborCharges?: number;
   }): Promise<string> {
@@ -657,8 +657,8 @@ class DataStore {
       const prod = this.products.find(p => p.id === it.productId);
       return {
         id: `item-import-${Date.now()}-${idx}`,
-        productId: it.productId, productName: prod?.name || it.productId,
-        category: prod?.category || '', unit: prod?.unitType || 'Box',
+        productId: it.productId, productName: it.name || prod?.name || it.productId,
+        category: it.category || prod?.category || '', unit: it.unit || prod?.unitType || 'Box',
         orderedQty: it.qty,
         billedQty: it.qty, billedRate: it.purchaseRate, billedAmount: actualAmount,
         actualQty: it.qty, actualRate: it.purchaseRate, actualAmount,
@@ -669,32 +669,73 @@ class DataStore {
       };
     });
 
-    const totalActual = orderItems.reduce((s,i)=>s+(i.actualAmount||0),0);
-    const grandTotal  = totalActual + totalTransportCost + laborCharges;
+    const newTotalActual = orderItems.reduce((s,i)=>s+(i.actualAmount||0),0);
 
-    const order: VendorOrder = {
-      id: `imp-${Date.now()}`,
-      orderNo: opts.invoiceNo || `IMP-${Date.now().toString().slice(-6)}`,
-      vendorName: vendorName.trim() || 'Import Batch',
-      orderDate: date, receivedDate: date,
-      status: 'Received' as any, paymentStatus: 'Pending' as any,
-      items: orderItems,
-      transport: { vehicleNo:'', driverName:'', driverPhone:'', transporterName:'',
-        totalWeightTons: transport.totalWeightTons||0, ratePerTon: transport.ratePerTon||0,
-        freightCost, loadingCharges: transport.loadingCharges||0, unloadingCharges: transport.unloadingCharges||0,
-        driverExpenses: transport.driverExpenses||0, totalTransportCost },
-      laborCharges, miscCharges: 0,
-      totalBilledAmount: totalActual, totalActualAmount: totalActual,
-      totalTransportCost, grandTotal,
-      cashAmount: 0, rtgsAmount: 0, paidAmount: 0, balanceAmount: grandTotal,
-      paymentHistory: [], damagedItems: [],
-      receivedGodownId: 'g1',
-      remarks: 'Linked from CSV Import — stock already set during import (no auto re-inward)',
-      isFullyReceived: true, updatedAt: Date.now(),
-    };
+    // ── Consolidate: find an existing import-batch order for this vendor+date ──
+    const vName = vendorName.trim() || 'Import Batch';
+    const existingIdx = this.vendorOrders.findIndex((o: any) =>
+      o.isImportBatch &&
+      (o.vendorName || '').trim().toLowerCase() === vName.toLowerCase() &&
+      o.orderDate === date &&
+      o.status !== 'Closed' && o.status !== 'Cancelled'
+    );
+
+    let order: VendorOrder;
+    if (existingIdx >= 0) {
+      // Merge new items into the existing order, recompute per-unit transport/labor
+      // across ALL items (old + new) using this call's transport totals as the new total.
+      const existing: any = this.vendorOrders[existingIdx];
+      const combinedItems = [...(existing.items || []), ...orderItems];
+      const combinedQty = combinedItems.reduce((s: number, i: any) => s + (i.actualQty||0), 0);
+      const newTransportPerUnit = combinedQty > 0 ? totalTransportCost / combinedQty : 0;
+      const newLaborPerUnit     = combinedQty > 0 ? laborCharges / combinedQty : 0;
+      const recalced = combinedItems.map((i: any) => {
+        const landed = (i.actualRate||0) + newTransportPerUnit + newLaborPerUnit;
+        const margin = i.sellingPrice > 0 ? ((i.sellingPrice - landed) / i.sellingPrice) * 100 : 0;
+        return { ...i, transportShare: newTransportPerUnit*(i.actualQty||0), laborShare: newLaborPerUnit*(i.actualQty||0), landedCostPerUnit: landed, marginPct: margin };
+      });
+      const totalActual = recalced.reduce((s: number,i: any)=>s+(i.actualAmount||0),0);
+      const grandTotal  = totalActual + totalTransportCost + laborCharges;
+      order = {
+        ...existing,
+        items: recalced,
+        transport: { ...existing.transport,
+          totalWeightTons: transport.totalWeightTons||0, ratePerTon: transport.ratePerTon||0,
+          freightCost, loadingCharges: transport.loadingCharges||0, unloadingCharges: transport.unloadingCharges||0,
+          driverExpenses: transport.driverExpenses||0, totalTransportCost },
+        laborCharges,
+        totalBilledAmount: totalActual, totalActualAmount: totalActual,
+        totalTransportCost, grandTotal,
+        balanceAmount: Math.max(0, grandTotal - (existing.paidAmount||0)),
+        updatedAt: Date.now(),
+      };
+      this.vendorOrders = this.vendorOrders.map((o:any, i:number) => i === existingIdx ? order : o);
+    } else {
+      const grandTotal = newTotalActual + totalTransportCost + laborCharges;
+      order = {
+        id: `imp-${Date.now()}`,
+        orderNo: opts.invoiceNo || `IMP-${Date.now().toString().slice(-6)}`,
+        vendorName: vName,
+        orderDate: date, receivedDate: date,
+        status: 'Received' as any, paymentStatus: 'Pending' as any,
+        items: orderItems,
+        transport: { vehicleNo:'', driverName:'', driverPhone:'', transporterName:'',
+          totalWeightTons: transport.totalWeightTons||0, ratePerTon: transport.ratePerTon||0,
+          freightCost, loadingCharges: transport.loadingCharges||0, unloadingCharges: transport.unloadingCharges||0,
+          driverExpenses: transport.driverExpenses||0, totalTransportCost },
+        laborCharges, miscCharges: 0,
+        totalBilledAmount: newTotalActual, totalActualAmount: newTotalActual,
+        totalTransportCost, grandTotal,
+        cashAmount: 0, rtgsAmount: 0, paidAmount: 0, balanceAmount: grandTotal,
+        paymentHistory: [], damagedItems: [],
+        receivedGodownId: 'g1',
+        remarks: 'Linked from CSV Import — stock already set during import (no auto re-inward)',
+        isFullyReceived: true, isImportBatch: true, updatedAt: Date.now(),
+      };
+      this.vendorOrders = [order, ...this.vendorOrders];
+    }
 
     // Push directly — do NOT go through saveVendorOrder's auto-inward (would double-count stock)
-    this.vendorOrders = [order, ...this.vendorOrders];
     this.persistVendorOrder(order);
 
     // Update each product: landed cost, vendor info, purchase history (no stock change)

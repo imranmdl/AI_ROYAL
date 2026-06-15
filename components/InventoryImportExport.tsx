@@ -845,9 +845,14 @@ const InventoryImportExport: React.FC = () => {
               onClick={async ()=>{
                 setMapSaving(true);
                 try {
+                  // Ensure store.products has the freshly-imported items first
+                  await store.refreshFromServer(true);
                   await store.linkImportBatchToVendor({
                     vendorName: mapVendorName, date: mapDate, invoiceNo: mapInvoiceNo || undefined,
-                    items: mapItems.map(i=>({ productId:i.productId, qty:i.qty, purchaseRate:i.purchaseRate, sellingPrice:i.sellingPrice })),
+                    items: mapItems.map(i=>({
+                      productId:i.productId, name:i.name, category:i.category, unit:'Box',
+                      qty:i.qty, purchaseRate:i.purchaseRate, sellingPrice:i.sellingPrice,
+                    })),
                     transport: mapTransport, laborCharges: mapLaborCharges,
                   });
                   await store.refreshFromServer(true);

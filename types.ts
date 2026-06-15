@@ -1008,6 +1008,9 @@ export interface VendorOrder {
    *  subsequent quick-add items for the same vendor+date get consolidated
    *  into this order instead of creating new duplicate orders. */
   isQuickEntry?: boolean;
+  /** Marks orders created from CSV Import → Vendor Mapping; subsequent imports
+   *  for the same vendor+date are consolidated into this order. */
+  isImportBatch?: boolean;
 
   // Damage & quality
   damagedItems: DamagedItemTracking[];
