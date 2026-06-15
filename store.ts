@@ -899,7 +899,19 @@ class DataStore {
 
   reportDamage(productId: string, boxes: number, pieces: number, godownId: string, vendorOrderId?: string) {
     this.adjustStock(productId, godownId, -boxes, -pieces, 'Damage', 'Damage Report', undefined, vendorOrderId);
-    if (vendorOrderId) { const order = this.vendorOrders.find(o => o.id === vendorOrderId); if (order) { const damage: DamagedItemTracking = { id: `dmg-${Date.now()}-${Math.random().toString(36).substr(2,9)}`, productId, productName: this.products.find(p => p.id === productId)?.name || 'Unknown', qtyDamaged: boxes || pieces, type: boxes > 0 ? 'Box' : 'Piece', reason: 'Manual Report from Inventory', date: new Date().toISOString().split('T')[0] }; this.updateVendorOrder(vendorOrderId, { damagedItems: [...(order.damagedItems || []), damage] }); } }
+    if (vendorOrderId) {
+      const order = this.vendorOrders.find(o => o.id === vendorOrderId);
+      if (order) {
+        const damage: DamagedItemTracking = { id: `dmg-${Date.now()}-${Math.random().toString(36).substr(2,9)}`, productId, productName: this.products.find(p => p.id === productId)?.name || 'Unknown', qtyDamaged: boxes || pieces, type: boxes > 0 ? 'Box' : 'Piece', reason: 'Manual Report from Inventory', date: new Date().toISOString().split('T')[0] };
+        // Record the damage on the order WITHOUT re-running updateVendorOrder's
+        // stock reconciliation — adjustStock above already deducted the stock,
+        // so re-applying via updateVendorOrder would double-deduct it.
+        this.vendorOrders = this.vendorOrders.map(o => o.id === vendorOrderId
+          ? { ...o, damagedItems: [...(o.damagedItems || []), damage], updatedAt: Date.now() }
+          : o);
+        this.persistVendorOrder(this.vendorOrders.find(o => o.id === vendorOrderId)!);
+      }
+    }
   }
 
   addPurchase(p: Purchase) {
