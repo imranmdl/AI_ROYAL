@@ -115,7 +115,11 @@ const Quotations: React.FC<{
     qtyPieces: 0,
     rate: 0,
     priceBasis: 'Box' as 'Box' | 'Sqft',
-    selectedSlabIds: [] as string[]
+    selectedSlabIds: [] as string[],
+    sellingSlabSqft: 0,
+    // True once the user manually edits Selling SqFt — until then, it
+    // auto-tracks the TOTAL sqft of all selected slabs (count × per-slab sqft).
+    sellingSqftManuallySet: false,
   });
 
   const selectedProduct = useMemo(() => 
@@ -205,7 +209,8 @@ const Quotations: React.FC<{
         qtyBoxes: 0,
         qtyPieces: 0,
         selectedSlabIds: [],
-        sellingSlabSqft: 0
+        sellingSlabSqft: 0,
+        sellingSqftManuallySet: false,
       });
     }
   };
@@ -215,17 +220,21 @@ const Quotations: React.FC<{
   useEffect(() => {
     if (selectedProduct && builder.selectedSlabIds.length > 0 && selectedProduct.slabs) {
       const selectedSlabs = selectedProduct.slabs.filter(s => builder.selectedSlabIds.includes(s.id));
+      // TOTAL sqft across ALL selected slabs (e.g. 10 slabs × 6.5 sqft = 65 sqft)
       const vendorTotal   = parseFloat(selectedSlabs.reduce((acc, s) => acc + (s.sqft || 0), 0).toFixed(2));
-      // If user has entered a selling sqft, keep it; otherwise default to vendor total
-      const sellingSqft   = builder.sellingSlabSqft > 0 ? builder.sellingSlabSqft : vendorTotal;
+      // Auto-track vendor total UNLESS the user has manually edited Selling SqFt —
+      // this re-syncs correctly as more/fewer slabs are selected.
+      const sellingSqft = builder.sellingSqftManuallySet ? builder.sellingSlabSqft : vendorTotal;
       setBuilder(prev => ({
         ...prev,
         reqSqft:  sellingSqft,          // ← selling sqft drives billing
         qtyBoxes: builder.selectedSlabIds.length,
         qtyPieces: 0,
-        // Only auto-fill sellingSlabSqft if not yet manually set
-        sellingSlabSqft: prev.sellingSlabSqft > 0 ? prev.sellingSlabSqft : vendorTotal,
+        sellingSlabSqft: sellingSqft,
       }));
+    } else if (selectedProduct && builder.selectedSlabIds.length === 0) {
+      // No slabs selected — reset selling sqft tracking
+      setBuilder(prev => ({ ...prev, sellingSlabSqft: 0, sellingSqftManuallySet: false }));
     }
   }, [builder.selectedSlabIds, selectedProduct]);
 
@@ -346,7 +355,7 @@ const Quotations: React.FC<{
     }
 
     setItems([...items, newItem]);
-    setBuilder({ productId: '', purpose: '', reqSqft: 0, qtyBoxes: 0, qtyPieces: 0, rate: 0, priceBasis: 'Box', selectedSlabIds: [] });
+    setBuilder({ productId: '', purpose: '', reqSqft: 0, qtyBoxes: 0, qtyPieces: 0, rate: 0, priceBasis: 'Box', selectedSlabIds: [], sellingSlabSqft: 0, sellingSqftManuallySet: false });
   };
 
   /** Edit rate on any item in the stack → recalculate amount */
@@ -1175,7 +1184,13 @@ const Quotations: React.FC<{
                             value={builder.sellingSlabSqft || ''}
                             onChange={e => {
                               const v = parseFloat(e.target.value || '0');
-                              setBuilder(prev => ({ ...prev, sellingSlabSqft: v, reqSqft: v || vendorTotal }));
+                              const manuallySet = e.target.value.trim() !== '';
+                              setBuilder(prev => ({
+                                ...prev,
+                                sellingSlabSqft: manuallySet ? v : vendorTotal,
+                                reqSqft: manuallySet ? (v || vendorTotal) : vendorTotal,
+                                sellingSqftManuallySet: manuallySet,
+                              }));
                             }}
                           />
                           <div className="text-[8px] text-amber-500 mt-1">Enter your measured size — used for billing & margin</div>
