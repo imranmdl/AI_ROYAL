@@ -600,9 +600,12 @@ class DataStore {
     // Keep password in the data JSON blob so it survives DB → sync → client round-trips.
     // The /api/users endpoint stores the full object in the `data` column.
     try {
+      const jwt = this.getJwt();
+      const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+      if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
       const r = await fetch(this.getApiUrl('/api/users'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(u)   // include password in data blob
       });
       return r.ok;

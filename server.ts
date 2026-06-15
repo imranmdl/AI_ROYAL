@@ -1384,8 +1384,10 @@ async function syncInMemoryToRelationalDb(data: any) {
       const u = req.body;
       const now = Date.now();
       const userWithTs = { ...u, updatedAt: now };
-      updateCache('users', userWithTs);
       const tenantId = req.tenantId || 'default';
+      const isDefault = !req.tenantId || req.tenantId === 'default';
+      if (isDefault) updateCache('users', userWithTs);
+      else syncResponseCache = null;
       if (pool && dbHealthy) {
         // Include tenant_id on INSERT so new users are properly scoped
         await pool.query(
