@@ -52,6 +52,12 @@ const calcItem = (item: VendorOrderItem, transportPerUnit: number, laborPerUnit:
 
 // ── Main Component ────────────────────────────────────────────────────────────
 const VendorSupplyChain: React.FC = () => {
+  const [, forceUpdate] = useState(0);
+  useEffect(() => {
+    const unsub = store.subscribe(() => forceUpdate(n => n + 1), (s) => s.vendorOrders);
+    return unsub;
+  }, []);
+
   const orders = store.vendorOrders || [];
   const products = store.products || [];
   const [view, setView] = useState<'list'|'new'|'edit'|'analytics'>('list');

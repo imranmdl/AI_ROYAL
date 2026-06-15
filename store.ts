@@ -742,11 +742,48 @@ class DataStore {
         const addedQty = newGood - Math.max(0, prevRecv - (prevItem?.damagedQty || 0));
 
         if (item.productId) {
-          const prod = this.products.find(p => p.id === item.productId);
-          if (prod) {
-            // Add to stock
-            const stockBoxes = (prod.stockBoxes || 0) + Math.max(0, addedQty);
-            // Add to purchase history
+          const prodBefore = this.products.find(p => p.id === item.productId);
+          if (prodBefore) {
+            // Compute damage entries for this item (used both for damageHistory and the log)
+            const damageEntries = (order.damagedItems || [])
+              .filter((d: any) => d.productId === item.productId)
+              .map((d: any) => ({
+                id: d.id || `dmg-${order.id}-${Date.now()}`,
+                date: d.date || order.receivedDate || new Date().toISOString().slice(0,10),
+                qty: d.qtyDamaged || 0,
+                reason: d.reason || '',
+                vendorName: order.vendorName,
+                orderId: order.id,
+                actionTaken: d.actionTaken || '',
+              }));
+            const newDamageEntries = damageEntries.filter((d: any) =>
+              !(prodBefore.damageHistory || []).some((dh: any) => dh.orderId === order.id && dh.id === d.id));
+
+            // ── Apply stock changes via adjustStock (updates totals + Item Traceability Log) ──
+            if (Math.max(0, addedQty) > 0) {
+              this.adjustStock(
+                item.productId, order.receivedGodownId || 'g1',
+                Math.max(0, addedQty), 0, 'Purchase',
+                `Vendor Inward: ${order.vendorName} (#${order.orderNo})`,
+                order.receivedDate || new Date().toISOString().slice(0,10),
+                order.id
+              );
+            }
+            for (const d of newDamageEntries) {
+              if ((d.qty || 0) > 0) {
+                this.adjustStock(
+                  item.productId, order.receivedGodownId || 'g1',
+                  -(d.qty || 0), 0, 'Damage',
+                  `Damage on Receipt: ${order.vendorName} (#${order.orderNo})`,
+                  d.date,
+                  order.id
+                );
+              }
+            }
+
+            // ── Apply non-stock fields (purchaseHistory, damageHistory, vendor info) ──
+            // Read the product AFTER adjustStock so we don't clobber its updated stockBoxes/stockLoose
+            const prod = this.products.find(p => p.id === item.productId)!;
             const purchaseEntry = {
               id: `ph-${order.id}-${item.id||item.productId}-${Date.now()}`,
               date: order.receivedDate || new Date().toISOString().slice(0,10),
@@ -762,25 +799,12 @@ class DataStore {
               ...(prod.purchaseHistory || []).filter((ph: any) => ph.orderId !== order.id),
               purchaseEntry,
             ];
-            // Add damage to inventory damage history
-            const damageEntries = (order.damagedItems || [])
-              .filter((d: any) => d.productId === item.productId)
-              .map((d: any) => ({
-                id: d.id || `dmg-${order.id}-${Date.now()}`,
-                date: d.date || order.receivedDate || new Date().toISOString().slice(0,10),
-                qty: d.qtyDamaged || 0,
-                reason: d.reason || '',
-                vendorName: order.vendorName,
-                orderId: order.id,
-                actionTaken: d.actionTaken || '',
-              }));
             const damageHistory = [
               ...(prod.damageHistory || []).filter((dh: any) => dh.orderId !== order.id),
               ...damageEntries,
             ];
             const updatedProd = {
               ...prod,
-              stockBoxes,
               purchasePrice: item.landedCostPerUnit || item.actualRate || prod.purchasePrice,
               lastPurchaseVendor: order.vendorName,
               lastPurchaseDate: order.receivedDate || new Date().toISOString().slice(0,10),
@@ -789,6 +813,7 @@ class DataStore {
               updatedAt: Date.now(),
             };
             this.products = this.products.map(p => p.id === item.productId ? updatedProd : p);
+            this.persistProduct(updatedProd);
           }
         }
       }
