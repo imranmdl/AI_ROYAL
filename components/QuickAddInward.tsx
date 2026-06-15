@@ -9,7 +9,7 @@
  */
 import React, { useState, useMemo } from 'react';
 import { store } from '../store';
-import type { Product, VendorOrder, VendorOrderItem } from '../types';
+import type { Product, VendorOrderItem } from '../types';
 
 interface QuickAddInwardProps {
   onClose: () => void;
@@ -111,14 +111,16 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
         store.addProduct(product);
       }
 
-      // ── Build VendorOrder item + order — auto-inwards via saveVendorOrder ────
-      const orderId = `inw-${Date.now()}`;
+      // ── Build VendorOrder item — auto-inwards via store.saveVendorOrder ──────
+      // Items added on the SAME DAY for the SAME VENDOR are consolidated into
+      // one order (instead of creating a new duplicate order each time).
+      const itemId = `item-${Date.now()}-0`;
       const actualAmount = qty * purchaseRate;
       const sp = sellingPrice || product.sellingPrice || purchaseRate;
       const margin = sp > 0 ? ((sp - purchaseRate) / sp) * 100 : 0;
 
       const item: VendorOrderItem = {
-        id: `item-${orderId}-0`,
+        id: itemId,
         productId: product.id, productName: product.name,
         category: product.category, unit: product.unitType,
         orderedQty: qty,
@@ -130,24 +132,10 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
         sellingPrice: sp, marginPct: margin,
       };
 
-      const order: VendorOrder = {
-        id: orderId,
-        orderNo: invoiceNo || `INW-${Date.now().toString().slice(-6)}`,
-        vendorName: vendorName.trim() || 'Quick Entry',
-        orderDate: date, receivedDate: date,
-        status: 'Received' as any, paymentStatus: 'Pending' as any,
-        items: [item],
-        laborCharges: 0, miscCharges: 0,
-        totalBilledAmount: actualAmount, totalActualAmount: actualAmount,
-        totalTransportCost: 0, grandTotal: actualAmount,
-        cashAmount: 0, rtgsAmount: 0, paidAmount: 0, balanceAmount: actualAmount,
-        paymentHistory: [], damagedItems: [],
-        receivedGodownId: 'g1',
+      await store.addQuickVendorItem(vendorName, date, item, {
+        invoiceNo: invoiceNo || undefined,
         remarks: 'Quick Add & Inward (single-screen entry)',
-        isFullyReceived: true, updatedAt: Date.now(),
-      };
-
-      await store.saveVendorOrder(order);
+      });
 
       // Update selling price on existing product if changed
       if (mode === 'existing' && sellingPrice > 0 && sellingPrice !== product.sellingPrice) {

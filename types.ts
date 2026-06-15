@@ -1004,6 +1004,10 @@ export interface VendorOrder {
   // Receiving
   receivedGodownId?: string;
   isFullyReceived?: boolean;
+  /** Marks orders created via "Quick Add & Inward" / "Add & Inward Item" so
+   *  subsequent quick-add items for the same vendor+date get consolidated
+   *  into this order instead of creating new duplicate orders. */
+  isQuickEntry?: boolean;
 
   // Damage & quality
   damagedItems: DamagedItemTracking[];

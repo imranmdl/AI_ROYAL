@@ -615,6 +615,69 @@ class DataStore {
   private async persistGalleryLead(l: GalleryLead): Promise<boolean> { try { const r = await fetch(this.getApiUrl('/api/gallery-leads'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(l) }); return r.ok; } catch { return false; } }
 
   async createUser(u: User) { const ts = { ...u, updatedAt: Date.now() }; this.users.push(ts); this.logActivity('Users','Create',u.name); await this.persistUser(ts); await this.save(); }
+  /**
+   * Add a single item as a "Quick Entry" purchase for a vendor.
+   * Instead of creating a brand-new VendorOrder every time (which produced
+   * duplicate "Tile_venila" entries for the same vendor/day), this finds an
+   * existing OPEN quick-entry order for the same vendor + date and appends
+   * the item to it — updating totals — rather than creating a new order.
+   * Returns the order id that was created/updated.
+   */
+  async addQuickVendorItem(vendorName: string, date: string, item: VendorOrderItem, opts?: { invoiceNo?: string; remarks?: string }): Promise<string> {
+    const vName = (vendorName || 'Quick Entry').trim();
+    // Find an existing quick-entry order for this vendor + date that's still open
+    const existing = this.vendorOrders.find((o: any) =>
+      o.isQuickEntry &&
+      (o.vendorName || '').trim().toLowerCase() === vName.toLowerCase() &&
+      o.orderDate === date &&
+      o.status !== 'Closed' && o.status !== 'Cancelled'
+    );
+
+    if (existing) {
+      // Append item to existing order and recompute totals
+      const items = [...(existing.items || []), item];
+      const totalBilled = items.reduce((s: number, i: any) => s + (i.billedAmount || 0), 0);
+      const totalActual = items.reduce((s: number, i: any) => s + (i.actualAmount || 0), 0);
+      const grandTotal   = totalActual + (existing.totalTransportCost || 0) + (existing.laborCharges || 0) + (existing.miscCharges || 0);
+      const updated = {
+        ...existing,
+        items,
+        totalBilledAmount: totalBilled,
+        totalActualAmount: totalActual,
+        grandTotal,
+        balanceAmount: Math.max(0, grandTotal - (existing.paidAmount || 0)),
+        updatedAt: Date.now(),
+      };
+      await this.saveVendorOrder(updated);
+      return existing.id;
+    }
+
+    // No existing quick-entry order — create a new one
+    const orderId = `inw-${Date.now()}`;
+    const actualAmount = item.actualAmount || 0;
+    const newOrder: VendorOrder = {
+      id: orderId,
+      orderNo: opts?.invoiceNo || `INW-${Date.now().toString().slice(-6)}`,
+      vendorName: vName,
+      orderDate: date, receivedDate: date,
+      status: 'Received' as any, paymentStatus: 'Pending' as any,
+      items: [item],
+      laborCharges: 0, miscCharges: 0,
+      totalBilledAmount: item.billedAmount || actualAmount,
+      totalActualAmount: actualAmount,
+      totalTransportCost: 0,
+      grandTotal: actualAmount,
+      cashAmount: 0, rtgsAmount: 0, paidAmount: 0, balanceAmount: actualAmount,
+      paymentHistory: [], damagedItems: [],
+      receivedGodownId: 'g1',
+      remarks: opts?.remarks || 'Quick Entry — items added here are consolidated per vendor/day',
+      isQuickEntry: true,
+      isFullyReceived: true, updatedAt: Date.now(),
+    };
+    await this.saveVendorOrder(newOrder);
+    return orderId;
+  }
+
   async saveVendorOrder(order: any) {
     const existing = this.vendorOrders.findIndex((o: any) => o.id === order.id);
     const prevOrder = existing >= 0 ? this.vendorOrders[existing] : null;

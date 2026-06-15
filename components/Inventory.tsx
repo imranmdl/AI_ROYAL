@@ -4,7 +4,7 @@ import ReactDOM from 'react-dom';
 import { useCamera } from '../hooks/useCamera';
 import { store } from '../store';
 import StockLedger from './StockLedger';
-import { Product, Purchase, PurchaseItem, Category, UnitType, UserRole, TransportCostType, TransportBasis, TileGrade, VendorOrder, VendorOrderItem, Slab } from '../types';
+import { Product, Purchase, PurchaseItem, Category, UnitType, UserRole, TransportCostType, TransportBasis, TileGrade, VendorOrderItem, Slab } from '../types';
 import QRCode from 'qrcode';
 import KadapaManager from './KadapaManager';
 import KadapaInventoryGenerator from './KadapaInventoryGenerator';
@@ -583,20 +583,17 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
         store.saveVendorOrder(updatedOrder);
       }
     } else if (newPurchase.vendorName.trim() && newPurchase.syncToSupplyChain) {
-      // ── Quick Vendor Purchase: create a VendorOrder so it shows in Vendor Supply Chain,
-      // and auto-inwards stock + purchase history via saveVendorOrder (single source of truth) ──
-      const orderId = `inw-${Date.now()}`;
-      let totalActual = 0;
-
-      const orderItems: VendorOrderItem[] = newPurchase.items.map((it, i) => {
+      // ── Quick Vendor Purchase: each item is added via addQuickVendorItem,
+      // which consolidates same-vendor/same-day entries into ONE order
+      // instead of creating duplicate orders for every inward action ──
+      newPurchase.items.forEach((it, i) => {
         const product = products.find(p => p.id === it.productId);
         const actualAmount = it.qtyBoxes * it.rate;
-        totalActual += actualAmount;
         const sellingPrice = product?.sellingPrice || 0;
         const landed = it.rate;
         const margin = sellingPrice > 0 ? ((sellingPrice - landed) / sellingPrice) * 100 : 0;
-        return {
-          id: `item-${orderId}-${i}`,
+        const item: VendorOrderItem = {
+          id: `item-${Date.now()}-${i}`,
           productId: it.productId,
           productName: product?.name || 'Unknown Product',
           category: product?.category || '',
@@ -609,33 +606,11 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
           landedCostPerUnit: landed,
           sellingPrice, marginPct: margin,
         };
+        store.addQuickVendorItem(newPurchase.vendorName.trim(), newPurchase.date, item, {
+          invoiceNo: newPurchase.gstInvoiceNo || undefined,
+          remarks: 'Quick Inward from Inventory Ecosystem',
+        });
       });
-
-      const newOrder: VendorOrder = {
-        id: orderId,
-        orderNo: newPurchase.gstInvoiceNo || `INW-${Date.now().toString().slice(-6)}`,
-        vendorName: newPurchase.vendorName.trim(),
-        orderDate: newPurchase.date,
-        receivedDate: newPurchase.date,
-        status: 'Received' as any,
-        paymentStatus: 'Pending' as any,
-        items: orderItems,
-        laborCharges: 0, miscCharges: 0,
-        totalBilledAmount: totalActual,
-        totalActualAmount: totalActual,
-        totalTransportCost: 0,
-        grandTotal: totalActual,
-        cashAmount: 0, rtgsAmount: 0, paidAmount: 0, balanceAmount: totalActual,
-        paymentHistory: [],
-        damagedItems: [],
-        receivedGodownId: newPurchase.godownId,
-        remarks: 'Quick Inward from Inventory Ecosystem',
-        isFullyReceived: true,
-        updatedAt: Date.now(),
-      };
-
-      // saveVendorOrder auto-inwards stock + purchase history + appears in Vendor Supply Chain
-      store.saveVendorOrder(newOrder);
     } else {
       // Manual inward — no vendor / not syncing to supply chain
       const purchase: Purchase = {
