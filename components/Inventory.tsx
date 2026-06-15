@@ -390,6 +390,13 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
     }));
   };
 
+  // Kadapa is always sold/stocked by the Slab — force unitType automatically
+  useEffect(() => {
+    if (productForm.category === 'Kadapa' && productForm.unitType !== 'Slab') {
+      setProductForm(prev => ({ ...prev, unitType: 'Slab', tilesPerBox: 1 }));
+    }
+  }, [productForm.category]);
+
   // Auto-generate Kadapa name — format: SP_KDP_2x1 / DSP_KDP_5x2 / DP_KDP_4x2.5 / DDP_KDP_6x2.5
   useEffect(() => {
     if (productForm.category === 'Kadapa' && productForm.kadapaType && productForm.size) {
@@ -477,6 +484,90 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
   // This ensures manual overrides are preserved while still offering auto-calculation.
 
   const handleUpsertProduct = () => {
+    // ── Kadapa: each unique slab size is its OWN product ───────────────────
+    // The KadapaManager lets the admin add slabs of multiple sizes (3x1, 5.5x1, ...)
+    // in one session. Group productForm.slabs by their physical size + finish and
+    // create/update one product PER SIZE, instead of saving everything under a
+    // single product name (which mixed different sizes together).
+    if (productForm.category === 'Kadapa' && !editProduct) {
+      const slabs = productForm.slabs || [];
+      if (slabs.length === 0) return; // nothing to save yet
+
+      const prefixMap: Record<string, { normal: string; big: string }> = {
+        'Single Polish':     { normal: 'SP',  big: 'DSP' },
+        'Double Polish':     { normal: 'DP',  big: 'DDP' },
+        'Big Single Polish': { normal: 'DSP', big: 'DSP' },
+        'Big Double Polish': { normal: 'DDP', big: 'DDP' },
+      };
+
+      // Group slabs by (heightFt.heightIn x lengthFt.lengthIn + finish)
+      const groups = new Map<string, { slabs: Slab[]; hStr: string; wStr: string; finish: string }>();
+      for (const slab of slabs) {
+        const hStr = `${slab.heightFt || 0}${slab.heightIn ? `.${slab.heightIn}` : ''}`;
+        const wStr = `${slab.lengthFt || 0}${slab.lengthIn ? `.${slab.lengthIn}` : ''}`;
+        const finish = slab.finish || productForm.kadapaType || 'Single Polish';
+        const key = `${hStr}x${wStr}__${finish}`;
+        if (!groups.has(key)) groups.set(key, { slabs: [], hStr, wStr, finish });
+        groups.get(key)!.slabs.push(slab);
+      }
+
+      setErrorMessage(null);
+      groups.forEach((group, key) => {
+        const h = parseFloat(group.hStr || '0');
+        const isBig = h >= 5;
+        const px = (prefixMap[group.finish] || { normal: 'SP', big: 'DSP' })[isBig ? 'big' : 'normal'];
+        const size = `${group.hStr}x${group.wStr}`;
+        const name = `${px}_KDP_${size}`;
+        const availableSlabs = group.slabs.filter(s => !s.isSold).length;
+        const avgLanded = group.slabs.reduce((s,sl)=>s+((sl as any).landedCost||0),0) / group.slabs.length;
+        const avgSelling = group.slabs.reduce((s,sl)=>s+((sl as any).sellingPrice||0),0) / group.slabs.length;
+        const avgSqft = group.slabs.reduce((s,sl)=>s+(sl.sqft||0),0) / group.slabs.length;
+        const sellingPerSqft = (group.slabs[0] as any)?.sellingPricePerSqft || productForm.sellingPricePerSqft || 0;
+
+        const existing = store.products.find(p => p.name === name && p.size === size && p.category === 'Kadapa');
+        if (existing) {
+          // Merge new slabs into existing product's slab list
+          const mergedSlabs = [...(existing.slabs || []), ...group.slabs];
+          const mergedAvailable = mergedSlabs.filter(s => !s.isSold).length;
+          store.updateProduct(existing.id, {
+            slabs: mergedSlabs,
+            stockBoxes: mergedAvailable,
+            sellingPricePerSqft: sellingPerSqft,
+            sellingPrice: avgSelling || existing.sellingPrice,
+          });
+        } else {
+          const newProduct = {
+            ...productForm,
+            id: `prod-${Date.now()}-${key.replace(/[^a-z0-9]/gi,'')}-${Math.random().toString(36).substr(2, 5)}`,
+            name, size,
+            kadapaType: group.finish as any,
+            unitType: 'Slab', tilesPerBox: 1,
+            sqftPerBox: parseFloat(avgSqft.toFixed(2)),
+            purchasePrice: parseFloat(avgLanded.toFixed(2)),
+            totalCostPerUnit: parseFloat(avgLanded.toFixed(2)),
+            sellingPrice: parseFloat((avgSelling||0).toFixed(2)),
+            sellingPricePerSqft: sellingPerSqft,
+            slabs: group.slabs,
+            stockBoxes: availableSlabs, stockLoose: 0, damagedPieces: 0, status: 'Active',
+            images: productForm.images?.length ? productForm.images : ['https://images.unsplash.com/photo-1517646331032-9e8563c520a1?auto=format&fit=crop&q=80&w=1000'],
+            locationStock: store.godowns.map((g, gIdx) => ({ godownId: g.id, boxes: gIdx === 0 ? availableSlabs : 0, loose: 0 })),
+            damageHistory: [], purchaseHistory: [], adjustmentLog: [],
+          } as unknown as Product;
+          delete (newProduct as any).bulkCount;
+          delete (newProduct as any).bulkNames;
+          store.addProduct(newProduct);
+          setServerProducts(prev => [newProduct, ...prev]);
+          setTotalServerProducts(prev => prev + 1);
+        }
+      });
+
+      setShowAddProduct(false);
+      setEditProduct(null);
+      setProductForm(initialFormState);
+      refreshProducts(700);
+      return;
+    }
+
     const namesToCreate = productForm.bulkCount && productForm.bulkCount > 1 
       ? (productForm.bulkNames || []).filter(n => n.trim() !== '')
       : [productForm.name];
@@ -1232,7 +1323,16 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                             </button>
                           </div>
                         ) : (
-                          <input type="text" placeholder="Full Product Name (e.g. Statutario White Glossy)" className="w-full px-6 py-4 bg-slate-100 rounded-2xl font-black outline-none border-2 border-transparent focus:border-slate-900 transition-all" value={productForm.name} onChange={e => setProductForm({...productForm, name: e.target.value})} />
+                          productForm.category === 'Kadapa' ? (
+                            <div className="flex items-center gap-3 bg-amber-50 border border-amber-100 rounded-2xl px-5 py-4">
+                              <i className="fas fa-info-circle text-amber-400"></i>
+                              <span className="text-[10px] font-bold text-amber-600">
+                                Product name is auto-generated per slab size below (e.g. <strong>{productForm.name || 'SP_KDP_5.5x1'}</strong>) — each size becomes its own inventory item.
+                              </span>
+                            </div>
+                          ) : (
+                            <input type="text" placeholder="Full Product Name (e.g. Statutario White Glossy)" className="w-full px-6 py-4 bg-slate-100 rounded-2xl font-black outline-none border-2 border-transparent focus:border-slate-900 transition-all" value={productForm.name} onChange={e => setProductForm({...productForm, name: e.target.value})} />
+                          )
                         )}
                        <div className="grid grid-cols-3 gap-4">
                           <select className="w-full px-6 py-4 bg-slate-100 rounded-2xl font-black outline-none" value={productForm.category} onChange={e => setProductForm({...productForm, category: e.target.value as Category})}>
@@ -1282,21 +1382,23 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                               onChange={e => setProductForm({...productForm, graniteName: e.target.value})} 
                             />
                           )}
-                          <div className="relative">
-                            <input 
-                                type="text" 
-                                list="predefined-sizes"
-                                placeholder="Size (e.g. 600x1200)" 
-                                className="w-full px-6 py-4 bg-slate-100 rounded-2xl font-black outline-none border-2 border-transparent focus:border-blue-500 transition-all" 
-                                value={productForm.size} 
-                                onChange={e => setProductForm({...productForm, size: e.target.value})} 
-                            />
-                            <datalist id="predefined-sizes">
-                                {predefinedSizes.map(size => (
-                                    <option key={size} value={size} />
-                                ))}
-                            </datalist>
-                          </div>
+                          {productForm.category !== 'Kadapa' && (
+                            <div className="relative">
+                              <input 
+                                  type="text" 
+                                  list="predefined-sizes"
+                                  placeholder="Size (e.g. 600x1200)" 
+                                  className="w-full px-6 py-4 bg-slate-100 rounded-2xl font-black outline-none border-2 border-transparent focus:border-blue-500 transition-all" 
+                                  value={productForm.size} 
+                                  onChange={e => setProductForm({...productForm, size: e.target.value})} 
+                              />
+                              <datalist id="predefined-sizes">
+                                  {predefinedSizes.map(size => (
+                                      <option key={size} value={size} />
+                                  ))}
+                              </datalist>
+                            </div>
+                          )}
                        </div>
                     </div>
 
