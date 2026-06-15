@@ -755,10 +755,37 @@ class DataStore {
   adjustStock(productId: string, godownId: string, boxes: number, pieces: number, actionType: StockAdjustmentEntry['actionType'], notes?: string, customDate?: string, vendorOrderId?: string) {
     this.products = this.products.map(p => {
       if (p.id !== productId) return p;
-      const next = { ...p }; const loc = next.locationStock.find(l => l.godownId === godownId);
-      if (loc) { loc.boxes += boxes; loc.loose += pieces; const tpb = p.tilesPerBox || 1; if (loc.loose >= tpb) { loc.boxes += Math.floor(loc.loose / tpb); loc.loose %= tpb; } else if (loc.loose < 0) { const req = Math.ceil(Math.abs(loc.loose) / tpb); loc.boxes -= req; loc.loose += req * tpb; } }
-      next.stockBoxes = next.locationStock.reduce((s, l) => s + l.boxes, 0);
-      next.stockLoose = next.locationStock.reduce((s, l) => s + l.loose, 0);
+      const next = { ...p };
+      const tpb = p.tilesPerBox || 1;
+
+      // ── Source of truth: existing top-level stockBoxes/stockLoose + delta ──
+      // (locationStock can drift out of sync, e.g. if stock was set via inward
+      // without updating per-godown breakdown — never recompute totals from it)
+      let totalBoxes = (p.stockBoxes || 0) + boxes;
+      let totalLoose = (p.stockLoose || 0) + pieces;
+      // Normalize loose <-> boxes
+      if (totalLoose >= tpb) { totalBoxes += Math.floor(totalLoose / tpb); totalLoose %= tpb; }
+      else if (totalLoose < 0) { const req = Math.ceil(Math.abs(totalLoose) / tpb); totalBoxes -= req; totalLoose += req * tpb; }
+
+      next.stockBoxes = totalBoxes;
+      next.stockLoose = totalLoose;
+
+      // ── Best-effort per-godown breakdown (secondary, for warehouse view) ──
+      next.locationStock = next.locationStock.map(l => ({ ...l }));
+      let loc = next.locationStock.find(l => l.godownId === godownId);
+      if (!loc) {
+        loc = { godownId, boxes: 0, loose: 0 };
+        next.locationStock.push(loc);
+      }
+      loc.boxes += boxes; loc.loose += pieces;
+      if (loc.loose >= tpb) { loc.boxes += Math.floor(loc.loose / tpb); loc.loose %= tpb; }
+      else if (loc.loose < 0) { const req = Math.ceil(Math.abs(loc.loose) / tpb); loc.boxes -= req; loc.loose += req * tpb; }
+      // Reconcile: if the godown breakdown sum doesn't match the new total
+      // (drift from before), adjust this godown's entry to absorb the difference
+      // so locationStock sum stays consistent with the authoritative total.
+      const locSum = next.locationStock.reduce((s, l) => s + l.boxes, 0);
+      if (locSum !== totalBoxes) loc.boxes += (totalBoxes - locSum);
+
       next.adjustmentLog.unshift({ id: Math.random().toString(), date: customDate || new Date().toLocaleString(), userId: this.currentUser?.id || 'sys', userName: this.currentUser?.name || 'System', actionType, qtyBoxes: boxes, qtyLoose: pieces, godownId, godownName: this.godowns.find(g => g.id === godownId)?.name || '?', notes, vendorOrderId });
       this.persistProduct(next); return next;
     });
