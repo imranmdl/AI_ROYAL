@@ -3461,6 +3461,40 @@ app.post('/api/sync', async (req: Request, res: Response) => {
   });
 
   /**
+   * GET /api/admin/inspect-order?key=test&orderId=imp-xxx
+   * Returns the full order's items, and for each item.productId, checks
+   * whether a matching row exists in `products` (any tenant) with its tenant_id.
+   * Use this to debug "items in vendor order but not showing in inventory".
+   */
+  app.get('/api/admin/inspect-order', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
+    const orderId = (req.query.orderId as string || '').trim();
+    if (!orderId) return res.status(400).json({ error:'orderId query param required' });
+    if (!pool || !dbHealthy) return res.status(503).json({ error:'DB not connected' });
+    try {
+      const [orderRows]: any = await pool.query('SELECT id, tenant_id, data FROM vendor_orders WHERE id=?', [orderId]);
+      if (!orderRows.length) return res.json({ success:false, error:'Order not found' });
+      const order = parseData(orderRows[0].data);
+      const orderTenantId = orderRows[0].tenant_id;
+      const items = order.items || [];
+      const productChecks = [];
+      for (const item of items) {
+        const [pRows]: any = await pool.query('SELECT id, name, tenant_id, stock_boxes FROM products WHERE id=?', [item.productId]);
+        productChecks.push({
+          productId: item.productId,
+          productName: item.productName,
+          qty: item.actualQty,
+          foundInDb: pRows.length > 0,
+          dbTenantId: pRows.length ? pRows[0].tenant_id : null,
+          dbStock: pRows.length ? pRows[0].stock_boxes : null,
+          matchesOrderTenant: pRows.length ? pRows[0].tenant_id === orderTenantId : false,
+        });
+      }
+      res.json({ success:true, orderId, orderTenantId, isImportBatch: !!order.isImportBatch, orderDate: order.orderDate, vendorName: order.vendorName, productChecks });
+    } catch(e:any) { res.status(500).json({ error:e.message }); }
+  });
+
+  /**
    * GET /api/admin/find-products?key=test&name=<search>
    * Searches products and vendor_orders ACROSS ALL TENANTS by name (LIKE match).
    * Useful for locating data that landed under the wrong tenant_id due to
