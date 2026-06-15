@@ -281,6 +281,24 @@ const VendorSupplyChain: React.FC = () => {
                         className="px-3 py-2 bg-white/5 border border-white/10 text-white rounded-xl font-black text-[10px] uppercase hover:bg-amber-500/20 hover:border-amber-500/40 transition-all">
                         <i className="fas fa-edit text-xs mr-1"></i>Edit
                       </button>
+                      <button onClick={async ()=>{
+                        const reverse = confirm(
+                          `Delete order #${o.orderNo} (${o.vendorName})?\n\n` +
+                          `Click OK to also REMOVE the stock this order added to inventory ` +
+                          `(${o.items.reduce((s,i)=>s+(i.goodQty||i.receivedQty||0),0)} units across ${o.items.length} item(s)).\n\n` +
+                          `Click Cancel to delete the order record only and keep current stock as-is.`
+                        );
+                        const proceed = confirm(
+                          reverse
+                            ? `This will delete the order AND subtract ${o.items.reduce((s,i)=>s+(i.goodQty||i.receivedQty||0),0)} units from inventory stock. Continue?`
+                            : `This will delete order #${o.orderNo} but keep current inventory stock unchanged. Continue?`
+                        );
+                        if (!proceed) return;
+                        await store.deleteVendorOrder(o.id, reverse);
+                      }}
+                        className="px-3 py-2 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl font-black text-[10px] uppercase hover:bg-rose-500/20 hover:border-rose-500/40 transition-all">
+                        <i className="fas fa-trash text-xs mr-1"></i>Delete
+                      </button>
                     </div>
                   </div>
                   {/* Damage alerts */}

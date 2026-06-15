@@ -616,6 +616,49 @@ class DataStore {
 
   async createUser(u: User) { const ts = { ...u, updatedAt: Date.now() }; this.users.push(ts); this.logActivity('Users','Create',u.name); await this.persistUser(ts); await this.save(); }
   /**
+   * Delete a vendor order. If reverseStock=true, also subtracts each item's
+   * goodQty from the linked product's stockBoxes and removes the associated
+   * purchaseHistory/damageHistory entries (use when deleting a duplicate that
+   * already inflated inventory).
+   */
+  async deleteVendorOrder(orderId: string, reverseStock: boolean = false) {
+    const order = this.vendorOrders.find((o: any) => o.id === orderId);
+    if (!order) return;
+
+    if (reverseStock) {
+      for (const item of (order.items || [])) {
+        const goodQty = (item.goodQty ?? ((item.receivedQty||0) - (item.damagedQty||0))) || 0;
+        if (goodQty > 0 && item.productId) {
+          const prod = this.products.find(p => p.id === item.productId);
+          if (prod) {
+            const updatedProd = {
+              ...prod,
+              stockBoxes: Math.max(0, (prod.stockBoxes || 0) - goodQty),
+              purchaseHistory: (prod.purchaseHistory || []).filter((ph: any) => ph.orderId !== orderId),
+              damageHistory: (prod.damageHistory || []).filter((dh: any) => dh.orderId !== orderId),
+              updatedAt: Date.now(),
+            };
+            this.products = this.products.map(p => p.id === item.productId ? updatedProd : p);
+            this.persistProduct(updatedProd);
+          }
+        }
+      }
+    }
+
+    this.vendorOrders = this.vendorOrders.filter((o: any) => o.id !== orderId);
+    try {
+      const jwt = this.getJwt();
+      const headers: Record<string,string> = {};
+      if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+      await fetch(this.getApiUrl(`/api/vendor-orders/${orderId}`), { method: 'DELETE', headers });
+    } catch {}
+
+    this.lastUpdated = Date.now();
+    this.notify();
+    await this.save();
+  }
+
+  /**
    * Add a single item as a "Quick Entry" purchase for a vendor.
    * Instead of creating a brand-new VendorOrder every time (which produced
    * duplicate "Tile_venila" entries for the same vendor/day), this finds an

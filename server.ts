@@ -1329,6 +1329,22 @@ async function syncInMemoryToRelationalDb(data: any) {
     }
   });
 
+  /** DELETE /api/vendor-orders/:id — remove a vendor order (current tenant only) */
+  app.delete('/api/vendor-orders/:id', async (req: Request, res: Response) => {
+    const id = req.params.id;
+    const tenantId = req.tenantId || 'default';
+    if (!pool || !dbHealthy) {
+      return res.json({ success: true, mode: 'offline' });
+    }
+    try {
+      await pool.query('DELETE FROM vendor_orders WHERE id=? AND tenant_id=?', [id, tenantId]);
+      syncResponseCache = null;
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   // GET /api/users — used by login to fetch users without waiting for full sync
   app.get('/api/users', async (req: Request, res: Response) => {
     try {
