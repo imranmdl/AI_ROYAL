@@ -122,9 +122,18 @@ const Quotations: React.FC<{
     sellingSqftManuallySet: false,
   });
 
+  // Re-fetch the selected product whenever store.products changes (e.g. after a
+  // new Kadapa inward merges slabs into this product) — without this, the slab
+  // list shown here would stay stale at the snapshot from when it was selected.
+  const [, forceProductRefresh] = useState(0);
+  useEffect(() => {
+    const unsub = store.subscribe(() => forceProductRefresh(n => n + 1), (s) => s.products);
+    return unsub;
+  }, []);
+
   const selectedProduct = useMemo(() => 
     store.products.find(p => p.id === builder.productId), 
-    [builder.productId]
+    [builder.productId, store.products]
   );
 
   useEffect(() => {
