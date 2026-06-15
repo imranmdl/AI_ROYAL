@@ -1184,6 +1184,42 @@ class DataStore {
       if (locSum !== totalBoxes) loc.boxes += (totalBoxes - locSum);
 
       next.adjustmentLog.unshift({ id: Math.random().toString(), date: customDate || new Date().toLocaleString(), userId: this.currentUser?.id || 'sys', userName: this.currentUser?.name || 'System', actionType, qtyBoxes: boxes, qtyLoose: pieces, godownId, godownName: this.godowns.find(g => g.id === godownId)?.name || '?', notes, vendorOrderId });
+
+      // ── Kadapa: auto-generate slab numbers on inward ──────────────────────
+      // ANY inward path (Material Inward Terminal, Quick Add & Inward, Quick
+      // Item Provisioning, vendor remap, etc.) funnels through adjustStock with
+      // actionType='Purchase' and boxes>0 — so generating slabs here covers all
+      // of them. Slab numbering matches KadapaManager's own format exactly:
+      // {PREFIX}-{heightFt}ft-{lengthInches}in-{N}
+      if (actionType === 'Purchase' && boxes > 0 && p.category === 'Kadapa') {
+        const sizeParts = (p.size || '').split(/x/i);
+        const heightFt = parseFloat(sizeParts[0] || '0');
+        const lengthFt = parseFloat(sizeParts[1] || '0');
+        if (heightFt > 0 && lengthFt > 0) {
+          const PREFIX: Record<string,string> = { 'Single Polish':'SP', 'Double Polish':'DP', 'Big Single Polish':'DSP', 'Big Double Polish':'DDP' };
+          const finish = p.kadapaType || 'Single Polish';
+          const pfx = PREFIX[finish] || 'SP';
+          const lengthIn = Math.round(lengthFt * 12);
+          const base = `${pfx}-${heightFt}ft-${lengthIn}in`;
+          const existingSlabs = next.slabs || [];
+          const sameBaseSlabs = existingSlabs.filter((s:any) => s.slabNo?.startsWith(base));
+          const maxNum = sameBaseSlabs.reduce((m:number, s:any) => Math.max(m, parseInt(s.slabNo?.split('-').pop()||'0')||0), 0);
+          const sqft = p.sqftPerBox || parseFloat((heightFt * lengthFt).toFixed(2));
+          const now = Date.now();
+          const newSlabs = Array.from({ length: Math.round(boxes) }, (_, i) => ({
+            id: `slab-${now}-${i}-${Math.random().toString(36).substr(2,5)}`,
+            slabNo: `${base}-${maxNum + i + 1}`,
+            heightFt, heightIn: Math.round(heightFt * 12), lengthFt, lengthIn,
+            sqft, isSold: false, finish,
+            landedCost: p.purchasePrice || 0,
+            landedCostPerSqft: sqft > 0 ? (p.purchasePrice || 0) / sqft : 0,
+            sellingPrice: p.sellingPrice || 0,
+            sellingPricePerSqft: p.sellingPricePerSqft || 0,
+          }));
+          next.slabs = [...existingSlabs, ...newSlabs];
+        }
+      }
+
       this.persistProduct(next); return next;
     });
   }
