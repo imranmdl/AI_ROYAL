@@ -90,7 +90,12 @@ const tenantMiddleware = async (req: Request, res: Response, next: NextFunction)
     '/api/health', '/api/ping', '/api/public/',
     '/api/auth/2fa/',
   ];
-  if (open.some(p => req.path.startsWith(p)) || !req.path.startsWith('/api/')) {
+  // These /api/admin/* endpoints are TENANT-FACING (called by logged-in shop
+  // users with their JWT) and need req.tenantId resolved — unlike the
+  // SUPER_ADMIN (key=) endpoints under /api/admin/ which operate cross-tenant.
+  const tenantScopedAdminPaths = ['/api/admin/import-products-csv'];
+  const isOpen = open.some(p => req.path.startsWith(p)) && !tenantScopedAdminPaths.includes(req.path);
+  if (isOpen || !req.path.startsWith('/api/')) {
     return next();
   }
 
