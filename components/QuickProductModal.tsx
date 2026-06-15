@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { store } from '../store';
-import { Product, Category, UnitType, TileGrade, TransportCostType, TransportBasis, Slab } from '../types';
+import { Product, Category, UnitType, TileGrade, TransportCostType, TransportBasis, Slab, VendorOrderItem } from '../types';
 
 interface QuickProductModalProps {
   isOpen: boolean;
@@ -11,6 +11,7 @@ interface QuickProductModalProps {
 
 const QuickProductModal: React.FC<QuickProductModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const [step, setStep] = useState<'details' | 'stock'>('details');
+  const [saving, setSaving] = useState(false);
   const [categories, setCategories] = useState<string[]>(store.settings.categories || []);
   const [productForm, setProductForm] = useState<Partial<Product & { bulkCount: number; bulkNames: string[]; graniteName: string }>>({
     name: '', category: store.settings.categories[0] || 'Floor Tile', brand: '', isTile: true, unitType: 'Box',
@@ -28,10 +29,11 @@ const QuickProductModal: React.FC<QuickProductModalProps> = ({ isOpen, onClose, 
   const [inwardForm, setInwardForm] = useState({
     qtyBoxes: 0,
     rate: 0,
-    vendorName: 'Direct Inward',
+    vendorName: '',
     vehicleNumber: '',
     godownId: 'g1',
-    date: new Date().toISOString().split('T')[0]
+    date: new Date().toISOString().split('T')[0],
+    targetOrderId: '',   // '' = create new / consolidate by date; else append to this existing order
   });
 
   const grades: TileGrade[] = ['Premium', 'Standard', 'Commercial', 'Budget'];
@@ -112,7 +114,7 @@ const QuickProductModal: React.FC<QuickProductModalProps> = ({ isOpen, onClose, 
     }
   }, [productForm.category, productForm.slabHeightFt, productForm.slabHeightIn, productForm.slabLengthFt, productForm.slabLengthIn, productForm.costPerSqft, productForm.sellingPricePerSqft]);
 
-  const handleCreateAndInward = () => {
+  const handleCreateAndInward = async () => {
     if (!productForm.name) return;
 
     const productId = `prod-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
@@ -135,22 +137,31 @@ const QuickProductModal: React.FC<QuickProductModalProps> = ({ isOpen, onClose, 
 
     store.addProduct(finalProduct);
 
-    // If stock is provided, inward it
+    // If stock is provided, inward it via the vendor order system (Vendor Supply Chain)
     if (inwardForm.qtyBoxes > 0) {
-      store.addPurchase({
-        id: `pur-${Date.now()}`,
-        vendorName: inwardForm.vendorName,
-        vehicleNumber: inwardForm.vehicleNumber,
-        gstInvoiceNo: 'QUICK-INWARD',
-        date: inwardForm.date,
-        godownId: inwardForm.godownId,
-        items: [{
-          productId: productId,
-          productName: finalProduct.name,
-          qtyBoxes: inwardForm.qtyBoxes,
-          rate: inwardForm.rate || productForm.purchasePrice || 0
-        }]
-      });
+      if (inwardForm.vendorName.trim()) {
+        const rate = inwardForm.rate || productForm.purchasePrice || 0;
+        const sellingPrice = productForm.sellingPrice || rate;
+        const margin = sellingPrice > 0 ? ((sellingPrice - rate) / sellingPrice) * 100 : 0;
+        const item: VendorOrderItem = {
+          id: `item-${Date.now()}-0`,
+          productId, productName: finalProduct.name,
+          category: finalProduct.category, unit: finalProduct.unitType,
+          orderedQty: inwardForm.qtyBoxes,
+          billedQty: inwardForm.qtyBoxes, billedRate: rate, billedAmount: inwardForm.qtyBoxes * rate,
+          actualQty: inwardForm.qtyBoxes, actualRate: rate, actualAmount: inwardForm.qtyBoxes * rate,
+          receivedQty: inwardForm.qtyBoxes, damagedQty: 0, goodQty: inwardForm.qtyBoxes,
+          transportShare: 0, laborShare: 0,
+          landedCostPerUnit: rate, sellingPrice, marginPct: margin,
+        };
+        await store.addQuickVendorItem(inwardForm.vendorName.trim(), inwardForm.date, item, {
+          remarks: 'Quick Item Provisioning (Create & Inward)',
+          targetOrderId: inwardForm.targetOrderId || undefined,
+        });
+      } else {
+        // No vendor — adjust stock directly (no vendor purchase record)
+        store.adjustStock(productId, inwardForm.godownId, inwardForm.qtyBoxes, 0, 'Purchase', 'Quick Item Provisioning (no vendor)', inwardForm.date);
+      }
     }
 
     onSuccess(productId);
@@ -194,13 +205,14 @@ const QuickProductModal: React.FC<QuickProductModalProps> = ({ isOpen, onClose, 
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Brand</label>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. Kajaria, Somany"
-                    className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-2 border-slate-50 focus:border-amber-500 outline-none font-bold text-sm"
+                  <select
+                    className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-2 border-slate-50 focus:border-amber-500 outline-none font-bold text-sm appearance-none"
                     value={productForm.brand}
                     onChange={e => setProductForm({...productForm, brand: e.target.value})}
-                  />
+                  >
+                    <option value="">Select brand…</option>
+                    {(store.settings.predefinedBrands || []).map(b => <option key={b} value={b}>{b}</option>)}
+                  </select>
                 </div>
               </div>
 
@@ -242,12 +254,46 @@ const QuickProductModal: React.FC<QuickProductModalProps> = ({ isOpen, onClose, 
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Size</label>
-                    <input 
-                      type="text" 
-                      className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-2 border-slate-50 focus:border-amber-500 outline-none font-bold text-sm"
+                    <select
+                      className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-2 border-slate-50 focus:border-amber-500 outline-none font-bold text-sm appearance-none"
                       value={productForm.size}
                       onChange={e => setProductForm({...productForm, size: e.target.value})}
-                    />
+                    >
+                      <option value="">Select size…</option>
+                      {(store.settings.predefinedSizes || []).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Grade</label>
+                    <select
+                      className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-2 border-slate-50 focus:border-amber-500 outline-none font-bold text-sm appearance-none"
+                      value={productForm.grade}
+                      onChange={e => setProductForm({...productForm, grade: e.target.value as TileGrade})}
+                    >
+                      {(store.settings.predefinedGrades || grades).map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Shade No</label>
+                    <select
+                      className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-2 border-slate-50 focus:border-amber-500 outline-none font-bold text-sm appearance-none"
+                      value={productForm.shadeNo}
+                      onChange={e => setProductForm({...productForm, shadeNo: e.target.value})}
+                    >
+                      <option value="">Select shade…</option>
+                      {(store.settings.predefinedShades || []).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Batch No</label>
+                    <select
+                      className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-2 border-slate-50 focus:border-amber-500 outline-none font-bold text-sm appearance-none"
+                      value={productForm.batchNo}
+                      onChange={e => setProductForm({...productForm, batchNo: e.target.value})}
+                    >
+                      <option value="">Select batch…</option>
+                      {(store.settings.predefinedBatches || []).map(b => <option key={b} value={b}>{b}</option>)}
+                    </select>
                   </div>
                 </div>
               )}
@@ -294,8 +340,13 @@ const QuickProductModal: React.FC<QuickProductModalProps> = ({ isOpen, onClose, 
                     <input type="number" className="w-full px-4 py-3 bg-white rounded-xl border-0 font-bold text-sm outline-none" value={inwardForm.rate} onChange={e => setInwardForm({...inwardForm, rate: Number(e.target.value)})} />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Vendor Name</label>
-                    <input type="text" className="w-full px-4 py-3 bg-white rounded-xl border-0 font-bold text-sm outline-none" value={inwardForm.vendorName} onChange={e => setInwardForm({...inwardForm, vendorName: e.target.value})} />
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Vendor Name (Optional)</label>
+                    <input type="text" list="quick-product-vendor-list" placeholder="e.g. Pradeep Suppliers"
+                      className="w-full px-4 py-3 bg-white rounded-xl border-0 font-bold text-sm outline-none"
+                      value={inwardForm.vendorName} onChange={e => setInwardForm({...inwardForm, vendorName: e.target.value, targetOrderId: ''})} />
+                    <datalist id="quick-product-vendor-list">
+                      {[...new Set((store.vendorOrders||[]).map(o=>o.vendorName))].filter(Boolean).map(v=><option key={v} value={v} />)}
+                    </datalist>
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Godown</label>
@@ -303,7 +354,46 @@ const QuickProductModal: React.FC<QuickProductModalProps> = ({ isOpen, onClose, 
                       {store.godowns.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                     </select>
                   </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Date</label>
+                    <input type="date" className="w-full px-4 py-3 bg-white rounded-xl border-0 font-bold text-sm outline-none" value={inwardForm.date} onChange={e => setInwardForm({...inwardForm, date: e.target.value})} />
+                  </div>
                 </div>
+
+                {/* Order targeting — append to an existing order for this vendor, or create new */}
+                {inwardForm.vendorName.trim() && inwardForm.qtyBoxes > 0 && (() => {
+                  const vendorOrdersForThisVendor = (store.vendorOrders||[]).filter(o =>
+                    (o.vendorName||'').trim().toLowerCase() === inwardForm.vendorName.trim().toLowerCase() &&
+                    o.status !== 'Closed' && o.status !== 'Cancelled'
+                  );
+                  return (
+                    <div className="mt-4 space-y-2">
+                      <label className="text-[10px] font-black text-amber-600 uppercase tracking-widest px-1">Add Item To</label>
+                      <select className="w-full px-4 py-3 bg-white rounded-xl border-0 font-bold text-sm outline-none appearance-none"
+                        value={inwardForm.targetOrderId} onChange={e=>setInwardForm({...inwardForm, targetOrderId: e.target.value})}>
+                        <option value="">+ Create New Order (or consolidate by date)</option>
+                        {vendorOrdersForThisVendor.map(o=>(
+                          <option key={o.id} value={o.orderNo}>
+                            #{o.orderNo} — {o.orderDate} — {o.items.length} item(s) — {o.status}
+                          </option>
+                        ))}
+                      </select>
+                      {inwardForm.targetOrderId && (
+                        <div className="text-[10px] font-bold text-purple-600 px-1">
+                          <i className="fas fa-link mr-1"></i>
+                          This item will be added to existing order #{inwardForm.targetOrderId} — no new order will be created.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {!inwardForm.vendorName.trim() && inwardForm.qtyBoxes > 0 && (
+                  <div className="mt-4 text-[10px] font-bold text-amber-700 px-1">
+                    <i className="fas fa-info-circle mr-1"></i>
+                    No vendor name entered — stock will be added without a vendor purchase record.
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-between pt-4">
@@ -314,10 +404,11 @@ const QuickProductModal: React.FC<QuickProductModalProps> = ({ isOpen, onClose, 
                   Back to Details
                 </button>
                 <button 
-                  onClick={handleCreateAndInward}
-                  className="bg-amber-600 text-white px-10 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-amber-700 transition-all shadow-xl active:scale-95"
+                  onClick={async ()=>{ setSaving(true); try { await handleCreateAndInward(); } finally { setSaving(false); } }}
+                  disabled={saving}
+                  className="bg-amber-600 text-white px-10 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-amber-700 transition-all shadow-xl active:scale-95 disabled:opacity-50 flex items-center gap-2"
                 >
-                  Finalize & Add to Document
+                  {saving ? <><i className="fas fa-spinner fa-spin"></i> Saving…</> : 'Finalize & Add to Document'}
                 </button>
               </div>
             </div>
