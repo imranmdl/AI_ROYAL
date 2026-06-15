@@ -3460,6 +3460,64 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     } catch(e:any) { res.status(500).json({ error:e.message }); }
   });
 
+  /**
+   * GET /api/admin/find-products?key=test&name=<search>
+   * Searches products and vendor_orders ACROSS ALL TENANTS by name (LIKE match).
+   * Useful for locating data that landed under the wrong tenant_id due to
+   * past JWT/tenant-scoping bugs.
+   */
+  app.get('/api/admin/find-products', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
+    const name = (req.query.name as string || '').trim();
+    if (!name) return res.status(400).json({ error:'name query param required' });
+    if (!pool || !dbHealthy) return res.status(503).json({ error:'DB not connected' });
+    try {
+      const [products]: any = await pool.query(
+        'SELECT id, name, category, brand, size, tenant_id, stock_boxes, updated_at FROM products WHERE name LIKE ?',
+        [`%${name}%`]
+      );
+      const [orders]: any = await pool.query(
+        'SELECT id, order_no, vendor_name, tenant_id, status, updated_at FROM vendor_orders WHERE vendor_name LIKE ? OR order_no LIKE ?',
+        [`%${name}%`, `%${name}%`]
+      );
+      res.json({ success:true, products, vendorOrders: orders });
+    } catch(e:any) { res.status(500).json({ error:e.message }); }
+  });
+
+  /**
+   * POST /api/admin/reassign-tenant?key=test
+   * Body: { productIds?: string[], orderIds?: string[], targetTenantId: string }
+   * Moves products and/or vendor orders to the correct tenant_id.
+   * Use after find-products to fix data that was created under the wrong tenant.
+   */
+  app.post('/api/admin/reassign-tenant', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Wrong key' });
+    const { productIds, orderIds, targetTenantId } = req.body;
+    if (!targetTenantId) return res.status(400).json({ error:'targetTenantId required' });
+    if (!pool || !dbHealthy) return res.status(503).json({ error:'DB not connected' });
+    try {
+      const results: any = {};
+      if (Array.isArray(productIds) && productIds.length > 0) {
+        const placeholders = productIds.map(()=>'?').join(',');
+        const [r]: any = await pool.query(
+          `UPDATE products SET tenant_id=? WHERE id IN (${placeholders})`,
+          [targetTenantId, ...productIds]
+        );
+        results.products_updated = r.affectedRows;
+      }
+      if (Array.isArray(orderIds) && orderIds.length > 0) {
+        const placeholders = orderIds.map(()=>'?').join(',');
+        const [r]: any = await pool.query(
+          `UPDATE vendor_orders SET tenant_id=? WHERE id IN (${placeholders})`,
+          [targetTenantId, ...orderIds]
+        );
+        results.orders_updated = r.affectedRows;
+      }
+      syncResponseCache = null;
+      res.json({ success:true, targetTenantId, results });
+    } catch(e:any) { res.status(500).json({ error:e.message }); }
+  });
+
   /** GET /api/superadmin/ping — no auth needed, confirms tenant API is active */
   app.get('/api/superadmin/ping', (_req: Request, res: Response) => {
     res.json({
