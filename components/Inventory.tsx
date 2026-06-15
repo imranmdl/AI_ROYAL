@@ -436,6 +436,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
     date: new Date().toISOString().split('T')[0], 
     godownId: 'g1', 
     syncToSupplyChain: false,
+    targetOrderId: '',   // '' = create new / consolidate by date; else append to this existing order
     items: [] as { productId: string; qtyBoxes: number; rate: number }[]
   });
 
@@ -609,6 +610,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
         store.addQuickVendorItem(newPurchase.vendorName.trim(), newPurchase.date, item, {
           invoiceNo: newPurchase.gstInvoiceNo || undefined,
           remarks: 'Quick Inward from Inventory Ecosystem',
+          targetOrderId: newPurchase.targetOrderId || undefined,
         });
       });
     } else {
@@ -640,6 +642,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
       date: new Date().toISOString().split('T')[0], 
       godownId: 'g1', 
       syncToSupplyChain: false,
+      targetOrderId: '',
       items: []
     });
   };
@@ -1012,6 +1015,33 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                             </div>
                           </label>
                         )}
+                        {/* Order targeting — append to an existing order for this vendor, or create new */}
+                        {newPurchase.vendorName.trim() && newPurchase.syncToSupplyChain && (() => {
+                          const vendorOrdersForThisVendor = (store.vendorOrders||[]).filter(o =>
+                            (o.vendorName||'').trim().toLowerCase() === newPurchase.vendorName.trim().toLowerCase() &&
+                            o.status !== 'Closed' && o.status !== 'Cancelled'
+                          );
+                          return (
+                            <div className="col-span-2 space-y-2">
+                              <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Add Items To</label>
+                              <select className="w-full px-5 py-4 bg-slate-100 rounded-2xl font-bold outline-none appearance-none"
+                                value={newPurchase.targetOrderId} onChange={e=>setNewPurchase({...newPurchase, targetOrderId: e.target.value})}>
+                                <option value="">+ Create New Order (or consolidate by date)</option>
+                                {vendorOrdersForThisVendor.map(o=>(
+                                  <option key={o.id} value={o.orderNo}>
+                                    #{o.orderNo} — {o.orderDate} — {o.items.length} item(s) — {o.status}
+                                  </option>
+                                ))}
+                              </select>
+                              {newPurchase.targetOrderId && (
+                                <div className="text-[10px] font-bold text-purple-600 px-2">
+                                  <i className="fas fa-link mr-1"></i>
+                                  These item(s) will be added to existing order #{newPurchase.targetOrderId} — no new order will be created.
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                     <div className="col-span-2 space-y-4">
