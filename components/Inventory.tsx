@@ -4,7 +4,7 @@ import ReactDOM from 'react-dom';
 import { useCamera } from '../hooks/useCamera';
 import { store } from '../store';
 import StockLedger from './StockLedger';
-import { Product, Purchase, PurchaseItem, Category, UnitType, UserRole, TransportCostType, TransportBasis, TileGrade, VendorOrder, Slab } from '../types';
+import { Product, Purchase, PurchaseItem, Category, UnitType, UserRole, TransportCostType, TransportBasis, TileGrade, VendorOrder, VendorOrderItem, Slab } from '../types';
 import QRCode from 'qrcode';
 import KadapaManager from './KadapaManager';
 import KadapaInventoryGenerator from './KadapaInventoryGenerator';
@@ -580,84 +580,79 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
         };
         store.saveVendorOrder(updatedOrder);
       }
+    } else if (newPurchase.vendorName.trim() && newPurchase.syncToSupplyChain) {
+      // ── Quick Vendor Purchase: create a VendorOrder so it shows in Vendor Supply Chain,
+      // and auto-inwards stock + purchase history via saveVendorOrder (single source of truth) ──
+      const orderId = `inw-${Date.now()}`;
+      let totalActual = 0;
+
+      const orderItems: VendorOrderItem[] = newPurchase.items.map((it, i) => {
+        const product = products.find(p => p.id === it.productId);
+        const actualAmount = it.qtyBoxes * it.rate;
+        totalActual += actualAmount;
+        const sellingPrice = product?.sellingPrice || 0;
+        const landed = it.rate;
+        const margin = sellingPrice > 0 ? ((sellingPrice - landed) / sellingPrice) * 100 : 0;
+        return {
+          id: `item-${orderId}-${i}`,
+          productId: it.productId,
+          productName: product?.name || 'Unknown Product',
+          category: product?.category || '',
+          unit: product?.unitType || 'Box',
+          orderedQty: it.qtyBoxes,
+          billedQty: it.qtyBoxes, billedRate: it.rate, billedAmount: actualAmount,
+          actualQty: it.qtyBoxes, actualRate: it.rate, actualAmount,
+          receivedQty: it.qtyBoxes, damagedQty: 0, goodQty: it.qtyBoxes,
+          transportShare: 0, laborShare: 0,
+          landedCostPerUnit: landed,
+          sellingPrice, marginPct: margin,
+        };
+      });
+
+      const newOrder: VendorOrder = {
+        id: orderId,
+        orderNo: newPurchase.gstInvoiceNo || `INW-${Date.now().toString().slice(-6)}`,
+        vendorName: newPurchase.vendorName.trim(),
+        orderDate: newPurchase.date,
+        receivedDate: newPurchase.date,
+        status: 'Received' as any,
+        paymentStatus: 'Pending' as any,
+        items: orderItems,
+        laborCharges: 0, miscCharges: 0,
+        totalBilledAmount: totalActual,
+        totalActualAmount: totalActual,
+        totalTransportCost: 0,
+        grandTotal: totalActual,
+        cashAmount: 0, rtgsAmount: 0, paidAmount: 0, balanceAmount: totalActual,
+        paymentHistory: [],
+        damagedItems: [],
+        receivedGodownId: newPurchase.godownId,
+        remarks: 'Quick Inward from Inventory Ecosystem',
+        isFullyReceived: true,
+        updatedAt: Date.now(),
+      };
+
+      // saveVendorOrder auto-inwards stock + purchase history + appears in Vendor Supply Chain
+      store.saveVendorOrder(newOrder);
     } else {
-      if (newPurchase.syncToSupplyChain) {
-        // Create a SINGLE VendorOrder to "sync" with Supply Chain for all items
-        const orderId = `inw-${Date.now()}`;
-        let totalAmount = 0;
-        
-        const orderItems = newPurchase.items.map(it => {
-          const product = products.find(p => p.id === it.productId);
-          const itemTotal = it.qtyBoxes * it.rate;
-          totalAmount += itemTotal;
-          return {
-            productId: it.productId,
-            productName: product?.name || 'Unknown Product',
-            qtyBoxes: it.qtyBoxes,
-            rate: it.rate
-          };
-        });
-        
-        const newOrder: VendorOrder = {
-          id: orderId,
-          orderNo: newPurchase.gstInvoiceNo || `INW-${Date.now().toString().slice(-6)}`,
-          vendorName: newPurchase.vendorName,
-          orderDate: newPurchase.date,
-          status: 'Ordered',
-          paymentStatus: 'Pending',
-          cashAmount: 0,
-          rtgsAmount: 0,
-          transportationCost: 0,
-          otherCosts: 0,
-          totalAmount,
-          paidAmount: 0,
-          balanceAmount: totalAmount,
-          items: orderItems,
-          damagedItems: [],
-          paymentHistory: [],
-          vehicleNumber: newPurchase.vehicleNumber,
-          remarks: 'Batch Manual Inward from Inventory Ecosystem'
-        };
-        
-        store.addVendorOrder(newOrder);
-        // Immediately receive it to update stock and show in supply chain
-        // Mark the linked vendor order as received via the new supply chain module
-      const linkedOrder = store.vendorOrders.find(o => o.id === orderId);
-      if (linkedOrder) {
-        const updatedOrder = {
-          ...linkedOrder,
-          status: 'Received' as any,
-          receivedDate: newPurchase.date,
-          items: linkedOrder.items.map((it: any) => ({
-            ...it,
-            receivedQty: it.receivedQty || it.actualQty || it.qtyBoxes || 0,
-            damagedQty: 0,
-            goodQty: it.actualQty || it.qtyBoxes || 0,
-          })),
-          updatedAt: Date.now(),
-        };
-        store.saveVendorOrder(updatedOrder);
-      }
-      } else {
-        // Create a purchase record and update stock
-        const purchase: Purchase = {
-          id: `pur-${Date.now()}`,
-          vendorName: newPurchase.vendorName,
-          vehicleNumber: newPurchase.vehicleNumber,
-          gstInvoiceNo: newPurchase.gstInvoiceNo || 'MANUAL-INWARD',
-          date: newPurchase.date,
-          godownId: newPurchase.godownId,
-          items: newPurchase.items.map(it => ({
-            productId: it.productId,
-            productName: store.products.find(p => p.id === it.productId)?.name || 'Unknown',
-            qtyBoxes: it.qtyBoxes,
-            rate: it.rate
-          }))
-        };
-        
-        store.addPurchase(purchase);
-        // Note: addPurchase already updates stockBoxes via adjustStock — no need to update here
-      }
+      // Manual inward — no vendor / not syncing to supply chain
+      const purchase: Purchase = {
+        id: `pur-${Date.now()}`,
+        vendorName: newPurchase.vendorName || 'Manual Entry',
+        vehicleNumber: newPurchase.vehicleNumber,
+        gstInvoiceNo: newPurchase.gstInvoiceNo || 'MANUAL-INWARD',
+        date: newPurchase.date,
+        godownId: newPurchase.godownId,
+        items: newPurchase.items.map(it => ({
+          productId: it.productId,
+          productName: store.products.find(p => p.id === it.productId)?.name || 'Unknown',
+          qtyBoxes: it.qtyBoxes,
+          rate: it.rate
+        }))
+      };
+
+      store.addPurchase(purchase);
+      // Note: addPurchase already updates stockBoxes via adjustStock — no need to update here
     }
     
     setShowAddStock(false);
@@ -986,6 +981,48 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                           ))}
                        </select>
                     </div>
+                    {/* Vendor Name (optional) — when provided, this inward is recorded as a
+                        Vendor Purchase and automatically appears in Vendor Supply Chain,
+                        with stock + purchase history synced — no double entry needed. */}
+                    {!newPurchase.gstInvoiceNo.startsWith('ORDER_') && (
+                      <div className="col-span-2 grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Vendor Name (Optional)</label>
+                          <input type="text" list="inward-vendor-list"
+                            className="w-full px-5 py-4 bg-slate-100 rounded-2xl font-bold outline-none"
+                            placeholder="e.g. Pradeep Suppliers"
+                            value={newPurchase.vendorName}
+                            onChange={e => setNewPurchase({ ...newPurchase, vendorName: e.target.value,
+                              syncToSupplyChain: e.target.value.trim().length > 0 })} />
+                          <datalist id="inward-vendor-list">
+                            {[...new Set(store.vendorOrders.map(o => o.vendorName))].filter(Boolean).map(v => (
+                              <option key={v} value={v} />
+                            ))}
+                          </datalist>
+                        </div>
+                        <div className="space-y-2 flex flex-col">
+                          <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Invoice / Ref No</label>
+                          <input type="text"
+                            className="w-full px-5 py-4 bg-slate-100 rounded-2xl font-bold outline-none"
+                            placeholder="Optional invoice no."
+                            value={newPurchase.gstInvoiceNo}
+                            onChange={e => setNewPurchase({ ...newPurchase, gstInvoiceNo: e.target.value })} />
+                        </div>
+                        {newPurchase.vendorName.trim() && (
+                          <label className="col-span-2 flex items-center gap-3 px-5 py-3 bg-amber-50 border border-amber-100 rounded-2xl cursor-pointer">
+                            <input type="checkbox" className="w-5 h-5 accent-amber-600"
+                              checked={newPurchase.syncToSupplyChain}
+                              onChange={e => setNewPurchase({ ...newPurchase, syncToSupplyChain: e.target.checked })} />
+                            <div>
+                              <div className="text-[11px] font-black text-amber-800">Sync to Vendor Supply Chain</div>
+                              <div className="text-[9px] font-bold text-amber-600 uppercase tracking-wide">
+                                Creates a vendor purchase record automatically — no need to re-enter on the Vendor page
+                              </div>
+                            </div>
+                          </label>
+                        )}
+                      </div>
+                    )}
                     <div className="col-span-2 space-y-4">
                        <div className="flex justify-between items-center">
                           <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Material Batch</label>
