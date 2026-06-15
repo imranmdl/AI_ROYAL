@@ -397,25 +397,19 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
     }
   }, [productForm.category]);
 
-  // Auto-generate Kadapa name — format: SP_KDP_2x1 / DSP_KDP_5x2 / DP_KDP_4x2.5 / DDP_KDP_6x2.5
+  // Auto-generate Kadapa name preview — format: SP_KDP_2x1 / DDP_KDP_6x2.5
+  // Prefix is determined SOLELY by the selected finish type (matches KadapaManager's
+  // own PREFIX map) — there is no separate "big size" override.
   useEffect(() => {
     if (productForm.category === 'Kadapa' && productForm.kadapaType && productForm.size) {
       const type = productForm.kadapaType;
-      const size = productForm.size; // e.g. "2x1" or "5x2"
+      const size = productForm.size; // e.g. "2x1" or "7x1.25"
 
-      // Determine if height >= 5 (big size)
-      const parts = size.split(/[x×*,]/);
-      const h = parseFloat(parts[0]?.trim() || '0');
-      const isBig = h >= 5;
-
-      // Map finish → prefix
-      const prefixMap: Record<string, { normal: string; big: string }> = {
-        'Single Polish':     { normal: 'SP',  big: 'DSP' },
-        'Double Polish':     { normal: 'DP',  big: 'DDP' },
-        'Big Single Polish': { normal: 'DSP', big: 'DSP' },
-        'Big Double Polish': { normal: 'DDP', big: 'DDP' },
+      const PREFIX: Record<string, string> = {
+        'Single Polish': 'SP', 'Double Polish': 'DP',
+        'Big Single Polish': 'DSP', 'Big Double Polish': 'DDP',
       };
-      const px = (prefixMap[type] || { normal: 'SP', big: 'DSP' })[isBig ? 'big' : 'normal'];
+      const px = PREFIX[type] || 'SP';
 
       const generatedName = `${px}_KDP_${size}`;
 
@@ -493,18 +487,25 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
       const slabs = productForm.slabs || [];
       if (slabs.length === 0) return; // nothing to save yet
 
-      const prefixMap: Record<string, { normal: string; big: string }> = {
-        'Single Polish':     { normal: 'SP',  big: 'DSP' },
-        'Double Polish':     { normal: 'DP',  big: 'DDP' },
-        'Big Single Polish': { normal: 'DSP', big: 'DSP' },
-        'Big Double Polish': { normal: 'DDP', big: 'DDP' },
+      // PREFIX matches KadapaManager's own mapping exactly (no size-based "big" override —
+      // the finish type itself, e.g. "Big Double Polish", already encodes that).
+      const PREFIX: Record<string, string> = {
+        'Single Polish': 'SP', 'Double Polish': 'DP',
+        'Big Single Polish': 'DSP', 'Big Double Polish': 'DDP',
+      };
+      // heightFt and lengthFt from KadapaManager are ALREADY decimal feet
+      // (e.g. 6, 7, 1.25, 1.5) — heightIn/lengthIn are redundant "total inches"
+      // representations and must NEVER be appended/combined here.
+      const fmtDim = (n: number) => {
+        const r = Math.round((n || 0) * 100) / 100;
+        return r % 1 === 0 ? `${r}` : `${r}`;
       };
 
-      // Group slabs by (heightFt.heightIn x lengthFt.lengthIn + finish)
+      // Group slabs by (heightFt x lengthFt + finish)
       const groups = new Map<string, { slabs: Slab[]; hStr: string; wStr: string; finish: string }>();
       for (const slab of slabs) {
-        const hStr = `${slab.heightFt || 0}${slab.heightIn ? `.${slab.heightIn}` : ''}`;
-        const wStr = `${slab.lengthFt || 0}${slab.lengthIn ? `.${slab.lengthIn}` : ''}`;
+        const hStr = fmtDim(slab.heightFt || 0);
+        const wStr = fmtDim(slab.lengthFt || 0);
         const finish = slab.finish || productForm.kadapaType || 'Single Polish';
         const key = `${hStr}x${wStr}__${finish}`;
         if (!groups.has(key)) groups.set(key, { slabs: [], hStr, wStr, finish });
@@ -513,9 +514,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
 
       setErrorMessage(null);
       groups.forEach((group, key) => {
-        const h = parseFloat(group.hStr || '0');
-        const isBig = h >= 5;
-        const px = (prefixMap[group.finish] || { normal: 'SP', big: 'DSP' })[isBig ? 'big' : 'normal'];
+        const px = PREFIX[group.finish] || 'SP';
         const size = `${group.hStr}x${group.wStr}`;
         const name = `${px}_KDP_${size}`;
         const availableSlabs = group.slabs.filter(s => !s.isSold).length;
@@ -1535,17 +1534,14 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                             const wStr = wFt % 1 === 0 ? `${wFt}` : `${wFt}`;
                             const autoSize = hFt && wFt ? `${hStr}x${wStr}` : prev.size;
 
-                            // Derive name immediately — same logic as useEffect
-                            const type = prev.kadapaType || 'Single Polish';
-                            const h = parseFloat(hStr || '0');
-                            const isBig = h >= 5;
-                            const prefixMap: Record<string, { normal: string; big: string }> = {
-                              'Single Polish':     { normal: 'SP',  big: 'DSP' },
-                              'Double Polish':     { normal: 'DP',  big: 'DDP' },
-                              'Big Single Polish': { normal: 'DSP', big: 'DSP' },
-                              'Big Double Polish': { normal: 'DDP', big: 'DDP' },
+                            // Derive name immediately — prefix matches KadapaManager's
+                            // own PREFIX map (selected finish type only, no size-based override)
+                            const type = (firstSlab?.finish as string) || prev.kadapaType || 'Single Polish';
+                            const PREFIX: Record<string, string> = {
+                              'Single Polish': 'SP', 'Double Polish': 'DP',
+                              'Big Single Polish': 'DSP', 'Big Double Polish': 'DDP',
                             };
-                            const px = (prefixMap[type] || { normal: 'SP', big: 'DSP' })[isBig ? 'big' : 'normal'];
+                            const px = PREFIX[type] || 'SP';
                             const autoName = autoSize ? `${px}_KDP_${autoSize}` : prev.name;
 
                             return {
