@@ -330,7 +330,7 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
         filteredSales.forEach(s => {
           s.items.filter((i: any) => ids.includes(i.productId)).forEach((item: any) => {
             const prod = store.products.find(p => p.id === item.productId);
-            const pl = calcItemPL(item, prod, sale);
+            const pl = calcItemPL(item, prod, s);
             salesValue += pl.netSelling; salesCost += pl.totalLanded;
           });
         });
@@ -367,7 +367,7 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
     filteredSales.forEach(s => {
       s.items.forEach((item: any) => {
         const prod = store.products.find(p => p.id === item.productId);
-        const pl = calcItemPL(item, prod, sale);
+        const pl = calcItemPL(item, prod, s);
         rev += pl.netSelling; cost += pl.totalLanded;
         if (!prodPL.has(item.productId)) prodPL.set(item.productId, { name: item.productName, cat: prod?.category || '', revenue: 0, cost: 0, profit: 0 });
         const pp = prodPL.get(item.productId);

@@ -541,6 +541,32 @@ async function initDatabase(config: DbConfig = activeDbConfig) {
       )
     `);
 
+    // ── Referral Commission tables ──────────────────────────────────────────
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS referral_agents (
+        id VARCHAR(50) PRIMARY KEY,
+        tenant_id VARCHAR(100) NOT NULL DEFAULT 'default',
+        name VARCHAR(255) NOT NULL,
+        mobile VARCHAR(30),
+        data JSON,
+        updated_at BIGINT,
+        INDEX idx_ra_tenant (tenant_id)
+      )
+    `);
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS referral_commissions (
+        id VARCHAR(50) PRIMARY KEY,
+        tenant_id VARCHAR(100) NOT NULL DEFAULT 'default',
+        agent_id VARCHAR(50),
+        invoice_no VARCHAR(100),
+        sale_id VARCHAR(100),
+        data JSON,
+        updated_at BIGINT,
+        INDEX idx_rc_tenant (tenant_id),
+        INDEX idx_rc_agent (agent_id)
+      )
+    `);
+
     // Ensure updated_at exists in all tables (for existing databases)
     const tables = ['products', 'sales', 'purchases', 'vendor_orders', 'system_persistence', 'loading_charges', 'gallery_leads', 'users'];
     for (const table of tables) {
@@ -1498,6 +1524,52 @@ async function syncInMemoryToRelationalDb(data: any) {
     }
   });
 
+  /** POST /api/referral-agents — upsert a referral agent (tenant-scoped) */
+  app.post('/api/referral-agents', async (req: Request, res: Response) => {
+    const a = req.body;
+    const tenantId = req.tenantId || 'default';
+    if (!pool || !dbHealthy) return res.json({ success: true, mode: 'offline' });
+    try {
+      await pool.query(
+        `INSERT INTO referral_agents (id, tenant_id, name, mobile, data, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), name=VALUES(name), mobile=VALUES(mobile), data=VALUES(data), updated_at=VALUES(updated_at)`,
+        [a.id, tenantId, a.name || '', a.mobile || '', JSON.stringify(a), Date.now()]
+      );
+      syncResponseCache = null;
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  /** DELETE /api/referral-agents/:id */
+  app.delete('/api/referral-agents/:id', async (req: Request, res: Response) => {
+    const tenantId = req.tenantId || 'default';
+    if (!pool || !dbHealthy) return res.json({ success: true, mode: 'offline' });
+    try {
+      await pool.query('DELETE FROM referral_agents WHERE id=? AND tenant_id=?', [req.params.id, tenantId]);
+      await pool.query('DELETE FROM referral_commissions WHERE agent_id=? AND tenant_id=?', [req.params.id, tenantId]);
+      syncResponseCache = null;
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  /** POST /api/referral-commissions — upsert a referral commission entry (tenant-scoped) */
+  app.post('/api/referral-commissions', async (req: Request, res: Response) => {
+    const c = req.body;
+    const tenantId = req.tenantId || 'default';
+    if (!pool || !dbHealthy) return res.json({ success: true, mode: 'offline' });
+    try {
+      await pool.query(
+        `INSERT INTO referral_commissions (id, tenant_id, agent_id, invoice_no, sale_id, data, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), agent_id=VALUES(agent_id), invoice_no=VALUES(invoice_no), data=VALUES(data), updated_at=VALUES(updated_at)`,
+        [c.id, tenantId, c.agentId, c.invoiceNo || '', c.saleId || '', JSON.stringify(c), Date.now()]
+      );
+      syncResponseCache = null;
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
   app.get('/api/gallery-leads', async (req: Request, res: Response) => {
     try {
       const page = parseInt(req.query.page as string) || 1;
@@ -1882,6 +1954,10 @@ app.get('/api/sync/version', async (req: Request, res: Response) => {
       base.sales       = saleRows.map((s: any)  => ({ ...parseData(s.data),  id:s.id, invoiceNo:s.invoice_no, customerName:s.customer_name, date:s.date, totalAmount:parseFloat(s.total_amount)||0 }));
       base.purchases   = purchRows.map((p: any) => ({ ...parseData(p.data),  id:p.id, vendorName:p.vendor_name, date:p.date }));
       base.vendorOrders= voRows.map((v: any)    => ({ ...parseData(v.data),  id:v.id, orderNo:v.order_no, vendorName:v.vendor_name, status:v.status, paymentStatus:v.payment_status }));
+      const [raRows]: any  = await pool.query('SELECT id,data FROM referral_agents WHERE tenant_id=?', [tenantId]);
+      const [rcRows]: any  = await pool.query('SELECT id,data FROM referral_commissions WHERE tenant_id=?', [tenantId]);
+      base.referralAgents      = raRows.map((r:any) => ({ ...parseData(r.data), id:r.id }));
+      base.referralCommissions = rcRows.map((r:any) => ({ ...parseData(r.data), id:r.id }));
       base.users       = userRows.map((u: any)  => ({ ...parseData(u.data),  id:u.id, name:u.name, email:u.email, role:u.role, status:u.status }));
       base.galleryLeads  = glRows.map((r: any)  => parseData(r.data)).filter(Boolean);
       base.loadingCharges= lcRows.map((r: any)  => parseData(r.data)).filter(Boolean);

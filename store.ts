@@ -1419,19 +1419,39 @@ class DataStore {
     return { marginPct, riskLevel, blocked, threshold };
   }
 
+  private async persistReferralAgent(a: ReferralAgent) {
+    try {
+      const headers: Record<string,string> = { 'Content-Type': 'application/json', ...this.getAuthHeaders() };
+      await fetch(this.getApiUrl('/api/referral-agents'), { method: 'POST', headers, body: JSON.stringify(a) });
+    } catch {}
+  }
+  private async persistReferralCommission(c: ReferralCommissionEntry) {
+    try {
+      const headers: Record<string,string> = { 'Content-Type': 'application/json', ...this.getAuthHeaders() };
+      await fetch(this.getApiUrl('/api/referral-commissions'), { method: 'POST', headers, body: JSON.stringify(c) });
+    } catch {}
+  }
+
   // ── Referral Agent CRUD ──────────────────────────────────────────────────
   addReferralAgent(a: Omit<ReferralAgent,'id'|'createdAt'|'totalCommissionEarned'|'totalCommissionPaid'|'outstandingBalance'>): ReferralAgent {
     const agent: ReferralAgent = { ...a as any, id: `ra-${Date.now()}`, createdAt: new Date().toISOString().slice(0,10),
       totalCommissionEarned: 0, totalCommissionPaid: 0, outstandingBalance: 0 };
-    this.referralAgents = [agent, ...this.referralAgents]; this.notify(); this.save(); return agent;
+    this.referralAgents = [agent, ...this.referralAgents];
+    this.persistReferralAgent(agent); this.notify(); this.save(); return agent;
   }
   updateReferralAgent(id: string, updates: Partial<ReferralAgent>) {
     this.referralAgents = this.referralAgents.map(a => a.id === id ? { ...a, ...updates } : a);
+    const updated = this.referralAgents.find(a => a.id === id);
+    if (updated) this.persistReferralAgent(updated);
     this.notify(); this.save();
   }
   deleteReferralAgent(id: string) {
     this.referralAgents = this.referralAgents.filter(a => a.id !== id);
     this.referralCommissions = this.referralCommissions.filter(e => e.agentId !== id);
+    try {
+      const headers = this.getAuthHeaders();
+      fetch(this.getApiUrl(`/api/referral-agents/${id}`), { method: 'DELETE', headers });
+    } catch {}
     this.notify(); this.save();
   }
 
@@ -1440,6 +1460,7 @@ class DataStore {
     const e: ReferralCommissionEntry = { ...entry as any, id: `rc-${Date.now()}`,
       status: 'Pending', amountPaid: 0, balance: entry.commissionAmount };
     this.referralCommissions = [e, ...this.referralCommissions];
+    this.persistReferralCommission(e);
     // Update agent running totals
     this.referralAgents = this.referralAgents.map(a => a.id === e.agentId
       ? { ...a, totalCommissionEarned: a.totalCommissionEarned + e.commissionAmount, outstandingBalance: a.outstandingBalance + e.commissionAmount }
@@ -1453,8 +1474,10 @@ class DataStore {
       const newPaid = (e.amountPaid || 0) + amount;
       const newBal  = Math.max(0, e.commissionAmount - newPaid);
       paidToAgent = e.agentId;
-      return { ...e, amountPaid: newPaid, balance: newBal, paidDate: date, paymentMode: paymentMode as any,
+      const updated = { ...e, amountPaid: newPaid, balance: newBal, paidDate: date, paymentMode: paymentMode as any,
         status: newBal <= 0 ? 'Paid' : 'Partial', notes: notes || e.notes };
+      this.persistReferralCommission(updated);
+      return updated;
     });
     if (paidToAgent) {
       this.referralAgents = this.referralAgents.map(a => a.id === paidToAgent
