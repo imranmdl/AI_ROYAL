@@ -393,8 +393,8 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
   // Kadapa, Granite, Marble are always sold/stocked by the Slab — force unitType automatically
   useEffect(() => {
     const isSlabCat = ['Kadapa','Granite','Marble'].includes(productForm.category || '');
-    if (isSlabCat && productForm.unitType !== 'Slab') {
-      setProductForm(prev => ({ ...prev, unitType: 'Slab', tilesPerBox: 1 }));
+    if (isSlabCat) {
+      setProductForm(prev => ({ ...prev, unitType: 'Slab', tilesPerBox: 1, bulkCount: 1, bulkNames: [prev.name||''] }));
     }
   }, [productForm.category]);
 
@@ -1028,7 +1028,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
         />
       )}
 
-      {/* Inward Stock Modal */}
+      {/* Inward Stock Modal — disabled for Kadapa/Granite/Marble (use Provision Master Node) */}
       {showAddStock && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[500] flex items-center justify-center p-4">
            <div className="bg-white rounded-[50px] shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 border-t-8 border-amber-600">
@@ -1227,7 +1227,23 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                        </select>
                     </div>
                  </div>
-                 <button onClick={handleAddStockFromPurchase} className="w-full py-6 bg-slate-900 text-white rounded-3xl font-black text-sm uppercase tracking-widest hover:bg-slate-800 transition-all shadow-xl active:scale-95 mt-4">Initialize Inward Transmission</button>
+                 {(() => {
+                   const hasSlabItem = newPurchase.items.some(it => {
+                     const cat = store.products.find(p=>p.id===it.productId)?.category || '';
+                     return ['Kadapa','Granite','Marble'].includes(cat);
+                   });
+                   return hasSlabItem ? (
+                     <div className="px-5 py-4 bg-rose-50 border border-rose-200 rounded-2xl text-rose-700 text-xs font-bold flex items-start gap-3 mt-4">
+                       <i className="fas fa-ban mt-0.5 shrink-0"></i>
+                       <div>
+                         <div className="font-black mb-1">Kadapa / Granite / Marble items cannot be inwarded here</div>
+                         Use <strong>Provision Master Node</strong> (Create Master or Edit Product) to add slabs for these categories. Each slab is tracked individually by dimension and slab number.
+                       </div>
+                     </div>
+                   ) : (
+                     <button onClick={handleAddStockFromPurchase} className="w-full py-6 bg-slate-900 text-white rounded-3xl font-black text-sm uppercase tracking-widest hover:bg-slate-800 transition-all shadow-xl active:scale-95 mt-4">Initialize Inward Transmission</button>
+                   );
+                 })()}
               </div>
            </div>
         </div>
@@ -1273,7 +1289,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                                 />
                               </div>
                             )}
-                            {!editProduct && (
+                            {!editProduct && !(['Kadapa','Granite','Marble'].includes(productForm.category || '')) && (
                             <div className="flex items-center gap-2">
                               <span className="text-[10px] font-black text-slate-400 uppercase">Bulk Mode</span>
                               <input 
@@ -1294,7 +1310,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                           </div>
                         </div>
                         
-                        {(productForm.bulkCount || 1) > 1 ? (
+                        {(productForm.bulkCount || 1) > 1 && !(['Kadapa','Granite','Marble'].includes(productForm.category || '')) ? (
                           <div className="space-y-3 bg-slate-50 p-6 rounded-3xl border-2 border-slate-100">
                             <div className="text-[10px] font-black text-slate-400 uppercase mb-2">Bulk Product Names (Same Specs)</div>
                             {(productForm.bulkNames || []).map((name, idx) => (

@@ -77,7 +77,9 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
   const vendors = [...new Set((store.vendorOrders||[]).map(o=>o.vendorName))].filter(Boolean).sort();
 
   const canSubmit = qty > 0
-    && (mode === 'existing' ? !!selectedProductId : (canCreateNewHere && newName.trim().length > 0))
+    && (mode === 'existing'
+        ? (!!selectedProductId && !['Kadapa','Granite','Marble'].includes(selectedProduct?.category || ''))
+        : (canCreateNewHere && newName.trim().length > 0 && !['Kadapa','Granite','Marble'].includes(newCategory || '')))
     && purchaseRate >= 0;
 
   const submit = async () => {
@@ -210,14 +212,25 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
                   </div>
                 )}
                 {selectedProduct && (
-                  <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-2xl">
-                    <i className="fas fa-check-circle text-emerald-500"></i>
-                    <div className="flex-1">
-                      <div className="font-black text-sm">{selectedProduct.name}</div>
-                      <div className="text-[9px] text-slate-500 font-bold uppercase">{selectedProduct.category} · Current stock: {selectedProduct.stockBoxes} {selectedProduct.unitType}</div>
+                  ['Kadapa','Granite','Marble'].includes(selectedProduct.category || '') ? (
+                    <div className="px-4 py-3 bg-rose-50 border border-rose-100 rounded-2xl text-rose-600 text-xs font-bold flex items-start gap-3">
+                      <i className="fas fa-ban mt-0.5 shrink-0"></i>
+                      <div>
+                        <div className="font-black mb-0.5">{selectedProduct.name} is a {selectedProduct.category} (slab-based) item</div>
+                        Use <strong>Inventory → Edit Product → Provision Master Node</strong> to add slabs. Slabs are tracked individually by size and slab number.
+                        <button onClick={()=>{ setSelectedProductId(''); setSearch(''); }} className="block mt-2 text-rose-400 hover:text-rose-600 underline text-[10px]">Clear selection</button>
+                      </div>
                     </div>
-                    <button onClick={()=>{ setSelectedProductId(''); setSearch(''); }} className="text-slate-400 hover:text-rose-500"><i className="fas fa-times"></i></button>
-                  </div>
+                  ) : (
+                    <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-2xl">
+                      <i className="fas fa-check-circle text-emerald-500"></i>
+                      <div className="flex-1">
+                        <div className="font-black text-sm">{selectedProduct.name}</div>
+                        <div className="text-[9px] text-slate-500 font-bold uppercase">{selectedProduct.category} · Current stock: {selectedProduct.stockBoxes} {selectedProduct.unitType}</div>
+                      </div>
+                      <button onClick={()=>{ setSelectedProductId(''); setSearch(''); }} className="text-slate-400 hover:text-rose-500"><i className="fas fa-times"></i></button>
+                    </div>
+                  )
                 )}
                 {search && filtered.length === 0 && !selectedProductId && (
                   <div className="px-4 py-3 bg-amber-50 border border-amber-100 rounded-2xl text-amber-700 text-xs font-bold flex items-center justify-between">
