@@ -1191,7 +1191,7 @@ class DataStore {
       // actionType='Purchase' and boxes>0 — so generating slabs here covers all
       // of them. Slab numbering matches KadapaManager's own format exactly:
       // {PREFIX}-{heightFt}ft-{lengthInches}in-{N}
-      if (actionType === 'Purchase' && boxes > 0 && p.category === 'Kadapa') {
+      if (actionType === 'Purchase' && boxes > 0 && ['Kadapa','Granite','Marble'].includes(p.category || '')) {
         const sizeParts = (p.size || '').split(/x/i);
         const heightFt = parseFloat(sizeParts[0] || '0');
         const lengthFt = parseFloat(sizeParts[1] || '0');

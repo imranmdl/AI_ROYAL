@@ -390,9 +390,10 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
     }));
   };
 
-  // Kadapa is always sold/stocked by the Slab — force unitType automatically
+  // Kadapa, Granite, Marble are always sold/stocked by the Slab — force unitType automatically
   useEffect(() => {
-    if (productForm.category === 'Kadapa' && productForm.unitType !== 'Slab') {
+    const isSlabCat = ['Kadapa','Granite','Marble'].includes(productForm.category || '');
+    if (isSlabCat && productForm.unitType !== 'Slab') {
       setProductForm(prev => ({ ...prev, unitType: 'Slab', tilesPerBox: 1 }));
     }
   }, [productForm.category]);
@@ -1329,6 +1330,13 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                                 Product name is auto-generated per slab size below (e.g. <strong>{productForm.name || 'SP_KDP_5.5x1'}</strong>) — each size becomes its own inventory item.
                               </span>
                             </div>
+                          ) : (productForm.category === 'Granite' || productForm.category === 'Marble') ? (
+                            <div className="flex items-center gap-3 bg-amber-50 border border-amber-100 rounded-2xl px-5 py-4">
+                              <i className="fas fa-info-circle text-amber-400"></i>
+                              <span className="text-[10px] font-bold text-amber-600">
+                                Product name is auto-generated as <strong>GraniteName_Size</strong> (e.g. <strong>{productForm.graniteName ? `${productForm.graniteName}${productForm.size ? '_'+productForm.size : ''}` : 'StarBlack_600x900'}</strong>) — enter Granite Name and Dimensions below.
+                              </span>
+                            </div>
                           ) : (
                             <input type="text" placeholder="Full Product Name (e.g. Statutario White Glossy)" className="w-full px-6 py-4 bg-slate-100 rounded-2xl font-black outline-none border-2 border-transparent focus:border-slate-900 transition-all" value={productForm.name} onChange={e => setProductForm({...productForm, name: e.target.value})} />
                           )
@@ -1347,16 +1355,11 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                                 const size = productForm.size;
                                 let autoName = productForm.name;
                                 if (size) {
-                                  const parts = size.split(/[x×*,]/);
-                                  const h = parseFloat(parts[0]?.trim() || '0');
-                                  const isBig = h >= 5;
-                                  const prefixMap: Record<string, { normal: string; big: string }> = {
-                                    'Single Polish':     { normal: 'SP',  big: 'DSP' },
-                                    'Double Polish':     { normal: 'DP',  big: 'DDP' },
-                                    'Big Single Polish': { normal: 'DSP', big: 'DSP' },
-                                    'Big Double Polish': { normal: 'DDP', big: 'DDP' },
+                                  const PREFIX: Record<string, string> = {
+                                    'Single Polish': 'SP', 'Double Polish': 'DP',
+                                    'Big Single Polish': 'DSP', 'Big Double Polish': 'DDP',
                                   };
-                                  const px = (prefixMap[type] || { normal: 'SP', big: 'DSP' })[isBig ? 'big' : 'normal'];
+                                  const px = PREFIX[type] || 'SP';
                                   autoName = `${px}_KDP_${size}`;
                                 }
                                 setProductForm({ ...productForm, kadapaType: type, name: autoName });
@@ -1372,16 +1375,16 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                               ))}
                             </select>
                           )}
-                          {productForm.category === 'Granite' && (
+                          {(productForm.category === 'Granite' || productForm.category === 'Marble') && (
                             <input 
                               type="text" 
-                              placeholder="Granite Name (e.g. Star Black)" 
+                              placeholder={productForm.category === 'Marble' ? 'Marble Name (e.g. White Carrara)' : 'Granite Name (e.g. Star Black)'} 
                               className="w-full px-6 py-4 bg-amber-100 rounded-2xl font-black outline-none border-2 border-amber-200" 
                               value={productForm.graniteName || ''} 
                               onChange={e => setProductForm({...productForm, graniteName: e.target.value})} 
                             />
                           )}
-                          {productForm.category !== 'Kadapa' && (
+                          {productForm.category !== 'Kadapa' && productForm.category !== 'Granite' && productForm.category !== 'Marble' && (
                             <div className="relative">
                               <input 
                                   type="text" 
