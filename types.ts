@@ -70,6 +70,47 @@ export type LeadSource = 'WhatsApp' | 'Walk-in' | 'Agent Referral' | 'Phone' | '
 export type ProjectStage = 'Planning' | 'Ongoing' | 'Finishing' | 'Completed';
 export type TileCategory = 'Floor' | 'Wall' | 'Premium' | 'Budget' | 'Granite' | 'Kadapa' | 'Sanitary';
 
+/** ── Referral Agent (mestri / engineer / contractor / individual) ── */
+export type ReferralAgentType = 'Individual' | 'Engineer' | 'Contractor' | 'Mestri' | 'Interior Designer' | 'Other';
+
+export interface ReferralAgent {
+  id: string;
+  name: string;
+  mobile: string;
+  agentType: ReferralAgentType;
+  /** Default commission - either pct of post-discount sale or fixed amount */
+  defaultCommissionType: 'Percentage' | 'Fixed';
+  defaultCommissionValue: number;     // % or ₹
+  totalCommissionEarned: number;      // running lifetime total
+  totalCommissionPaid: number;
+  outstandingBalance: number;
+  notes?: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface ReferralCommissionEntry {
+  id: string;
+  agentId: string;
+  agentName: string;
+  agentMobile: string;
+  invoiceNo: string;
+  saleId: string;
+  customerName: string;
+  saleDate: string;
+  saleAmountAfterDiscount: number;     // post-discount base
+  commissionType: 'Percentage' | 'Fixed';
+  commissionValue: number;             // % or ₹ as entered
+  commissionAmount: number;            // computed ₹
+  status: 'Pending' | 'Paid' | 'Partial';
+  amountPaid: number;
+  balance: number;
+  paidDate?: string;
+  paymentMode?: 'Cash' | 'UPI' | 'Bank Transfer';
+  notes?: string;
+  whatsappSent?: boolean;
+}
+
 /** Commission agent entry linked to a customer's sale */
 export interface AgentCommission {
   id: string;
@@ -693,6 +734,12 @@ export interface Sale {
   commissionValue: number;
   commissionType: 'Fixed' | 'Percentage';
   commissionStatus: 'Accrued' | 'Paid';
+  // Referral agent commission (mestri / contractor / engineer / individual)
+  referralAgentId?: string;
+  referralAgentName?: string;
+  referralCommissionType?: 'Percentage' | 'Fixed';
+  referralCommissionValue?: number;    // % or ₹
+  referralCommissionAmount?: number;   // computed ₹
   quotationId?: string;
   appliedOfferId?: string;
   remarks?: string;

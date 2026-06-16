@@ -47,6 +47,7 @@ class DataStore {
   sales: Sale[] = []; purchases: Purchase[] = []; quotations: Quotation[] = [];
   payments: Payment[] = []; expenses: Expense[] = []; offers: Offer[] = [];
   commissionRules: CommissionRule[] = []; customers: Customer[] = []; incentiveEntries: any[] = [];
+  referralAgents: ReferralAgent[] = []; referralCommissions: ReferralCommissionEntry[] = [];
   contractorIncentives: any[] = [];
   approvalRequests: any[] = [];
   activityLogs: ActivityLog[] = []; advances: AdvanceRecord[] = []; giftInventory: any[] = []; giftIssuances: any[] = [];
@@ -195,6 +196,7 @@ class DataStore {
       this.approvalRequests = data.approvalRequests || [];
       this.activityLogs = data.activityLogs || []; this.advances = data.advances || []; this.giftInventory = data.giftInventory || []; this.giftIssuances = data.giftIssuances || [];
       this.payrollRecords = data.payrollRecords || []; this.returns = data.returns || [];
+      this.referralAgents = data.referralAgents || []; this.referralCommissions = data.referralCommissions || [];
       this.galleryLeads = data.galleryLeads || []; this.customCredits = data.customCredits || []; this.paymentReminders = data.paymentReminders || []; this.lastUpdated = data.lastUpdated || 0;
       if (data.settings) this.settings = { ...this.settings, ...data.settings };
       this.notify();
@@ -390,7 +392,7 @@ class DataStore {
     }
     const cols = ['users','products','sales','purchases','vendorOrders','quotations','payments',
       'expenses','offers','commissionRules','customers','activityLogs','advances',
-      'payrollRecords','returns','galleryLeads','loadingCharges','giftInventory','giftIssuances','incentiveEntries'];
+      'payrollRecords','returns','galleryLeads','loadingCharges','giftInventory','giftIssuances','incentiveEntries','referralAgents','referralCommissions'];
     if (data.isDelta) {
       cols.forEach(col => {
         if (!Array.isArray(data[col])) return;
@@ -430,6 +432,7 @@ class DataStore {
           customers: this.customers, activityLogs: this.activityLogs,
           galleryLeads: this.galleryLeads, returns: this.returns, offers: this.offers,
           advances: this.advances, payrollRecords: this.payrollRecords,
+          referralAgents: this.referralAgents, referralCommissions: this.referralCommissions,
           incentiveEntries: this.incentiveEntries, paymentReminders: this.paymentReminders,
           loadingCharges: this.loadingCharges, settings: cleanSettings,
           lastUpdated: this.lastUpdated }),
@@ -521,6 +524,7 @@ class DataStore {
       this.users = []; this.activityLogs = []; this.galleryLeads = [];
       this.loadingCharges = []; this.advances = []; this.payrollRecords = [];
       this.returns = []; this.offers = []; this.incentiveEntries = [];
+      this.referralAgents = []; this.referralCommissions = [];
       this.lastUpdated = 0;
       // Clear localStorage cache for previous tenant
       localStorage.removeItem('royal_erp_cache');
@@ -1413,6 +1417,65 @@ class DataStore {
     const blocked = marginPct < threshold.minMarginPct;
     const riskLevel = marginPct < 0 ? 'Red' : marginPct < threshold.warningMarginPct ? 'Yellow' : 'Green';
     return { marginPct, riskLevel, blocked, threshold };
+  }
+
+  // ── Referral Agent CRUD ──────────────────────────────────────────────────
+  addReferralAgent(a: Omit<ReferralAgent,'id'|'createdAt'|'totalCommissionEarned'|'totalCommissionPaid'|'outstandingBalance'>): ReferralAgent {
+    const agent: ReferralAgent = { ...a as any, id: `ra-${Date.now()}`, createdAt: new Date().toISOString().slice(0,10),
+      totalCommissionEarned: 0, totalCommissionPaid: 0, outstandingBalance: 0 };
+    this.referralAgents = [agent, ...this.referralAgents]; this.notify(); this.save(); return agent;
+  }
+  updateReferralAgent(id: string, updates: Partial<ReferralAgent>) {
+    this.referralAgents = this.referralAgents.map(a => a.id === id ? { ...a, ...updates } : a);
+    this.notify(); this.save();
+  }
+  deleteReferralAgent(id: string) {
+    this.referralAgents = this.referralAgents.filter(a => a.id !== id);
+    this.referralCommissions = this.referralCommissions.filter(e => e.agentId !== id);
+    this.notify(); this.save();
+  }
+
+  // ── Referral Commission Entries ───────────────────────────────────────────
+  addReferralCommission(entry: Omit<ReferralCommissionEntry,'id'|'status'|'amountPaid'|'balance'>): ReferralCommissionEntry {
+    const e: ReferralCommissionEntry = { ...entry as any, id: `rc-${Date.now()}`,
+      status: 'Pending', amountPaid: 0, balance: entry.commissionAmount };
+    this.referralCommissions = [e, ...this.referralCommissions];
+    // Update agent running totals
+    this.referralAgents = this.referralAgents.map(a => a.id === e.agentId
+      ? { ...a, totalCommissionEarned: a.totalCommissionEarned + e.commissionAmount, outstandingBalance: a.outstandingBalance + e.commissionAmount }
+      : a);
+    this.notify(); this.save(); return e;
+  }
+  payReferralCommission(entryId: string, amount: number, paymentMode: string, date: string, notes?: string) {
+    let paidToAgent = '';
+    this.referralCommissions = this.referralCommissions.map(e => {
+      if (e.id !== entryId) return e;
+      const newPaid = (e.amountPaid || 0) + amount;
+      const newBal  = Math.max(0, e.commissionAmount - newPaid);
+      paidToAgent = e.agentId;
+      return { ...e, amountPaid: newPaid, balance: newBal, paidDate: date, paymentMode: paymentMode as any,
+        status: newBal <= 0 ? 'Paid' : 'Partial', notes: notes || e.notes };
+    });
+    if (paidToAgent) {
+      this.referralAgents = this.referralAgents.map(a => a.id === paidToAgent
+        ? { ...a, totalCommissionPaid: a.totalCommissionPaid + amount, outstandingBalance: Math.max(0, a.outstandingBalance - amount) }
+        : a);
+    }
+    this.notify(); this.save();
+  }
+  /** Link a referral agent commission to an invoice at sale time */
+  linkSaleToReferralAgent(saleId: string, invoiceNo: string, customerName: string, saleDate: string,
+    saleAmountAfterDiscount: number, agentId: string, commissionType: 'Percentage' | 'Fixed', commissionValue: number) {
+    const agent = this.referralAgents.find(a => a.id === agentId);
+    if (!agent) return;
+    const commissionAmount = commissionType === 'Percentage'
+      ? parseFloat(((saleAmountAfterDiscount * commissionValue) / 100).toFixed(2))
+      : commissionValue;
+    this.addReferralCommission({
+      agentId, agentName: agent.name, agentMobile: agent.mobile,
+      invoiceNo, saleId, customerName, saleDate,
+      saleAmountAfterDiscount, commissionType, commissionValue, commissionAmount,
+    });
   }
 
   addCommissionRule(r: any) { this.commissionRules.push({ ...r, id: `rule-${Date.now()}-${Math.random().toString(36).substr(2,9)}`, createdAt: new Date().toISOString() }); this.save(); }

@@ -10,6 +10,7 @@ const Returns = lazy(() => import('./components/Returns'));
 const Quotations = lazy(() => import('./components/Quotations'));
 const Offers = lazy(() => import('./components/Offers'));
 const CommissionMaster = lazy(() => import('./components/CommissionMaster'));
+const ReferralCommissionModule = lazy(() => import('./components/ReferralCommissionModule'));
 const CreditManagement = lazy(() => import('./components/CreditManagement'));
 const Reports = lazy(() => import('./components/Reports'));
 const UserManagement = lazy(() => import('./components/UserManagement'));
@@ -290,6 +291,8 @@ const App: React.FC = () => {
               return currentUser.permissions?.canManageSales ? <Offers /> : <AccessDenied />;
             case 'commission_master':
               return currentUser.role === UserRole.ADMIN ? <CommissionMaster /> : <AccessDenied />;
+            case 'referral_commission':
+              return currentUser.role === UserRole.ADMIN ? <ReferralCommissionModule /> : <AccessDenied />;
             case 'credits': 
               return currentUser.permissions?.canViewCredits ? <CreditManagement /> : <AccessDenied />;
             case 'users': 

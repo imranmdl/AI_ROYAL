@@ -18,6 +18,9 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
   const [address, setAddress] = useState('');
   const [customerGst, setCustomerGst] = useState('');
   const [remarks, setRemarks] = useState('');
+  const [referralAgentId, setReferralAgentId]     = useState('');
+  const [refCommType, setRefCommType]             = useState<'Percentage'|'Fixed'>('Percentage');
+  const [refCommValue, setRefCommValue]           = useState(0);
   const [cart, setCart] = useState<SaleItem[]>([]);
   const [selectedProductId, setSelectedProductId] = useState('');
   const [purpose, setPurpose] = useState(''); 
@@ -360,6 +363,11 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
       loadingCharges,
       totalAmount: currentTotal, isGstIncluded, amountPaid: finalAmountPaid, balance: parseFloat((currentTotal - finalAmountPaid).toFixed(2)),
       paymentType, salesPersonId: store.currentUser?.id || 'sys', salesPersonName: store.currentUser?.name || 'Admin',
+      referralAgentId: referralAgentId || undefined,
+      referralAgentName: referralAgentId ? (store.referralAgents||[]).find(a=>a.id===referralAgentId)?.name : undefined,
+      referralCommissionType: referralAgentId ? refCommType : undefined,
+      referralCommissionValue: referralAgentId ? refCommValue : undefined,
+      referralCommissionAmount: referralAgentId ? (refCommType==='Percentage' ? +((finalAmount * refCommValue / 100).toFixed(2)) : refCommValue) : undefined,
       commissionValue, commissionType, commissionStatus: 'Accrued', remarks, customFields,
       appliedOfferId: selectedOfferId || undefined,
       status
@@ -369,6 +377,11 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
       store.updateSale(editingSaleId, saleData);
     } else {
       store.addSale(saleData);
+      // Auto-create referral commission entry if an agent was linked
+      if (referralAgentId && refCommValue > 0) {
+        const refAmt = refCommType==='Percentage' ? +((finalAmount * refCommValue / 100).toFixed(2)) : refCommValue;
+        store.linkSaleToReferralAgent(saleData.id, invoiceNo, customerName, saleDate, finalAmount, referralAgentId, refCommType, refCommValue);
+      }
     }
 
     setSelectedSale(saleData);
@@ -776,6 +789,44 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
                     <div className="grid grid-cols-2 gap-4">
                        <button onClick={() => handleGenerateInvoice('Draft')} className="py-4 bg-slate-800 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-700 transition-all">Save as Draft</button>
                        <button onClick={() => handleGenerateInvoice('Hold')} className="py-4 bg-amber-900/40 text-amber-500 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-amber-900/60 transition-all">Hold Protocol</button>
+                    </div>
+
+                    {/* ── Referral Agent Commission (optional) ── */}
+                    <div className="border border-white/10 rounded-2xl p-4 space-y-3 bg-white/3">
+                      <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <i className="fas fa-user-tag text-amber-500"></i> Referral Agent (optional)
+                      </div>
+                      <select
+                        className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white font-bold text-sm outline-none focus:border-amber-500 transition-all appearance-none"
+                        value={referralAgentId}
+                        onChange={e => {
+                          const agent = (store.referralAgents||[]).find(a=>a.id===e.target.value);
+                          setReferralAgentId(e.target.value);
+                          if (agent) { setRefCommType(agent.defaultCommissionType); setRefCommValue(agent.defaultCommissionValue); }
+                          else { setRefCommValue(0); }
+                        }}>
+                        <option value="">No referral agent for this sale</option>
+                        {(store.referralAgents||[]).filter(a=>a.isActive).map(a=>(
+                          <option key={a.id} value={a.id}>{a.name} ({a.agentType}) — Default: {a.defaultCommissionType==='Percentage'?`${a.defaultCommissionValue}%`:`₹${a.defaultCommissionValue}`}</option>
+                        ))}
+                      </select>
+                      {referralAgentId && (
+                        <div className="grid grid-cols-2 gap-3">
+                          <select className="px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-white text-xs font-bold outline-none" value={refCommType} onChange={e=>setRefCommType(e.target.value as any)}>
+                            <option value="Percentage">% of Sale</option>
+                            <option value="Fixed">Fixed ₹</option>
+                          </select>
+                          <input type="number" placeholder={refCommType==='Percentage'?'e.g. 2':'e.g. 500'}
+                            className="px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-amber-400 text-sm font-black outline-none"
+                            value={refCommValue||''} onChange={e=>setRefCommValue(+e.target.value)} />
+                        </div>
+                      )}
+                      {referralAgentId && refCommValue > 0 && (
+                        <div className="text-[10px] text-amber-400 font-black flex items-center gap-1.5">
+                          <i className="fas fa-calculator text-xs"></i>
+                          Commission: {refCommType==='Percentage' ? `${refCommValue}% of sale = ₹${Math.round(currentTotal * refCommValue / 100).toLocaleString('en-IN')}` : `₹${refCommValue} fixed`}
+                        </div>
+                      )}
                     </div>
 
                     <button onClick={() => handleGenerateInvoice('Active')} disabled={cart.length === 0} className="w-full py-6 bg-amber-600 text-white rounded-[30px] font-black text-sm uppercase tracking-widest hover:bg-amber-700 shadow-2xl transition-all active:scale-95 disabled:opacity-20">{editingSaleId ? 'Update Dispatch Protocol' : 'Finalize Dispatch Protocol'}</button>
