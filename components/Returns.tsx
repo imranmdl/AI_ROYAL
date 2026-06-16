@@ -84,12 +84,31 @@ const Returns: React.FC = () => {
 
     const itemsToReturn: ReturnItem[] = returnItems.filter(ri => ri.boxes > 0 || ri.loose > 0).map(ri => {
       const si = showReturnModal.items.find(it => it.productId === ri.productId)!;
+      const prod = store.products.find(p => p.id === ri.productId);
+      // Calculate correct refund: use the REALISED selling price (after discount + commission),
+      // not the gross invoice rate. This ensures we refund exactly what the customer paid.
+      const pl = (() => {
+        // Import calcItemPL logic inline (same formula as Reports.tsx)
+        const invoiceSubTotal = showReturnModal.subTotal || 1;
+        const invoiceDiscount = showReturnModal.discountType === 'Percentage'
+          ? invoiceSubTotal * (showReturnModal.discountValue || 0) / 100
+          : (showReturnModal.discountValue || 0);
+        const referralComm = (showReturnModal as any).referralCommissionAmount || 0;
+        const totalInvoiceReduction = invoiceDiscount + referralComm;
+        const reductionRatio = invoiceSubTotal > 0 ? totalInvoiceReduction / invoiceSubTotal : 0;
+        const grossSelling = si.amount + (si.discountAmount || 0);
+        const itemReduction = grossSelling * reductionRatio;
+        const realisedSelling = grossSelling - itemReduction;
+        const qty = (si.qtyBoxes || 0) + ((si.qtyLoose || 0) / (prod?.tilesPerBox || 1));
+        return qty > 0 ? realisedSelling / qty : si.rate;
+      })();
+      const returnQty = ri.boxes + (ri.loose / (prod?.tilesPerBox || 1));
       return {
         productId: ri.productId,
         productName: si.productName,
         qtyBoxes: ri.boxes,
         qtyLoose: ri.loose,
-        refundAmount: (ri.boxes + (ri.loose / (store.products.find(p => p.id === ri.productId)?.tilesPerBox || 1))) * si.rate
+        refundAmount: Math.round(returnQty * pl * 100) / 100
       };
     });
 

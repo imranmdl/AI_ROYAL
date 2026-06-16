@@ -44,12 +44,62 @@ function profitText(p: number) {
  */
 const SLAB_CATS = ['Granite', 'Marble', 'Kadapa'];
 
-function calcItemPL(item: any, product: any) {
+/**
+ * calcItemPL — computes per-item profit/loss with CORRECT realised price.
+ *
+ * Logic:
+ *   grossSelling   = item.amount + item-level discount (list price before any reduction)
+ *   invoiceReduction = invoice discount + referral commission (both reduce what seller receives)
+ *   reductionRatio = invoiceReduction / invoiceSubTotal   (proportional share)
+ *   itemReduction  = grossSelling × reductionRatio        (this item's share of both costs)
+ *   realisedSelling = grossSelling − itemReduction         (actual cash received for this item)
+ *   realProfit      = realisedSelling − totalLanded
+ *
+ * This also doubles as the CORRECT REFUND AMOUNT for returns (realisedSelling).
+ *
+ * @param sale  Optional invoice sale object — required for discount+commission ratio
+ */
+function calcItemPL(item: any, product: any, sale?: any) {
   const isSlab = SLAB_CATS.includes(item.productCategory || product?.category || '');
-  const netSelling = r2(item.amount || 0);
-  const discountAmt = r2(item.discountAmount || 0);
-  const grossSelling = r2(netSelling + discountAmt);
 
+  // ── Gross selling (list/MRP before any invoice deductions) ─────────────
+  const itemDiscountAmt = r2(item.discountAmount || 0);
+  const grossSelling    = r2((item.amount || 0) + itemDiscountAmt);
+
+  // ── Invoice-level reduction ratio ─────────────────────────────────────
+  // Both discount AND referral commission reduce the seller's realised revenue.
+  // We apportion these proportionally to each item based on its share of the subTotal.
+  let discountAmt     = itemDiscountAmt;   // item-level discount
+  let commissionAmt   = 0;                 // referral commission apportioned to this item
+  let reductionRatio  = 0;                 // total reduction / invoice subTotal
+
+  if (sale) {
+    const invoiceSubTotal = sale.subTotal || 1;  // sum of all item amounts before invoice discount
+    const itemFraction    = grossSelling / invoiceSubTotal;
+
+    // Invoice-level discount (Fixed or %)
+    const invoiceDiscount = sale.discountType === 'Percentage'
+      ? r2(invoiceSubTotal * (sale.discountValue || 0) / 100)
+      : r2(sale.discountValue || 0);
+
+    // Referral commission (already computed at billing and stored on sale)
+    const referralComm = r2((sale as any).referralCommissionAmount || 0);
+
+    // Total invoice reduction = discount + referral commission
+    const totalInvoiceReduction = invoiceDiscount + referralComm;
+    reductionRatio = invoiceSubTotal > 0 ? totalInvoiceReduction / invoiceSubTotal : 0;
+
+    // This item's proportional share of the invoice discount + commission
+    discountAmt   = r2(invoiceDiscount * itemFraction + itemDiscountAmt);
+    commissionAmt = r2(referralComm   * itemFraction);
+  }
+
+  // Realised selling = what was actually received for this item
+  const totalReduction   = discountAmt + commissionAmt;
+  const realisedSelling  = r2(grossSelling - totalReduction);
+  const reductionPct     = grossSelling > 0 ? r2((totalReduction / grossSelling) * 100) : 0;
+
+  // ── Landed cost ─────────────────────────────────────────────────────────
   let totalLanded: number;
   let landedPerUnit: number;
   let qty: number;
@@ -58,10 +108,6 @@ function calcItemPL(item: any, product: any) {
   let otherCharges: number;
 
   if (isSlab) {
-    // ── SLAB ITEM ──────────────────────────────────────────────────────
-    // item.sqft = total sqft of this line
-    // item.costRate = landed cost per sqft (totalCostPerUnit from product)
-    // If individual slab landed costs are stored, sum them for accuracy
     const slabIds: string[] = item.selectedSlabIds || [];
     let slabLandedSum = 0;
     if (slabIds.length > 0 && product?.slabs) {
@@ -70,53 +116,45 @@ function calcItemPL(item: any, product: any) {
         if (s) slabLandedSum += (s.landedCost || 0);
       });
     }
-
     const sqft = item.sqft || 0;
-    // costRate on slab sale item = totalCostPerUnit = landed/sqft
     const landedPerSqft = item.costRate > 0 ? item.costRate : product?.totalCostPerUnit || product?.costPerSqft || 0;
-
-    if (slabLandedSum > 0) {
-      totalLanded = r2(slabLandedSum);
-    } else if (sqft > 0 && landedPerSqft > 0) {
-      totalLanded = r2(sqft * landedPerSqft);
-    } else {
-      // Fallback: use purchasePrice (avg landed per slab) × number of slabs
-      totalLanded = r2((product?.purchasePrice || 0) * Math.max(item.qtyBoxes || 1, 1));
-    }
-
+    if (slabLandedSum > 0) { totalLanded = r2(slabLandedSum); }
+    else if (sqft > 0 && landedPerSqft > 0) { totalLanded = r2(sqft * landedPerSqft); }
+    else { totalLanded = r2((product?.purchasePrice || 0) * Math.max(item.qtyBoxes || 1, 1)); }
     landedPerUnit = sqft > 0 ? r2(totalLanded / sqft) : landedPerSqft;
     qty           = sqft || item.qtyBoxes || 1;
     purchaseRate  = product?.costPerSqft || product?.purchasePrice || landedPerSqft;
     transportCost = product?.transportCost || 0;
     if (product?.transportCostType === 'Percentage') transportCost = r2(purchaseRate * transportCost / 100);
     otherCharges  = product?.otherCharges || 0;
-
   } else {
-    // ── TILE / BOX ITEM ────────────────────────────────────────────────
     const tilesPerBox = product?.tilesPerBox || 1;
     qty = r2((item.qtyBoxes || 0) + ((item.qtyLoose || 0) / tilesPerBox));
     const qtyEff = qty || 1;
-
     purchaseRate = product?.purchasePrice || 0;
     transportCost = product?.transportCost || 0;
     if (product?.transportCostType === 'Percentage') transportCost = r2(purchaseRate * transportCost / 100);
     otherCharges = product?.otherCharges || 0;
-
-    // costRate at sale time is most accurate (captured when sale was made)
-    landedPerUnit = r2(item.costRate > 0
-      ? item.costRate
-      : product?.totalCostPerUnit || (purchaseRate + transportCost + otherCharges));
+    landedPerUnit = r2(item.costRate > 0 ? item.costRate : product?.totalCostPerUnit || (purchaseRate + transportCost + otherCharges));
     totalLanded = r2(landedPerUnit * qtyEff);
   }
 
-  const profit    = r2(netSelling - totalLanded);
+  // ── Real profit = realised (after discount + comm) minus landed cost ────
+  const profit    = r2(realisedSelling - totalLanded);
   const profitPct = totalLanded > 0 ? r2((profit / totalLanded) * 100) : 0;
+
+  // ── Correct refund amount for returns (what customer actually paid) ────
+  const correctRefundPerUnit = qty > 0 ? r2(realisedSelling / qty) : 0;
 
   return {
     qty, isSlab,
     landedPerUnit, totalLanded,
-    grossSelling, discountAmt, netSelling,
+    grossSelling, discountAmt, commissionAmt,
+    reductionRatio, reductionPct, totalReduction,
+    realisedSelling,          // ← this is the CORRECT realised selling price
+    netSelling: realisedSelling,  // kept for backward compat
     profit, profitPct,
+    correctRefundPerUnit,     // use this for return refund calculations
     purchaseRate, transportCost, otherCharges,
   };
 }
@@ -176,7 +214,7 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
         const prod = store.products.find(p => p.id === item.productId);
         if (filterCat !== 'All' && prod?.category !== filterCat) return;
         if (search && !item.productName.toLowerCase().includes(search.toLowerCase()) && !sale.invoiceNo.toLowerCase().includes(search.toLowerCase())) return;
-        rows.push({ ...calcItemPL(item, prod), item, prod, sale });
+        rows.push({ ...calcItemPL(item, prod, sale), item, prod, sale });
       });
     });
     return rows.sort((a, b) => new Date(b.sale.date).getTime() - new Date(a.sale.date).getTime());
@@ -188,7 +226,7 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
     const itemDetails: any[] = [];
     sale.items.forEach((item: any) => {
       const prod = store.products.find(p => p.id === item.productId);
-      const pl = calcItemPL(item, prod);
+      const pl = calcItemPL(item, prod, sale);
       totalLanded += pl.totalLanded; totalNet += pl.netSelling; totalDiscount += pl.discountAmt;
       itemDetails.push({ ...pl, item, prod });
     });
@@ -292,7 +330,7 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
         filteredSales.forEach(s => {
           s.items.filter((i: any) => ids.includes(i.productId)).forEach((item: any) => {
             const prod = store.products.find(p => p.id === item.productId);
-            const pl = calcItemPL(item, prod);
+            const pl = calcItemPL(item, prod, sale);
             salesValue += pl.netSelling; salesCost += pl.totalLanded;
           });
         });
@@ -329,7 +367,7 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
     filteredSales.forEach(s => {
       s.items.forEach((item: any) => {
         const prod = store.products.find(p => p.id === item.productId);
-        const pl = calcItemPL(item, prod);
+        const pl = calcItemPL(item, prod, sale);
         rev += pl.netSelling; cost += pl.totalLanded;
         if (!prodPL.has(item.productId)) prodPL.set(item.productId, { name: item.productName, cat: prod?.category || '', revenue: 0, cost: 0, profit: 0 });
         const pp = prodPL.get(item.productId);
@@ -574,21 +612,21 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
                           {(r.isSlab ? [
                             { l: 'Landed/SqFt',   v: curr(r.landedPerUnit), cls: 'bg-amber-50 text-amber-700' },
                             { l: 'Total SqFt',    v: `${r.qty.toFixed(2)} sqft`, cls: 'bg-indigo-50 text-indigo-700' },
-                            { l: 'Total Landed',  v: curr(r.totalLanded),  cls: 'bg-emerald-50 text-emerald-700' },
+                            { l: 'Total Landed',  v: curr(r.totalLanded),  cls: 'bg-amber-50 text-amber-700' },
                             { l: 'Gross Selling', v: curr(r.grossSelling), cls: 'bg-slate-100 text-slate-700' },
-                            { l: 'Discount',      v: curr(r.discountAmt),  cls: 'bg-rose-50 text-rose-700' },
-                            { l: 'Net Selling',   v: curr(r.netSelling),   cls: 'bg-blue-50 text-blue-700' },
+                            { l: `Disc+Comm (${r.reductionPct||0}%)`, v: `−${curr(r.totalReduction||0)}`, cls: 'bg-rose-50 text-rose-700' },
+                            { l: 'Realised Price', v: curr(r.realisedSelling), cls: 'bg-blue-50 text-blue-700' },
                             { l: 'Profit/SqFt',   v: curr(r.qty > 0 ? r2(r.profit / r.qty) : 0), cls: r.profit >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700' },
-                            { l: 'Final Profit',  v: `${curr(r.profit)} (${pct(r.profitPct)})`, cls: r.profit >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700' },
+                            { l: 'Real Profit',   v: `${curr(r.profit)} (${pct(r.profitPct)})`, cls: r.profit >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700' },
                           ] : [
                             { l: 'Purchase Rate', v: curr(r.purchaseRate),  cls: 'bg-slate-100 text-slate-700' },
                             { l: 'Transport',     v: curr(r.transportCost), cls: 'bg-indigo-50 text-indigo-700' },
-                            { l: 'Other Charges', v: curr(r.otherCharges),  cls: 'bg-slate-100 text-slate-700' },
                             { l: 'Landed/Box',    v: curr(r.landedPerUnit), cls: 'bg-amber-50 text-amber-700' },
                             { l: 'Gross Selling', v: curr(r.grossSelling),  cls: 'bg-slate-100 text-slate-700' },
-                            { l: 'Discount',      v: curr(r.discountAmt),   cls: 'bg-rose-50 text-rose-700' },
-                            { l: 'Net Selling',   v: curr(r.netSelling),    cls: 'bg-blue-50 text-blue-700' },
-                            { l: 'Final Profit',  v: `${curr(r.profit)} (${pct(r.profitPct)})`, cls: r.profit >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700' },
+                            { l: `Disc+Comm (${r.reductionPct||0}%)`, v: `−${curr(r.totalReduction||0)}`, cls: 'bg-rose-50 text-rose-700' },
+                            { l: 'Realised Price', v: curr(r.realisedSelling), cls: 'bg-blue-50 text-blue-700' },
+                            { l: 'Refund/Unit',   v: curr(r.correctRefundPerUnit), cls: 'bg-purple-50 text-purple-700' },
+                            { l: 'Real Profit',   v: `${curr(r.profit)} (${pct(r.profitPct)})`, cls: r.profit >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700' },
                           ]).map(({ l, v, cls }) => (
                             <div key={l} className={`${cls} rounded-xl px-3 py-2`}>
                               <div className="text-[7px] font-black uppercase opacity-60 mb-0.5">{l}</div>
