@@ -38,6 +38,7 @@ interface Props {
 const GraniteManager: React.FC<Props> = ({ existingSlabs, onAdd, onRemove, initialCostConfig }) => {
 
   // ── Step 1: Cost config ────────────────────────────────────────────────────
+  const [showExtraCharges, setShowExtraCharges] = useState(false);
   const [cost, setCost] = useState<CostConfig>({
     purchaseRatePerSqft:  initialCostConfig?.purchaseRatePerSqft  || 0,
     transportPct:         initialCostConfig?.transportPct         || 0,
