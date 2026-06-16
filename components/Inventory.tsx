@@ -421,9 +421,13 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
   }, [productForm.category, productForm.kadapaType, productForm.size]);
 
   // Auto-generate Granite name
+  // Auto-generate Granite/Marble name — format: StarBlack_600x900
+  // Works even before size is set from GraniteManager slabs.
   useEffect(() => {
-    if (productForm.category === 'Granite' && productForm.graniteName && productForm.size) {
-      const generatedName = `${productForm.graniteName}_${productForm.size}`;
+    if ((productForm.category === 'Granite' || productForm.category === 'Marble') && productForm.graniteName) {
+      const parts = [productForm.graniteName.trim().replace(/\s+/g, '_')];
+      if (productForm.size) parts.push(productForm.size);
+      const generatedName = parts.join('_');
       if (productForm.name !== generatedName) {
         setProductForm(prev => ({ ...prev, name: generatedName }));
       }
@@ -600,7 +604,9 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
 
     namesToCreate.forEach((name, idx) => {
       const finalProductData = { 
-        ...productForm, 
+        ...productForm,
+        // Persist graniteName so inventory list can show it and onEdit can restore it
+        graniteName: productForm.graniteName || undefined, 
         name, 
         totalCostPerUnit: calculatedLandedCost 
       } as Product;

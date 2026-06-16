@@ -157,17 +157,36 @@ const GraniteManager: React.FC<Props> = ({ existingSlabs, onAdd, onRemove, initi
               <div className="text-[8px] text-indigo-400 font-bold mt-1 ml-1">= ₹{r2(cost.purchaseRatePerSqft * cost.transportPct / 100)}/SqFt</div>
             )}
           </div>
-          <div>
-            <label className={`${lbl} text-slate-500`}>Unloading / SqFt (₹)</label>
-            <input type="number" className={`${darkInp} text-teal-400`} placeholder="0"
-              value={cost.unloadingPerSqft || ''} onChange={e => setC('unloadingPerSqft', parseFloat(e.target.value || '0'))} />
-          </div>
-          <div>
-            <label className={`${lbl} text-slate-500`}>Other Charges / SqFt (₹)</label>
-            <input type="number" className={`${darkInp} text-slate-300`} placeholder="0"
-              value={cost.otherChargesPerSqft || ''} onChange={e => setC('otherChargesPerSqft', parseFloat(e.target.value || '0'))} />
-          </div>
         </div>
+
+        {/* ── Extra charges — collapsible to reduce visual noise ── */}
+        <button
+          type="button"
+          onClick={() => setShowExtraCharges(s => !s)}
+          className="flex items-center gap-2 text-[9px] font-black text-slate-400 uppercase tracking-widest hover:text-slate-300 transition-colors">
+          <i className={`fas fa-chevron-${showExtraCharges ? 'up' : 'down'} text-[8px]`}></i>
+          {showExtraCharges ? 'Hide extra charges' : '+ Add Unloading / Other Charges (optional)'}
+          {(cost.unloadingPerSqft > 0 || cost.otherChargesPerSqft > 0) && (
+            <span className="bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded-full text-[8px]">
+              ₹{(cost.unloadingPerSqft + cost.otherChargesPerSqft).toFixed(0)}/SqFt applied
+            </span>
+          )}
+        </button>
+
+        {showExtraCharges && (
+          <div className="grid grid-cols-2 gap-3 border border-slate-700 rounded-2xl p-3">
+            <div>
+              <label className={`${lbl} text-slate-500`}>Unloading / SqFt (₹)</label>
+              <input type="number" className={`${darkInp} text-teal-400`} placeholder="0"
+                value={cost.unloadingPerSqft || ''} onChange={e => setC('unloadingPerSqft', parseFloat(e.target.value || '0'))} />
+            </div>
+            <div>
+              <label className={`${lbl} text-slate-500`}>Other Charges / SqFt (₹)</label>
+              <input type="number" className={`${darkInp} text-slate-300`} placeholder="0"
+                value={cost.otherChargesPerSqft || ''} onChange={e => setC('otherChargesPerSqft', parseFloat(e.target.value || '0'))} />
+            </div>
+          </div>
+        )}
 
         {/* Breakdown strip */}
         {landedPerSqft > 0 && (
