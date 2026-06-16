@@ -71,12 +71,15 @@ const Dashboard: React.FC = () => {
 
     const grossProfit = totalRevenue - totalCogs;
     const totalExpenses = isExecutive ? 0 : store.expenses.reduce((sum, e) => sum + e.amount, 0);
-    const netProfit = grossProfit - totalCommission - totalExpenses;
+    // Referral commission is a cost that reduces net profit
+    const totalReferralCommission = (store.referralCommissions || []).reduce((s, c) => s + (c.commissionAmount || 0), 0);
+    const netProfit = grossProfit - totalCommission - totalExpenses - totalReferralCommission;
 
     return { 
       grossProfit, totalCommission, accruedCommission, paidCommission,
       totalExpenses, netProfit, totalRevenue, monthlyRevenue, todayRevenue,
-      totalCogs, totalOverdue, marginPercent: totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
+      totalCogs, totalOverdue, totalReferralCommission,
+      marginPercent: totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
     };
   }, [store.sales, store.expenses, store.products, isExecutive, currentUser]);
 
@@ -225,7 +228,7 @@ const Dashboard: React.FC = () => {
         <Widget title="Low Stock" value={supplyChainMetrics.lowStockItems.toString()} sub="Inventory Alerts" icon="fa-exclamation-triangle" color="bg-rose-500" />
         <Widget title="Gross Margin %" value={`${financialMetrics.marginPercent.toFixed(1)}%`} sub="Profitability Ratio" icon="fa-chart-line" color="bg-indigo-600" />
         {store.settings.dashboardVisibility.showNetProfit && (
-          <Widget title="Net Profit (Est)" value={formatCurrency(financialMetrics.netProfit)} sub="After Comm. & OpEx" icon="fa-vault" color="bg-emerald-600" />
+          <Widget title="Net Profit (Est)" value={formatCurrency(financialMetrics.netProfit)} sub={`After Staff Comm. ₹${Math.round(financialMetrics.totalCommission).toLocaleString('en-IN')} + Referral ₹${Math.round(financialMetrics.totalReferralCommission||0).toLocaleString('en-IN')} + OpEx`} icon="fa-vault" color="bg-emerald-600" />
         )}
       </div>
 

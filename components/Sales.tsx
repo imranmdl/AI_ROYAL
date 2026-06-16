@@ -18,6 +18,7 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
   const [address, setAddress] = useState('');
   const [customerGst, setCustomerGst] = useState('');
   const [remarks, setRemarks] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const [referralAgentId, setReferralAgentId]     = useState('');
   const [refCommType, setRefCommType]             = useState<'Percentage'|'Fixed'>('Percentage');
   const [refCommValue, setRefCommValue]           = useState(0);
@@ -351,42 +352,63 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
   };
 
   const handleGenerateInvoice = (status: Sale['status'] = 'Active') => {
-    if (cart.length === 0) return;
-    const finalAmountPaid = isFullPayment ? currentTotal : amountPaid;
-    const saleData: Sale = {
-      id: editingSaleId || Date.now().toString(),
-      invoiceNo: editingSaleId ? store.sales.find(s => s.id === editingSaleId)?.invoiceNo || '' : `RT-${Math.floor(1000 + Math.random() * 9000)}`,
-      customerName: customer || 'Walk-in',
-      customerMobile: mobile, customerAddress: address, customerGst, date: new Date().toLocaleDateString(),
-      items: cart, subTotal: currentSubTotal, discountValue, discountType,
-      gstPercent: gstPercent, gstAmount: currentGst, 
-      loadingCharges,
-      totalAmount: currentTotal, isGstIncluded, amountPaid: finalAmountPaid, balance: parseFloat((currentTotal - finalAmountPaid).toFixed(2)),
-      paymentType, salesPersonId: store.currentUser?.id || 'sys', salesPersonName: store.currentUser?.name || 'Admin',
-      referralAgentId: referralAgentId || undefined,
-      referralAgentName: referralAgentId ? (store.referralAgents||[]).find(a=>a.id===referralAgentId)?.name : undefined,
-      referralCommissionType: referralAgentId ? refCommType : undefined,
-      referralCommissionValue: referralAgentId ? refCommValue : undefined,
-      referralCommissionAmount: referralAgentId ? (refCommType==='Percentage' ? +((finalAmount * refCommValue / 100).toFixed(2)) : refCommValue) : undefined,
-      commissionValue, commissionType, commissionStatus: 'Accrued', remarks, customFields,
-      appliedOfferId: selectedOfferId || undefined,
-      status
-    };
+    if (cart.length === 0 || isSaving) return;   // ← prevent double-submit
+    setIsSaving(true);
+    try {
+      const finalAmountPaid = isFullPayment ? currentTotal : amountPaid;
+      const genInvoiceNo = editingSaleId
+        ? (store.sales.find(s => s.id === editingSaleId)?.invoiceNo || `RT-${Math.floor(1000 + Math.random() * 9000)}`)
+        : `RT-${Math.floor(1000 + Math.random() * 9000)}`;
+      const saleDate = new Date().toLocaleDateString();
 
-    if (editingSaleId) {
-      store.updateSale(editingSaleId, saleData);
-    } else {
-      store.addSale(saleData);
-      // Auto-create referral commission entry if an agent was linked
-      if (referralAgentId && refCommValue > 0) {
-        const refAmt = refCommType==='Percentage' ? +((finalAmount * refCommValue / 100).toFixed(2)) : refCommValue;
-        store.linkSaleToReferralAgent(saleData.id, invoiceNo, customerName, saleDate, finalAmount, referralAgentId, refCommType, refCommValue);
+      // Referral commission amount (computed here once with correct total)
+      const refCommissionAmt = referralAgentId && refCommValue > 0
+        ? (refCommType === 'Percentage' ? +((currentTotal * refCommValue / 100).toFixed(2)) : refCommValue)
+        : undefined;
+
+      const saleData: Sale = {
+        id: editingSaleId || Date.now().toString(),
+        invoiceNo: genInvoiceNo,
+        customerName: customer || 'Walk-in',
+        customerMobile: mobile, customerAddress: address, customerGst, date: saleDate,
+        items: cart, subTotal: currentSubTotal, discountValue, discountType,
+        gstPercent: gstPercent, gstAmount: currentGst,
+        loadingCharges,
+        totalAmount: currentTotal, isGstIncluded, amountPaid: finalAmountPaid, balance: parseFloat((currentTotal - finalAmountPaid).toFixed(2)),
+        paymentType, salesPersonId: store.currentUser?.id || 'sys', salesPersonName: store.currentUser?.name || 'Admin',
+        referralAgentId: referralAgentId || undefined,
+        referralAgentName: referralAgentId ? (store.referralAgents||[]).find(a=>a.id===referralAgentId)?.name : undefined,
+        referralCommissionType: referralAgentId ? refCommType : undefined,
+        referralCommissionValue: referralAgentId ? refCommValue : undefined,
+        referralCommissionAmount: refCommissionAmt,
+        commissionValue, commissionType, commissionStatus: 'Accrued', remarks, customFields,
+        appliedOfferId: selectedOfferId || undefined,
+        status
+      };
+
+      if (editingSaleId) {
+        store.updateSale(editingSaleId, saleData);
+      } else {
+        store.addSale(saleData);
+        // Auto-create referral commission tracking entry
+        if (referralAgentId && refCommValue > 0 && refCommissionAmt) {
+          store.linkSaleToReferralAgent(
+            saleData.id, genInvoiceNo, saleData.customerName, saleDate,
+            currentTotal, referralAgentId, refCommType, refCommValue
+          );
+        }
       }
-    }
 
-    setSelectedSale(saleData);
-    setCart([]); setCustomer(''); setMobile(''); setAmountPaid(0); setIsFullPayment(true); setEditingSaleId(null); setViewMode('preview');
-    onInvoiceCreated?.();
+      setSelectedSale(saleData);
+      // Reset cart + form fields and ALWAYS route to invoice preview
+      setCart([]); setCustomer(''); setMobile(''); setAddress(''); setAmountPaid(0);
+      setIsFullPayment(true); setEditingSaleId(null);
+      setReferralAgentId(''); setRefCommValue(0);
+      setViewMode('preview');   // ← always navigate to PDF/preview immediately
+      onInvoiceCreated?.();
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const [serverSales, setServerSales] = useState<Sale[]>([]);
@@ -829,7 +851,9 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
                       )}
                     </div>
 
-                    <button onClick={() => handleGenerateInvoice('Active')} disabled={cart.length === 0} className="w-full py-6 bg-amber-600 text-white rounded-[30px] font-black text-sm uppercase tracking-widest hover:bg-amber-700 shadow-2xl transition-all active:scale-95 disabled:opacity-20">{editingSaleId ? 'Update Dispatch Protocol' : 'Finalize Dispatch Protocol'}</button>
+                    <button onClick={() => handleGenerateInvoice('Active')} disabled={cart.length === 0 || isSaving} className="w-full py-6 bg-amber-600 text-white rounded-[30px] font-black text-sm uppercase tracking-widest hover:bg-amber-700 shadow-2xl transition-all active:scale-95 disabled:opacity-20 flex items-center justify-center gap-3">
+                       {isSaving ? <><i className="fas fa-spinner fa-spin"></i> Processing…</> : (editingSaleId ? 'Update Dispatch Protocol' : 'Finalize Dispatch Protocol')}
+                    </button>
                  </div>
               </div>
            </div>

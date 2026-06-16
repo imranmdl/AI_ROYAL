@@ -194,9 +194,11 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
     });
     const returnVal = r2(store.returns.filter(r => r.saleId === sale.id).reduce((s, r) => s + (r.totalRefundAmount || 0), 0));
     const netRevenue = r2(totalNet - returnVal);
-    const profit = r2(netRevenue - totalLanded);
+    // Subtract referral commission cost from this invoice's profit
+    const referralComm = (sale as any).referralCommissionAmount || 0;
+    const profit = r2(netRevenue - totalLanded - referralComm);
     const profitPct = totalLanded > 0 ? r2((profit / totalLanded) * 100) : 0;
-    return { sale, totalLanded: r2(totalLanded), totalNet: netRevenue, totalDiscount: r2(totalDiscount), returnVal, profit, profitPct, itemDetails };
+    return { sale, totalLanded: r2(totalLanded), totalNet: netRevenue, totalDiscount: r2(totalDiscount), returnVal, referralComm, profit, profitPct, itemDetails };
   }).sort((a, b) => new Date(b.sale.date).getTime() - new Date(a.sale.date).getTime()), [filteredSales]);
 
   // ── Quotation P&L ──────────────────────────────────────────────────────
@@ -622,7 +624,7 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
           <Tbl>
             <thead><tr>
               <Th c="" /><Th c="Invoice" /><Th c="Date" /><Th c="Customer" />
-              <Th c="Total Cost" right /><Th c="Net Revenue" right /><Th c="Returns" right /><Th c="Profit ₹" right /><Th c="Profit %" right /><Th c="Balance" right />
+              <Th c="Total Cost" right /><Th c="Net Revenue" right /><Th c="Returns" right /><Th c="Ref. Comm" right /><Th c="Profit ₹" right /><Th c="Profit %" right /><Th c="Balance" right />
             </tr></thead>
             <tbody>
               {invoicewiseRows.map(r => {
@@ -637,12 +639,21 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
                       <Td right>{curr(r.totalLanded)}</Td>
                       <Td right bold>{curr(r.totalNet)}</Td>
                       <Td right color="text-rose-500">{r.returnVal > 0 ? `-${curr(r.returnVal)}` : '—'}</Td>
+                      <Td right color={r.referralComm > 0 ? 'text-amber-600' : 'text-slate-300'}>{r.referralComm > 0 ? `-${curr(r.referralComm)}` : '—'}</Td>
                       <Td right bold color={r.profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{curr(r.profit)}</Td>
                       <Td right><PBadge p={r.profitPct} /></Td>
                       <Td right color={r.sale.balance > 0 ? 'text-amber-600' : 'text-emerald-600'}>{curr(r.sale.balance)}</Td>
                     </tr>
                     {expanded.has(id) && (
-                      <tr><td colSpan={10} className="px-8 py-3 bg-slate-50/80 border-t border-slate-100">
+                      <tr><td colSpan={11} className="px-8 py-3 bg-slate-50/80 border-t border-slate-100">
+                        {r.referralComm > 0 && (
+                          <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-amber-50 border border-amber-100 rounded-xl text-amber-700 text-xs font-bold">
+                            <i className="fas fa-user-tag text-xs"></i>
+                            Referral Commission: <strong>{curr(r.referralComm)}</strong>
+                            {(r.sale as any).referralAgentName && <span className="text-amber-500">({(r.sale as any).referralAgentName})</span>}
+                            {(r.sale as any).referralCommissionType === 'Percentage' && <span className="text-amber-500">— {(r.sale as any).referralCommissionValue}% of sale</span>}
+                          </div>
+                        )}
                         <div className="text-[8px] font-black text-slate-500 uppercase mb-2">Item Breakdown</div>
                         <div className="space-y-1.5">
                           {r.itemDetails.map((d: any, j: number) => (
