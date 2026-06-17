@@ -10,6 +10,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { store } from '../store';
 import QuickAddInward from './QuickAddInward';
+import SlabInwardModal from './SlabInwardModal';
 import type { VendorOrder, VendorOrderItem, VendorTransport, VendorInvoice } from '../types';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -402,6 +403,7 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
   const [damagedItems,  setDamagedItems]  = useState(order?.damagedItems || []);
   const [productSearch, setProductSearch] = useState('');
   const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [showSlabInward, setShowSlabInward] = useState(false);
 
   // ── Computed totals ───────────────────────────────────────────────────────
   const t = calcTransport(transport);
@@ -689,19 +691,53 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
                 )}
               </div>
             )}
-            <button onClick={()=>setShowQuickAdd(true)}
-              className="w-full py-2.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl font-black text-[10px] uppercase hover:bg-emerald-500/20 transition-all flex items-center justify-center gap-2">
-              <i className="fas fa-plus"></i> Create New Item &amp; Inward Directly
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={()=>setShowSlabInward(true)}
+                className="py-2.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl font-black text-[10px] uppercase hover:bg-amber-500/20 transition-all flex items-center justify-center gap-2">
+                <i className="fas fa-layer-group text-xs"></i> Kadapa / Granite / Marble Slab
+              </button>
+              <button onClick={()=>setShowQuickAdd(true)}
+                className="py-2.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl font-black text-[10px] uppercase hover:bg-emerald-500/20 transition-all flex items-center justify-center gap-2">
+                <i className="fas fa-plus text-xs"></i> Create Tile / Box Item
+              </button>
+            </div>
           </div>
 
-          {/* Quick Add & Inward modal — creates product + records this vendor's inward in one step */}
+          {/* Quick Add & Inward modal — for tile/box items */}
           {showQuickAdd && (
             <QuickAddInward
               source="vendor"
               onClose={()=>setShowQuickAdd(false)}
               defaultVendorName={vendorName}
               onDone={(p)=>{ addItem(p); }}
+            />
+          )}
+
+          {/* Slab Inward Modal — dedicated for Kadapa / Granite / Marble */}
+          {showSlabInward && (
+            <SlabInwardModal
+              defaultVendorName={vendorName}
+              onClose={()=>setShowSlabInward(false)}
+              onDone={(product, slabCount, sqftPerSlab, costPerSqft, sellingPerSqft) => {
+                // Add as a line item in this vendor order
+                const actualAmount = slabCount * costPerSqft * sqftPerSlab;
+                setItems(prev => [...prev, {
+                  id: itemUid(),
+                  productId: product.id, productName: product.name,
+                  category: product.category || '', unit: 'Slab',
+                  orderedQty: slabCount,
+                  billedQty: slabCount, billedRate: costPerSqft, billedAmount: actualAmount,
+                  actualQty: slabCount, actualRate: costPerSqft, actualAmount,
+                  receivedQty: slabCount, damagedQty: 0, goodQty: slabCount,
+                  transportShare: 0, laborShare: 0,
+                  landedCostPerUnit: costPerSqft,
+                  sellingPrice: sellingPerSqft,
+                  marginPct: sellingPerSqft > costPerSqft
+                    ? Math.round(((sellingPerSqft - costPerSqft) / sellingPerSqft) * 10000) / 100
+                    : 0,
+                }]);
+                setShowSlabInward(false);
+              }}
             />
           )}
 
