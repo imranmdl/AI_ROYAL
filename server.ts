@@ -2622,6 +2622,11 @@ app.post('/api/sync', async (req: Request, res: Response) => {
             const transport = costPerSqft * (transportPct / 100);
             purchasePrice = parseFloat((costPerSqft + transport).toFixed(2));
           }
+          // Marble gets same treatment as Granite
+          if (!isGranite && !isKadapa && category === 'Marble' && costPerSqft > 0 && purchasePrice === 0) {
+            const transport = costPerSqft * (transportPct / 100);
+            purchasePrice = parseFloat((costPerSqft + transport).toFixed(2));
+          }
           if (isKadapa && costPerSqft > 0 && purchasePrice === 0) {
             purchasePrice = slabSqft > 0
               ? parseFloat((slabSqft * costPerSqft).toFixed(2))  // landed per slab = sqft × rate/sqft
@@ -2629,37 +2634,67 @@ app.post('/api/sync', async (req: Request, res: Response) => {
           }
           const effectiveStock = (isGranite || isKadapa) ? stockSlabs : stockBoxes;
 
-          // ── Auto-generate slabs[] for Kadapa ─────────────────────────────────
-          // Each slab gets its own Slab object — same structure as KadapaManager.handleAdd()
-          // This ensures KadapaManager, Quotation, and P&L all see the correct data.
+          // ── Auto-generate slabs[] for Kadapa / Granite / Marble ──────────────
+          // Slab number format matches KadapaManager EXACTLY:
+          //   {PREFIX}-{heightFt}ft-{lengthInches}in-{N}
+          // e.g. SP-6.5ft-12in-1, DP-7ft-15in-3, GR-6ft-24in-2
+          // On update of an existing product, new slabs are APPENDED (not overwritten).
           let generatedSlabs: any[] = [];
-          if (isKadapa && slabSqft > 0 && effectiveStock > 0) {
-            const landedPerSlab  = Math.round(slabSqft * costPerSqft * 100) / 100;
-            const sellPerSqft    = sellingPerSqft || 0;
-            const sellingPerSlab = Math.round(slabSqft * sellPerSqft * 100) / 100;
+          const isSlabCategory = isKadapa || isGranite || (category === 'Marble');
 
-            // Prefix logic: same as KadapaManager FINISH_PREFIX
-            const prefixMap: Record<string, { normal: string; big: string }> = {
-              'Single Polish':     { normal: 'SP',  big: 'DSP' },
-              'Double Polish':     { normal: 'DP',  big: 'DDP' },
-              'Big Single Polish': { normal: 'DSP', big: 'DSP' },
-              'Big Double Polish': { normal: 'DDP', big: 'DDP' },
+          // HEIGHT+WIDTH source: Kadapa has explicit columns; Granite uses same columns
+          const slabHeightFt = kadapaHeightFt || parseFloat(row['Height (Ft)'] || row['Slab Height'] || '0') || 0;
+          const slabWidthFt  = kadapaWidthFt  || parseFloat(row['Width (Ft)']  || row['Slab Width']  || '0') || 0;
+          const resolvedSqft = slabSqft || (slabHeightFt && slabWidthFt
+            ? Math.round(slabHeightFt * slabWidthFt * 100) / 100 : 0);
+
+          if (isSlabCategory && resolvedSqft > 0 && effectiveStock > 0) {
+            const landedPerSlab  = Math.round(resolvedSqft * costPerSqft * 100) / 100;
+            const sellPerSqft    = sellingPerSqft || 0;
+            const sellingPerSlab = Math.round(resolvedSqft * sellPerSqft * 100) / 100;
+
+            // Prefix — matches KadapaManager's PREFIX map exactly (no isBig override)
+            const KADAPA_PREFIX: Record<string, string> = {
+              'Single Polish': 'SP', 'Double Polish': 'DP',
+              'Big Single Polish': 'DSP', 'Big Double Polish': 'DDP',
             };
-            const isBig = kadapaHeightFt >= 5;
-            const pfx   = (prefixMap[finishType] || { normal: 'KD', big: 'KD' })[isBig ? 'big' : 'normal'];
-            const baseNo = `${pfx}-${kadapaHeightFt}x${kadapaWidthFt}`;
+            // For Granite/Marble: use 'GR' prefix unless a finish is specified
+            const pfx = isKadapa
+              ? (KADAPA_PREFIX[finishType] || 'SP')
+              : (KADAPA_PREFIX[finishType] || 'GR');
+
+            const heightIn = Math.round(slabHeightFt * 12);
+            const widthIn  = Math.round(slabWidthFt  * 12);
+            const base     = `${pfx}-${slabHeightFt}ft-${widthIn}in`;
+
+            // Find existing slabs for this product+base to continue numbering correctly
+            // (handles update/re-import without resetting slab numbers)
+            let existingSlabsForBase: any[] = [];
+            if (existingId && pool && dbHealthy) {
+              try {
+                const [existRows]: any = await pool.query(
+                  'SELECT data FROM products WHERE id=?', [existingId]);
+                if (existRows.length > 0) {
+                  const existData = parseData(existRows[0].data);
+                  existingSlabsForBase = (existData.slabs || []).filter(
+                    (s: any) => (s.slabNo || '').startsWith(base));
+                }
+              } catch {}
+            }
+            const maxNum = existingSlabsForBase.reduce((m: number, s: any) =>
+              Math.max(m, parseInt((s.slabNo || '').split('-').pop() || '0') || 0), 0);
 
             for (let i = 0; i < effectiveStock; i++) {
               generatedSlabs.push({
                 id:                  `slab-csv-${now}-${i}-${Math.random().toString(36).substr(2, 5)}`,
-                slabNo:              `${baseNo}-${i + 1}`,
-                heightFt:            kadapaHeightFt,
-                heightIn:            0,
-                lengthFt:            kadapaWidthFt,
-                lengthIn:            0,
-                sqft:                slabSqft,
+                slabNo:              `${base}-${maxNum + i + 1}`,
+                heightFt:            slabHeightFt,
+                heightIn:            heightIn,
+                lengthFt:            slabWidthFt,
+                lengthIn:            widthIn,
+                sqft:                resolvedSqft,
                 isSold:              false,
-                finish:              finishType || 'Single Polish',
+                finish:              finishType || (isKadapa ? 'Single Polish' : 'Double Polish'),
                 landedCost:          landedPerSlab,
                 landedCostPerSqft:   costPerSqft,
                 sellingPrice:        sellingPerSlab,
@@ -2723,23 +2758,42 @@ app.post('/api/sync', async (req: Request, res: Response) => {
               { godownId: 'g3', boxes: 0, loose: 0 }
             ],
             damageHistory: [], purchaseHistory: [], adjustmentLog: [],
-            // ── Auto-generated slabs: same structure as KadapaManager ──────────
-            slabs: generatedSlabs,
+            // ── Slabs: append new to existing (no overwrite on update) ──────────
+            // This preserves already-generated slab numbers on re-import.
+            slabs: generatedSlabs,  // filled below when merging with existing
             // Vendor linking
             lastPurchaseVendor: vendorName || undefined,
             lastPurchaseDate:   vendorName ? new Date().toISOString().split('T')[0] : undefined,
             updatedAt: now
           };
 
+          // ── For slab products on update: APPEND new slabs to existing ones ───
+          if (existingId && isSlabCategory && generatedSlabs.length > 0 && pool && dbHealthy) {
+            try {
+              const [existRows]: any = await pool.query('SELECT data FROM products WHERE id=?', [existingId]);
+              if (existRows.length > 0) {
+                const existData = parseData(existRows[0].data);
+                const existingSlabs = existData.slabs || [];
+                productData.slabs = [...existingSlabs, ...generatedSlabs];
+                // Stock = count of all unsold slabs
+                const unsoldCount = productData.slabs.filter((s: any) => !s.isSold).length;
+                productData.stockBoxes = unsoldCount;
+              }
+            } catch {}
+          } else if (!existingId && isSlabCategory) {
+            productData.slabs = generatedSlabs;
+          }
+
           if (pool && dbHealthy) {
             const csvTenantId = req.tenantId || 'default';
+            const finalStock = productData.stockBoxes ?? effectiveStock;
             await pool.query(
               `INSERT INTO products (id, tenant_id, name, category, brand, stock_boxes, stock_loose, selling_price, status, data, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), name=VALUES(name), category=VALUES(category),
                brand=VALUES(brand), stock_boxes=VALUES(stock_boxes), selling_price=VALUES(selling_price),
                status=VALUES(status), data=VALUES(data), updated_at=VALUES(updated_at)`,
-              [productId, csvTenantId, name, category, brand, effectiveStock, 0, sellingPrice, status, JSON.stringify(productData), now]
+              [productId, csvTenantId, name, category, brand, finalStock, 0, sellingPrice, status, JSON.stringify(productData), now]
             );
           }
 
