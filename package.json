@@ -16,10 +16,16 @@
     "mobile:run:ios": "npm run mobile:build && npx cap run ios",
     "test:logic": "node tests/logic-only.mjs",
     "test:api": "node tests/regression.mjs",
-    "test": "node tests/logic-only.mjs"
+    "test": "node tests/logic-only.mjs",
+    "e2e": "npx playwright test --config e2e/playwright.config.ts",
+    "e2e:ui": "npx playwright test --config e2e/playwright.config.ts --ui",
+    "e2e:headed": "HEADED=1 npx playwright test --config e2e/playwright.config.ts",
+    "e2e:report": "npx playwright show-report test-reports/html",
+    "e2e:setup": "node e2e/setup.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.42.0",
+    "@playwright/test": "^1.61.0",
     "@types/compression": "^1.8.1",
     "@vitejs/plugin-react": "^5.1.4",
     "body-parser": "^1.20.2",
@@ -35,6 +41,7 @@
     "lucide-react": "^0.575.0",
     "motion": "^12.34.3",
     "mysql2": "^3.9.2",
+    "playwright": "^1.61.0",
     "qrcode": "^1.5.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
