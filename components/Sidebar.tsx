@@ -53,7 +53,6 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeTab, setActiveTab,
     { id: 'expenses', label: 'Expenses', icon: 'fa-receipt', visible: perms?.canManageSales },
     { id: 'reports_sales', label: 'P&L Reports', icon: 'fa-chart-line', visible: perms?.canViewReports },
     { id: 'users', label: 'Staff Governance', icon: 'fa-user-shield', visible: perms?.canManageUsers },
-    { id: 'diagnostics', label: 'Infra Terminal', icon: 'fa-terminal', visible: isAdmin },
     { id: 'system', label: 'System Architecture', icon: 'fa-cog', visible: isAdmin },
     { id: 'profile', label: 'My Account', icon: 'fa-user-circle', visible: true },
   ];
