@@ -13,7 +13,10 @@
     "mobile:android": "npm run mobile:build && npx cap open android",
     "mobile:ios": "npm run mobile:build && npx cap open ios",
     "mobile:run:android": "npm run mobile:build && npx cap run android",
-    "mobile:run:ios": "npm run mobile:build && npx cap run ios"
+    "mobile:run:ios": "npm run mobile:build && npx cap run ios",
+    "test:logic": "node tests/logic-only.mjs",
+    "test:api": "node tests/regression.mjs",
+    "test": "node tests/logic-only.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.42.0",
