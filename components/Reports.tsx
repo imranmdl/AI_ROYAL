@@ -338,27 +338,65 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
       }).sort((a, b) => b.purchaseValue - a.purchaseValue);
   }, [store.vendorOrders, store.products, filteredSales, inRange, filterVendor]);
 
-  // ── Collections ────────────────────────────────────────────────────────
+  // ── Collections (enhanced: business + collections + commission + expenses) ──
   const collectionRows = useMemo(() => {
     const dayMap = new Map<string, any>();
-    const ensure = (d: string) => { if (!dayMap.has(d)) dayMap.set(d, { date: d, cash: 0, upi: 0, card: 0, credit: 0, total: 0 }); return dayMap.get(d); };
+    const ensure = (d: string) => {
+      if (!dayMap.has(d)) dayMap.set(d, {
+        date: d,
+        // Collections by mode
+        cash: 0, upi: 0, card: 0, credit: 0, totalCollected: 0,
+        // Business totals
+        businessDone: 0,   // invoice total amount
+        balanceOutstanding: 0,
+        invoiceCount: 0,
+        // Costs
+        commissionPaid: 0,   // referral commission paid on this day
+        expensesPaid: 0,
+        // Legacy (kept for backward compat)
+        total: 0,
+      });
+      return dayMap.get(d);
+    };
+
+    // ── Sales: add business done + collections ──
     filteredSales.forEach(s => {
-      const day = ensure(s.date); const amt = s.amountPaid;
-      day.total += amt;
+      const day = ensure(s.date);
+      const amt = s.amountPaid || 0;
+      const total = s.totalAmount || 0;
+      day.businessDone      += total;
+      day.balanceOutstanding += (s.balance || 0);
+      day.invoiceCount++;
+      // Collected portion
+      day.totalCollected += amt; day.total += amt;
       if (s.paymentType === 'Cash') day.cash += amt;
       else if (s.paymentType === 'UPI') day.upi += amt;
       else if (s.paymentType === 'Card') day.card += amt;
-      else if (s.paymentType === 'Credit') day.credit += amt;
+      else if (s.paymentType === 'Credit' || s.paymentType === 'Mixed') day.credit += amt;
       else day.cash += amt;
     });
+
+    // ── Follow-up payments (credit collections) ──
     filteredPayments.forEach(p => {
-      const day = ensure(p.date); day.total += p.amount; day.credit += p.amount;
-      if (p.paymentMode === 'Cash') day.cash += p.amount;
-      else if (p.paymentMode === 'UPI') day.upi += p.amount;
-      else if (p.paymentMode === 'Card') day.card += p.amount;
+      const day = ensure(p.date);
+      day.totalCollected += p.amount; day.total += p.amount; day.credit += p.amount;
     });
+
+    // ── Referral commissions paid (by paidDate within range) ──
+    (store.referralCommissions || []).forEach((c: any) => {
+      if (!c.paidDate || !inRange(c.paidDate)) return;
+      const day = ensure(c.paidDate);
+      day.commissionPaid += (c.amountPaid || 0);
+    });
+
+    // ── Expenses paid within range ──
+    (store.expenses || []).filter((e: any) => inRange(e.date)).forEach((e: any) => {
+      const day = ensure(e.date);
+      day.expensesPaid += (e.amount || 0);
+    });
+
     return Array.from(dayMap.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [filteredSales, filteredPayments]);
+  }, [filteredSales, filteredPayments, store.referralCommissions, store.expenses, inRange]);
 
   // ── Dashboard summary ──────────────────────────────────────────────────
   const dash = useMemo(() => {
@@ -381,8 +419,12 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
     const allPL = Array.from(prodPL.values());
     const top10 = [...allPL].sort((a, b) => b.profit - a.profit).slice(0, 10);
     const lowMarg = [...allPL].filter(p => p.cost > 0 && (p.profit / p.cost) * 100 < 10).sort((a, b) => (a.profit / (a.cost || 1)) - (b.profit / (b.cost || 1))).slice(0, 10);
-    const collection = collectionRows.reduce((s, r) => s + r.total, 0);
-    return { rev: r2(rev), cost: r2(cost), profit, profitPct, stockValue: r2(stockValue), deadStockVal: r2(deadStock.reduce((s, r) => s + r.totalValue, 0)), deadCount: deadStock.length, top10, lowMarg, collection: r2(collection) };
+    const collection    = collectionRows.reduce((s, r) => s + r.totalCollected, 0);
+    const commPaid      = collectionRows.reduce((s, r) => s + r.commissionPaid, 0);
+    const expPaid       = collectionRows.reduce((s, r) => s + r.expensesPaid, 0);
+    const bizDone       = filteredSales.reduce((s, sale) => s + (sale.totalAmount || 0), 0);
+    const totalRefComm  = (store.referralCommissions || []).filter((c: any) => c.paidDate && inRange(c.paidDate)).reduce((s, c: any) => s + (c.amountPaid || 0), 0);
+    return { rev: r2(rev), cost: r2(cost), profit, profitPct, stockValue: r2(stockValue), deadStockVal: r2(deadStock.reduce((s, r) => s + r.totalValue, 0)), deadCount: deadStock.length, top10, lowMarg, collection: r2(collection), commPaid: r2(commPaid), expPaid: r2(expPaid), bizDone: r2(bizDone), totalRefComm: r2(totalRefComm) };
   }, [filteredSales, stockRows, movementRows, collectionRows]);
 
   // ── Shared UI ──────────────────────────────────────────────────────────
@@ -483,13 +525,13 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
         <div className="space-y-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
-              { label: 'Net Revenue',    val: curr(dash.rev),       sub: `${filteredSales.length} invoices`,      cls: 'bg-white' },
-              { label: 'Total COGS',     val: curr(dash.cost),      sub: 'Landed cost basis',                     cls: 'bg-white' },
-              { label: 'Gross Profit',   val: curr(dash.profit),    sub: pct(dash.profitPct),                     cls: dash.profit >= 0 ? 'bg-emerald-50' : 'bg-rose-50',  vcls: profitText(dash.profitPct) },
-              { label: 'Collections',    val: curr(dash.collection), sub: 'Cash + UPI + Card',                    cls: 'bg-white' },
-              { label: 'Stock Value',    val: curr(dash.stockValue), sub: `${stockRows.length} products`,         cls: 'bg-white' },
-              { label: 'Dead Stock',     val: curr(dash.deadStockVal), sub: `${dash.deadCount} items, no sales`,  cls: 'bg-rose-50', vcls: 'text-rose-600' },
-              { label: 'Damage Impact',  val: curr(damageRows.reduce((s: number, r: any) => s + r.totalImpact, 0)), sub: 'Damage + Returns', cls: 'bg-amber-50', vcls: 'text-amber-700' },
+              { label: 'Business Done',  val: curr(dash.bizDone),     sub: `${filteredSales.length} invoices`,      cls: 'bg-white' },
+              { label: 'Total COGS',     val: curr(dash.cost),        sub: 'Landed cost basis',                     cls: 'bg-white' },
+              { label: 'Gross Profit',   val: curr(dash.profit),      sub: pct(dash.profitPct),                     cls: dash.profit >= 0 ? 'bg-emerald-50' : 'bg-rose-50', vcls: profitText(dash.profitPct) },
+              { label: 'Collected',      val: curr(dash.collection),  sub: 'Cash + UPI + Card',                     cls: 'bg-white' },
+              { label: 'Commission Paid', val: curr(dash.totalRefComm||0), sub: 'Referral agents (disbursed)',       cls: 'bg-amber-50', vcls: 'text-amber-700' },
+              { label: 'Expenses Paid',  val: curr(dash.expPaid||0),  sub: 'Within selected period',               cls: 'bg-orange-50', vcls: 'text-orange-600' },
+              { label: 'Dead Stock',     val: curr(dash.deadStockVal), sub: `${dash.deadCount} items, no sales`,   cls: 'bg-rose-50', vcls: 'text-rose-600' },
               { label: 'Quotations',     val: quotationRows.length.toString(), sub: `${quotationRows.filter(q => q.converted).length} converted`, cls: 'bg-white' },
             ].map(({ label, val, sub, cls, vcls }) => (
               <div key={label} className={`${cls} border border-slate-100 rounded-[20px] p-4 shadow-sm`}>
@@ -854,37 +896,82 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
       )}
 
       {/* ═══ COLLECTIONS ═══ */}
+      {/* ═══ COLLECTIONS ═══ */}
       {activeTab === 'collections' && (
-        <div className="space-y-4">
+        <div className="space-y-5">
           {(() => {
-            const tot = collectionRows.reduce((a, r) => ({ cash: a.cash + r.cash, upi: a.upi + r.upi, card: a.card + r.card, credit: a.credit + r.credit, total: a.total + r.total }), { cash: 0, upi: 0, card: 0, credit: 0, total: 0 });
-            return (
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                {[{ l: 'Total', v: tot.total, cls: 'bg-slate-900 text-white' }, { l: 'Cash', v: tot.cash, cls: 'bg-emerald-50 text-emerald-700' }, { l: 'UPI', v: tot.upi, cls: 'bg-blue-50 text-blue-700' }, { l: 'Card', v: tot.card, cls: 'bg-indigo-50 text-indigo-700' }, { l: 'Credit/Recovery', v: tot.credit, cls: 'bg-amber-50 text-amber-700' }].map(m => (
-                  <div key={m.l} className={`${m.cls} border border-slate-100 rounded-2xl p-4`}>
-                    <div className="text-[8px] font-black uppercase mb-1 opacity-70">{m.l}</div>
+            const tot = collectionRows.reduce((a, r) => ({
+              cash: a.cash + r.cash, upi: a.upi + r.upi, card: a.card + r.card,
+              credit: a.credit + r.credit, totalCollected: a.totalCollected + r.totalCollected,
+              businessDone: a.businessDone + r.businessDone,
+              commissionPaid: a.commissionPaid + r.commissionPaid,
+              expensesPaid: a.expensesPaid + r.expensesPaid,
+              balanceOutstanding: a.balanceOutstanding + r.balanceOutstanding,
+              invoiceCount: a.invoiceCount + r.invoiceCount,
+            }), { cash: 0, upi: 0, card: 0, credit: 0, totalCollected: 0, businessDone: 0, commissionPaid: 0, expensesPaid: 0, balanceOutstanding: 0, invoiceCount: 0 });
+            return (<>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { l:'Business Done',      v: tot.businessDone,       sub:`${tot.invoiceCount} invoices`,          icon:'fa-chart-line',     cls:'bg-slate-900 text-white' },
+                  { l:'Total Collected',    v: tot.totalCollected,     sub:'Cash + UPI + Card + Credit',            icon:'fa-wallet',         cls:'bg-emerald-50 text-emerald-800 border border-emerald-100' },
+                  { l:'Outstanding (Due)',  v: tot.balanceOutstanding, sub:'Unpaid invoice balances',               icon:'fa-clock',          cls:'bg-amber-50 text-amber-800 border border-amber-100' },
+                  { l:'Commission Paid',    v: tot.commissionPaid,     sub:'Referral agents disbursed',             icon:'fa-user-tag',       cls:'bg-rose-50 text-rose-800 border border-rose-100' },
+                ].map(m => (
+                  <div key={m.l} className={`${m.cls} rounded-2xl p-4`}>
+                    <div className="flex items-center gap-1.5 text-[8px] font-black uppercase mb-1.5 opacity-60">
+                      <i className={`fas ${m.icon} text-[9px]`}></i>{m.l}
+                    </div>
                     <div className="text-xl font-black">{curr(m.v)}</div>
+                    <div className="text-[9px] opacity-50 mt-0.5">{m.sub}</div>
                   </div>
                 ))}
               </div>
-            );
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                {[
+                  { l:'Cash',            v: tot.cash,         pct: tot.totalCollected, icon:'fa-money-bill',   cls:'bg-emerald-50 text-emerald-700 border border-emerald-100' },
+                  { l:'UPI / PhonePe',   v: tot.upi,          pct: tot.totalCollected, icon:'fa-mobile-alt',   cls:'bg-blue-50 text-blue-700 border border-blue-100' },
+                  { l:'Card',            v: tot.card,         pct: tot.totalCollected, icon:'fa-credit-card',  cls:'bg-indigo-50 text-indigo-700 border border-indigo-100' },
+                  { l:'Credit Recovery', v: tot.credit,       pct: tot.totalCollected, icon:'fa-file-invoice', cls:'bg-amber-50 text-amber-700 border border-amber-100' },
+                  { l:'Expenses Paid',   v: tot.expensesPaid, pct: 0,                  icon:'fa-receipt',      cls:'bg-orange-50 text-orange-700 border border-orange-100' },
+                ].map(m => (
+                  <div key={m.l} className={`${m.cls} rounded-2xl p-4`}>
+                    <div className="flex items-center gap-1.5 text-[8px] font-black uppercase opacity-60 mb-1">
+                      <i className={`fas ${m.icon} text-[9px]`}></i>{m.l}
+                    </div>
+                    <div className="text-lg font-black">{m.v > 0 ? curr(m.v) : '—'}</div>
+                    {m.pct > 0 && m.v > 0 && <div className="text-[9px] opacity-50">{((m.v/m.pct)*100).toFixed(1)}% share</div>}
+                  </div>
+                ))}
+              </div>
+            </>);
           })()}
-          <Tbl>
-            <thead><tr><Th c="Date" /><Th c="Cash" right /><Th c="UPI" right /><Th c="Card" right /><Th c="Credit/Recovery" right /><Th c="Day Total" right /></tr></thead>
-            <tbody>
-              {collectionRows.map((r, i) => (
-                <tr key={r.date + i} className="hover:bg-slate-50">
-                  <Td bold>{r.date}</Td>
-                  <Td right color="text-emerald-600">{r.cash > 0 ? curr(r.cash) : '—'}</Td>
-                  <Td right color="text-blue-600">{r.upi > 0 ? curr(r.upi) : '—'}</Td>
-                  <Td right color="text-indigo-600">{r.card > 0 ? curr(r.card) : '—'}</Td>
-                  <Td right color="text-amber-600">{r.credit > 0 ? curr(r.credit) : '—'}</Td>
-                  <Td right bold>{curr(r.total)}</Td>
-                </tr>
-              ))}
-              {collectionRows.length === 0 && <tr><td colSpan={6} className="text-center py-14 text-slate-300 font-black text-sm uppercase">No collections in period</td></tr>}
-            </tbody>
-          </Tbl>
+          <div className="overflow-x-auto rounded-2xl border border-slate-100 shadow-sm">
+            <table className="w-full text-xs">
+              <thead><tr className="bg-slate-50">
+                <Th c="Date" /><Th c="Invoices" right /><Th c="Business Done" right />
+                <Th c="Cash" right /><Th c="UPI" right /><Th c="Card" right /><Th c="Credit" right />
+                <Th c="Total Collected" right /><Th c="Comm. Paid" right /><Th c="Expenses" right /><Th c="Outstanding" right />
+              </tr></thead>
+              <tbody>
+                {collectionRows.map((r, i) => (
+                  <tr key={r.date + i} className="hover:bg-slate-50 border-t border-slate-50">
+                    <Td bold>{r.date}</Td>
+                    <Td right>{r.invoiceCount > 0 ? r.invoiceCount : '—'}</Td>
+                    <Td right bold color="text-slate-900">{r.businessDone > 0 ? curr(r.businessDone) : '—'}</Td>
+                    <Td right color="text-emerald-600">{r.cash > 0 ? curr(r.cash) : '—'}</Td>
+                    <Td right color="text-blue-600">{r.upi > 0 ? curr(r.upi) : '—'}</Td>
+                    <Td right color="text-indigo-600">{r.card > 0 ? curr(r.card) : '—'}</Td>
+                    <Td right color="text-amber-600">{r.credit > 0 ? curr(r.credit) : '—'}</Td>
+                    <Td right bold color="text-emerald-700">{curr(r.totalCollected)}</Td>
+                    <Td right color={r.commissionPaid > 0 ? 'text-rose-600' : 'text-slate-300'}>{r.commissionPaid > 0 ? `−${curr(r.commissionPaid)}` : '—'}</Td>
+                    <Td right color={r.expensesPaid > 0 ? 'text-orange-600' : 'text-slate-300'}>{r.expensesPaid > 0 ? `−${curr(r.expensesPaid)}` : '—'}</Td>
+                    <Td right color={r.balanceOutstanding > 0 ? 'text-amber-600' : 'text-slate-300'}>{r.balanceOutstanding > 0 ? curr(r.balanceOutstanding) : '—'}</Td>
+                  </tr>
+                ))}
+                {collectionRows.length === 0 && <tr><td colSpan={11} className="text-center py-14 text-slate-300 font-black text-sm uppercase">No collections in period</td></tr>}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
