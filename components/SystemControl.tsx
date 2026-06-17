@@ -629,6 +629,7 @@ const SystemControl: React.FC = () => {
 
       <LoadingChargeManager />
     </div>
+    </div>
   );
 };
 
