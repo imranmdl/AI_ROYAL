@@ -845,6 +845,8 @@ export interface SystemSettings {
   // 'inventory' = new items can ONLY be created from Inventory page
   // 'both'      = either page can create new items (default)
   itemCreationSource?: 'vendor' | 'inventory' | 'both';
+  /** Which sidebar modules are disabled for this tenant (module id → false means hidden) */
+  disabledModules?: string[];
   enableIndividualSlabManagement: boolean;
   printShowCompanyGst: boolean;    // show/hide company GST on printed docs
   printShowCustomerGst: boolean;   // show/hide customer GST on printed docs

@@ -53,9 +53,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeTab, setActiveTab,
     { id: 'expenses', label: 'Expenses', icon: 'fa-receipt', visible: perms?.canManageSales },
     { id: 'reports_sales', label: 'P&L Reports', icon: 'fa-chart-line', visible: perms?.canViewReports },
     { id: 'users', label: 'Staff Governance', icon: 'fa-user-shield', visible: perms?.canManageUsers },
-    { id: 'system', label: 'System Architecture', icon: 'fa-cog', visible: isAdmin },
-    { id: 'profile', label: 'My Account', icon: 'fa-user-circle', visible: true },
-  ];
+    { id: 'system',          label: 'System Architecture', icon: 'fa-cog',          visible: isAdmin },
+    { id: 'plans_features',  label: 'Plans & Features',    icon: 'fa-toggle-on',    visible: isAdmin },
+    { id: 'profile',         label: 'My Account',          icon: 'fa-user-circle',  visible: true },
+  ].filter(item => item.visible && store.isModuleEnabled(item.id));
 
   const sidebarContent = (
     <div className="flex flex-col h-full bg-slate-900 border-r border-slate-800">
@@ -105,7 +106,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeTab, setActiveTab,
       </div>
 
       <nav className="flex-1 mt-2 overflow-y-auto scrollbar-hide pb-10">
-        {menuItems.filter(item => item.visible).map(item => (
+        {menuItems.map(item => (
           <button
             key={item.id}
             onClick={() => { setActiveTab(item.id); setIsOpen(false); }}

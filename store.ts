@@ -594,6 +594,19 @@ class DataStore {
   updateDashboardVisibility(s: Partial<DashboardVisibilitySettings>) { this.settings.dashboardVisibility = { ...this.settings.dashboardVisibility, ...s }; this.save(); }
   updatePredefinedSizes(sizes: string[]) { this.settings.predefinedSizes = sizes; this.save(); }
   updatePredefinedBrands(brands: string[]) { this.settings.predefinedBrands = brands; this.save(); }
+  /** Enable/disable a module by sidebar id */
+  setModuleEnabled(moduleId: string, enabled: boolean) {
+    const disabled = this.settings.disabledModules || [];
+    if (enabled) {
+      this.settings.disabledModules = disabled.filter(id => id !== moduleId);
+    } else {
+      if (!disabled.includes(moduleId)) this.settings.disabledModules = [...disabled, moduleId];
+    }
+    this.save(); this.notify();
+  }
+  isModuleEnabled(moduleId: string): boolean {
+    return !(this.settings.disabledModules || []).includes(moduleId);
+  }
   updatePredefinedGrades(grades: string[]) { this.settings.predefinedGrades = grades; this.save(); }
   updatePredefinedShades(shades: string[]) { this.settings.predefinedShades = shades; this.save(); }
   updatePredefinedBatches(batches: string[]) { this.settings.predefinedBatches = batches; this.save(); }
