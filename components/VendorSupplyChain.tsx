@@ -356,6 +356,14 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
 
   const [billingInv,  setBillingInv]  = useState<VendorInvoice>(order?.billingInvoice  || BLANK_INVOICE());
   const [actualInv,   setActualInv]   = useState<VendorInvoice>(order?.actualInvoice   || BLANK_INVOICE());
+  /** Controls which invoice panels are shown:
+   *  'billing' = only billing invoice
+   *  'actual'  = only actual/dispatch invoice
+   *  'both'    = show both (default)
+   */
+  const [invoiceMode, setInvoiceMode] = useState<'billing'|'actual'|'both'>(
+    order?.actualInvoice?.invoiceNo ? 'both' : order?.billingInvoice?.invoiceNo ? 'billing' : 'both'
+  );
 
   const [items, setItems] = useState<VendorOrderItem[]>(order?.items?.map(i=>({
     id: (i as any).id || itemUid(),
@@ -441,14 +449,32 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
   const save = () => {
     if (!vendorName.trim()) { alert('Enter vendor name'); return; }
     const tr = calcTransport(transport);
+
+    // Sync hidden invoice values: billing-only → copy billing to actual, actual-only → copy actual to billing
+    const syncedItems = calcedItems.map(it => {
+      if (invoiceMode === 'billing') {
+        const qty = it.actualQty || it.billedQty || 0;
+        const rate = it.actualRate || it.billedRate || 0;
+        return { ...it, actualQty: qty, actualRate: rate, actualAmount: qty * rate };
+      } else if (invoiceMode === 'actual') {
+        const qty = it.billedQty || it.actualQty || 0;
+        const rate = it.billedRate || it.actualRate || 0;
+        return { ...it, billedQty: qty, billedRate: rate, billedAmount: qty * rate };
+      }
+      return it;
+    });
+    // Also sync billing/actual invoice totals based on mode
+    const finalBillingInv  = invoiceMode === 'actual'  ? { ...billingInv,  ...actualInv  } : billingInv;
+    const finalActualInv   = invoiceMode === 'billing' ? { ...actualInv,   ...billingInv } : actualInv;
+
     const newOrder: VendorOrder = {
       id: order?.id || uid(),
       orderNo: order?.orderNo || `ORD-${Math.floor(Math.random()*900000)+100000}`,
       vendorName: vendorName.trim(), vendorPhone, vendorGst, vendorAddress,
       orderDate, expectedDeliveryDate: expectedDate, status: status as any,
       paymentStatus: balance <= 0 ? 'Paid' : paidSoFar > 0 ? 'Partial' : 'Pending',
-      billingInvoice: billingInv, actualInvoice: actualInv,
-      items: calcedItems,
+      billingInvoice: finalBillingInv, actualInvoice: finalActualInv,
+      items: syncedItems,
       transport: tr,
       laborCharges, miscCharges, miscDescription: miscDesc,
       totalBilledAmount: totalBilled, totalActualAmount: totalActual,
@@ -541,8 +567,30 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
 
       {/* ── INVOICES tab ── */}
       {tab === 'invoices' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div className="space-y-5">
+
+          {/* ── Invoice mode selector ── */}
+          <div className="bg-slate-900 border border-white/10 rounded-2xl p-4">
+            <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Which invoices do you have for this order?</div>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { id:'billing', icon:'fa-file-invoice',     label:'Billing Only',     sub:'Only vendor bill (with markup)' },
+                { id:'actual',  icon:'fa-file-alt',         label:'Actual Only',      sub:'Only dispatch note / real cost' },
+                { id:'both',    icon:'fa-copy',             label:'Both Invoices',    sub:'Billing + Actual/Dispatch' },
+              ] as const).map(m => (
+                <button key={m.id} onClick={() => setInvoiceMode(m.id)}
+                  className={`text-left px-4 py-3 rounded-xl border transition-all ${invoiceMode===m.id?'bg-amber-500/20 border-amber-500/40 text-amber-400':'bg-white/5 border-white/10 text-slate-400 hover:border-white/20'}`}>
+                  <i className={`fas ${m.icon} text-xs mb-1.5 block`}></i>
+                  <div className="text-[10px] font-black uppercase">{m.label}</div>
+                  <div className="text-[8px] opacity-60 mt-0.5">{m.sub}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {/* Billing Invoice */}
+          {(invoiceMode === 'billing' || invoiceMode === 'both') && (
           <div className="bg-slate-900 border border-amber-500/20 rounded-2xl p-5 space-y-4">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 bg-amber-500/20 rounded-xl flex items-center justify-center">
@@ -567,8 +615,10 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
               <div><label className={label}>Notes</label><input className={inp} value={billingInv.notes||''} onChange={e=>setBillingInv(p=>({...p,notes:e.target.value}))} placeholder="Reference, terms, etc." /></div>
             </div>
           </div>
+          )}
 
           {/* Actual Invoice */}
+          {(invoiceMode === 'actual' || invoiceMode === 'both') && (
           <div className="bg-slate-900 border border-blue-500/20 rounded-2xl p-5 space-y-4">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 bg-blue-500/20 rounded-xl flex items-center justify-center">
@@ -600,6 +650,18 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
               <div><label className={label}>Notes</label><input className={inp} value={actualInv.notes||''} onChange={e=>setActualInv(p=>({...p,notes:e.target.value}))} placeholder="Dispatch details, vehicle, etc." /></div>
             </div>
           </div>
+          )}
+          </div>{/* end invoice grid */}
+
+          {/* Summary when only one mode selected */}
+          {invoiceMode !== 'both' && (
+            <div className="px-4 py-3 bg-white/5 rounded-xl text-slate-400 text-[9px] font-bold flex items-center gap-2">
+              <i className="fas fa-info-circle"></i>
+              {invoiceMode === 'billing'
+                ? 'Only billing invoice will be recorded. Switch to "Both Invoices" if you also have an actual/dispatch note.'
+                : 'Only actual/dispatch invoice will be recorded. Switch to "Both Invoices" if you also have a billing invoice.'}
+            </div>
+          )}
         </div>
       )}
 
@@ -652,8 +714,12 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
                     <tr>
                       <th className="px-3 py-2.5 text-left text-[9px] font-black text-slate-400 uppercase min-w-[140px]">Product</th>
                       <th className="px-3 py-2.5 text-center text-[9px] font-black text-amber-400 uppercase min-w-[80px]">Ordered</th>
-                      <th className="px-3 py-2.5 text-center text-[9px] font-black text-amber-400 uppercase" colSpan={3}>Billing Invoice</th>
-                      <th className="px-3 py-2.5 text-center text-[9px] font-black text-blue-400 uppercase" colSpan={3}>Actual Invoice</th>
+                      {(invoiceMode === 'billing' || invoiceMode === 'both') && (
+                        <th className="px-3 py-2.5 text-center text-[9px] font-black text-amber-400 uppercase" colSpan={3}>Billing Invoice</th>
+                      )}
+                      {(invoiceMode === 'actual' || invoiceMode === 'both') && (
+                        <th className="px-3 py-2.5 text-center text-[9px] font-black text-blue-400 uppercase" colSpan={3}>Actual Invoice</th>
+                      )}
                       <th className="px-3 py-2.5 text-center text-[9px] font-black text-emerald-400 uppercase min-w-[90px]">Selling ₹</th>
                       <th className="px-3 py-2.5 text-center text-[9px] font-black text-purple-400 uppercase min-w-[80px]">Landed</th>
                       <th className="px-3 py-2.5 text-center text-[9px] font-black text-purple-400 uppercase min-w-[70px]">Margin</th>
@@ -661,12 +727,16 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
                     </tr>
                     <tr className="bg-white/[0.02]">
                       <th></th><th></th>
-                      <th className="px-2 py-1 text-[8px] font-bold text-amber-400/70 text-center">Qty</th>
-                      <th className="px-2 py-1 text-[8px] font-bold text-amber-400/70 text-center">Rate</th>
-                      <th className="px-2 py-1 text-[8px] font-bold text-amber-400/70 text-center">Amt</th>
-                      <th className="px-2 py-1 text-[8px] font-bold text-blue-400/70 text-center">Qty</th>
-                      <th className="px-2 py-1 text-[8px] font-bold text-blue-400/70 text-center">Rate</th>
-                      <th className="px-2 py-1 text-[8px] font-bold text-blue-400/70 text-center">Amt</th>
+                      {(invoiceMode === 'billing' || invoiceMode === 'both') && (<>
+                        <th className="px-2 py-1 text-[8px] font-bold text-amber-400/70 text-center">Slabs/Qty</th>
+                        <th className="px-2 py-1 text-[8px] font-bold text-amber-400/70 text-center">Rate</th>
+                        <th className="px-2 py-1 text-[8px] font-bold text-amber-400/70 text-center">Amt</th>
+                      </>)}
+                      {(invoiceMode === 'actual' || invoiceMode === 'both') && (<>
+                        <th className="px-2 py-1 text-[8px] font-bold text-blue-400/70 text-center">Slabs/Qty</th>
+                        <th className="px-2 py-1 text-[8px] font-bold text-blue-400/70 text-center">Rate</th>
+                        <th className="px-2 py-1 text-[8px] font-bold text-blue-400/70 text-center">Amt</th>
+                      </>)}
                       <th></th><th></th><th></th><th></th>
                     </tr>
                   </thead>
@@ -674,6 +744,8 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
                     {items.map((item,idx)=>{
                       const ci = calcItem(item, tPerUnit, lPerUnit);
                       const margin = ci.marginPct||0;
+                      const isSlabItem = ['Kadapa','Granite','Marble'].includes(item.category || '');
+                      const prod = products.find(p => p.id === item.productId);
                       return (
                         <tr key={item.id||idx} className="hover:bg-white/[0.02]">
                           <td className="px-3 py-2">
