@@ -888,12 +888,37 @@ const Quotations: React.FC<{
                                   )}
                                   <div className="flex-1 min-w-0">
                                     <div className="font-black text-slate-800 text-[11px] sm:text-xs">{item.productName}</div>
-                                    {item.purpose && <div className="text-[8px] text-slate-400 font-bold mt-0.5">{item.purpose}</div>}
-                                    {slabNos.length > 0 && (
-                                      <div className="flex flex-wrap gap-1 mt-1">
-                                        {slabNos.map(no => (
-                                          <span key={no} className="text-[7px] font-black bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">#{no}</span>
-                                        ))}
+
+                                    {/* Size + brand for tile/box items */}
+                                    {!isSlab && (prod?.size || prod?.brand) && (
+                                      <div className="text-[8px] text-slate-500 font-bold mt-0.5 flex items-center gap-1 flex-wrap">
+                                        {prod?.size && <><i className="fas fa-ruler-combined text-[7px] opacity-50"></i><span>{prod.size}</span></>}
+                                        {prod?.brand && <span className="opacity-70">· {prod.brand}</span>}
+                                        {prod?.grade && prod.grade !== 'Standard' && <span className="opacity-60">· {prod.grade}</span>}
+                                      </div>
+                                    )}
+
+                                    {item.purpose && item.purpose !== 'General' && (
+                                      <div className="text-[8px] text-slate-400 font-bold mt-0.5">{item.purpose}</div>
+                                    )}
+
+                                    {/* Kadapa — count + total sqft, no slab#s */}
+                                    {isSlab && item.productCategory === 'Kadapa' && slabNos.length > 0 && (
+                                      <div className="text-[8px] text-amber-700 font-bold mt-0.5">
+                                        {slabNos.length} slab{slabNos.length > 1 ? 's' : ''} · {item.reqSqft.toFixed(2)} SqFt
+                                        {prod?.size && ` · ${prod.size} ft`}
+                                      </div>
+                                    )}
+
+                                    {/* Granite / Marble — individual slab numbers for site verification */}
+                                    {isSlab && item.productCategory !== 'Kadapa' && slabNos.length > 0 && (
+                                      <div className="mt-1 space-y-0.5">
+                                        <div className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Slab Nos:</div>
+                                        <div className="flex flex-wrap gap-1">
+                                          {slabNos.map(no => (
+                                            <span key={no} className="text-[7px] font-black bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full border border-purple-100">#{no}</span>
+                                          ))}
+                                        </div>
                                       </div>
                                     )}
                                   </div>
@@ -907,24 +932,50 @@ const Quotations: React.FC<{
                                     ) : null}
                                     <div className="font-bold text-slate-600 text-xs">{item.reqSqft.toFixed(2)} SqFt</div>
                                   </div>
-                                ) : (
-                                  <div>
-                                    <div className="font-black text-slate-700 text-sm">
-                                      {item.qtyBoxes > 0 ? `${item.qtyBoxes} Box${item.qtyBoxes > 1 ? 'es' : ''}` : ''}
-                                      {item.qtyPieces > 0 ? ` + ${item.qtyPieces} Pcs` : ''}
+                                ) : (() => {
+                                  const NON_SQFT_CATS = ['Adhesive','Grout','Cement','Tools','Sanitary','Epoxy','Putty','Primer'];
+                                  const isNonSqft = NON_SQFT_CATS.includes(item.productCategory || '');
+                                  const dispUnit = item.unit || prod?.unitType || 'Box';
+                                  const unitLabelPlural = (n: number, lbl: string) =>
+                                    n > 1 ? (lbl === 'Box' ? 'Boxes' : `${lbl}s`) : lbl;
+                                  const isTileCat = ['Floor Tile','Wall Tile','Floor','Vitrified','Ceramic','Wooden'].some(
+                                    c => (item.productCategory||'').toLowerCase().includes(c.toLowerCase())
+                                  );
+                                  return (
+                                    <div>
+                                      <div className="font-black text-slate-700 text-sm">
+                                        {item.qtyBoxes > 0 && `${item.qtyBoxes} ${unitLabelPlural(item.qtyBoxes, isNonSqft ? dispUnit : 'Box')}`}
+                                        {item.qtyPieces > 0 && ` + ${item.qtyPieces} Pcs`}
+                                      </div>
+                                      {!isNonSqft && item.reqSqft > 0 && (
+                                        <div className="text-[9px] text-slate-400 font-bold">{item.reqSqft.toFixed(2)} SqFt</div>
+                                      )}
+                                      {isTileCat && prod?.size && (
+                                        <div className="text-[8px] text-slate-500 font-bold">{prod.size}</div>
+                                      )}
                                     </div>
-                                    {item.reqSqft > 0 && <div className="text-[9px] text-slate-400 font-bold">{item.reqSqft.toFixed(2)} SqFt</div>}
-                                  </div>
-                                )}
+                                  );
+                                })()}
                               </td>
-                              <td className="px-3 sm:px-4 py-3 text-center">
-                                <div className="font-bold text-slate-700 text-sm">₹{item.rate.toLocaleString()}</div>
-                                <div className="text-[8px] text-slate-400 font-bold uppercase">/ {item.priceBasis}</div>
-                                {item.priceBasis === 'Box' && item.reqSqft > 0 && (
-                                  <div className="text-[8px] text-amber-600 font-black mt-0.5">
-                                    ₹{(item.amount / item.reqSqft).toFixed(2)}/SqFt
+                              <td className="px-3 sm:px-4 py-3 text-center">{(() => {
+                                const NON_SQFT_CATS = ['Adhesive','Grout','Cement','Tools','Sanitary','Epoxy','Putty','Primer'];
+                                const isNonSqft = NON_SQFT_CATS.includes(item.productCategory || '');
+                                const dispUnit = item.unit || prod?.unitType || 'Box';
+                                const priceBasis = item.priceBasis || dispUnit;
+                                return (
+                                  <div>
+                                    <div className="font-bold text-slate-700 text-sm">₹{item.rate.toLocaleString()}</div>
+                                    <div className="text-[8px] text-slate-400 font-bold uppercase">
+                                      {isNonSqft ? `/ ${dispUnit}` : `/ ${priceBasis}`}
+                                    </div>
+                                    {!isNonSqft && priceBasis === 'Box' && item.reqSqft > 0 && (
+                                      <div className="text-[8px] text-amber-600 font-black mt-0.5">
+                                        ₹{(item.amount / item.reqSqft).toFixed(2)}/SqFt
+                                      </div>
+                                    )}
                                   </div>
-                                )}
+                                );
+                              })()}
                               </td>
                               <td className="px-3 sm:px-4 py-3 text-right">
                                 <div className="font-black text-slate-900 text-sm">₹{item.amount.toLocaleString()}</div>
