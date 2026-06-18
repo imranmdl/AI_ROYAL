@@ -1060,15 +1060,16 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
                                       <div className="flex-1 min-w-0">
                                         <div className="font-black text-slate-800 text-[11px] sm:text-xs">{it.productName}</div>
 
-                                        {/* Size — shown for tile/box items */}
-                                        {!isSlab && prod?.size && (
-                                          <div className="text-[8px] text-slate-500 font-bold mt-0.5">
-                                            <i className="fas fa-ruler-combined text-[7px] mr-1 opacity-60"></i>{prod.size}
-                                            {prod.brand && ` · ${prod.brand}`}
+                                        {/* Size + brand for tile/box items */}
+                                        {!isSlab && (prod?.size || prod?.brand) && (
+                                          <div className="text-[8px] text-slate-500 font-bold mt-0.5 flex items-center gap-1 flex-wrap">
+                                            {prod?.size && <><i className="fas fa-ruler-combined text-[7px] opacity-50"></i><span>{prod.size}</span></>}
+                                            {prod?.brand && <span className="opacity-70">· {prod.brand}</span>}
+                                            {prod?.grade && prod.grade !== 'Standard' && <span className="opacity-60">· {prod.grade}</span>}
                                           </div>
                                         )}
 
-                                        {it.purpose && <div className="text-[8px] text-slate-400 font-bold mt-0.5">{it.purpose}</div>}
+                                        {it.purpose && it.purpose !== 'General' && <div className="text-[8px] text-slate-400 font-bold mt-0.5">{it.purpose}</div>}
 
                                         {/* Kadapa — show count per size, NOT individual slab numbers (too many) */}
                                         {isSlab && it.productCategory === 'Kadapa' && slabNos.length > 0 && (
@@ -1108,24 +1109,59 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
                                           </div>
                                         )}
                                       </div>
-                                    ) : (
-                                      <div>
-                                        <div className="font-black text-slate-700 text-sm">
-                                          {it.qtyBoxes > 0 ? `${it.qtyBoxes} Box${it.qtyBoxes > 1 ? 'es' : ''}` : ''}
-                                          {it.qtyLoose > 0 ? ` + ${it.qtyLoose} Pcs` : ''}
+                                    ) : (() => {
+                                      // Non-sqft categories (Adhesive, Grout, Cement, Tools, etc.) —
+                                      // NEVER show SqFt; show unit count in the correct unit label.
+                                      const NON_SQFT_CATS = ['Adhesive','Grout','Cement','Tools','Sanitary','Epoxy','Putty','Primer'];
+                                      const isNonSqft = NON_SQFT_CATS.includes(it.productCategory || '');
+                                      // Resolve display unit: use item.unit if set, else product.unitType, else 'Box'
+                                      const dispUnit = it.unit || prod?.unitType || 'Box';
+                                      const unitLabel = isNonSqft ? dispUnit : 'Box';
+                                      const unitLabelPlural = (n: number, lbl: string) =>
+                                        n > 1 ? (lbl === 'Box' ? 'Boxes' : `${lbl}s`) : lbl;
+                                      const totalCount = it.qtyBoxes || 0;
+                                      // For tile/sqft categories: also show sqft
+                                      const isTileCat = ['Floor Tile','Wall Tile','Floor','Vitrified','Ceramic','Wooden'].some(
+                                        c => (it.productCategory||'').toLowerCase().includes(c.toLowerCase())
+                                      );
+                                      return (
+                                        <div>
+                                          <div className="font-black text-slate-700 text-sm">
+                                            {totalCount > 0 && `${totalCount} ${unitLabelPlural(totalCount, unitLabel)}`}
+                                            {it.qtyLoose > 0 && ` + ${it.qtyLoose} Pcs`}
+                                          </div>
+                                          {/* SqFt — only for tile/sqft categories, NOT for Adhesive/Grout/Tools */}
+                                          {!isNonSqft && (it.sqft || 0) > 0 && (
+                                            <div className="text-[9px] text-slate-400 font-bold">{(it.sqft||0).toFixed(2)} SqFt</div>
+                                          )}
+                                          {/* Size badge for tiles */}
+                                          {isTileCat && prod?.size && (
+                                            <div className="text-[8px] text-slate-500 font-bold">{prod.size}</div>
+                                          )}
                                         </div>
-                                        {(it.sqft || 0) > 0 && <div className="text-[9px] text-slate-400 font-bold">{it.sqft?.toFixed(2)} SqFt</div>}
-                                      </div>
-                                    )}
+                                      );
+                                    })()}
                                   </td>
-                                  <td className="px-3 sm:px-4 py-3 text-center">
-                                    <div className="font-bold text-slate-700 text-sm">₹{it.rate.toLocaleString()}</div>
-                                    <div className="text-[8px] text-slate-400 font-bold uppercase">/ {it.priceBasis}</div>
-                                    {it.priceBasis === 'Box' && (it.sqft || 0) > 0 && (
-                                      <div className="text-[8px] text-emerald-600 font-black mt-0.5">
-                                        ₹{(it.amount / (it.sqft || 1)).toFixed(2)}/SqFt
+                                  <td className="px-3 sm:px-4 py-3 text-center">{(() => {
+                                    const NON_SQFT_CATS = ['Adhesive','Grout','Cement','Tools','Sanitary','Epoxy','Putty','Primer'];
+                                    const isNonSqft = NON_SQFT_CATS.includes(it.productCategory || '');
+                                    const dispUnit = it.unit || prod?.unitType || 'Box';
+                                    const priceBasis = it.priceBasis || dispUnit;
+                                    return (
+                                      <div>
+                                        <div className="font-bold text-slate-700 text-sm">₹{it.rate.toLocaleString()}</div>
+                                        <div className="text-[8px] text-slate-400 font-bold uppercase">
+                                          {isNonSqft ? `/ ${dispUnit}` : `/ ${priceBasis}`}
+                                        </div>
+                                        {/* For tiles: show ₹/SqFt equivalent if priced per box */}
+                                        {!isNonSqft && priceBasis === 'Box' && (it.sqft || 0) > 0 && (
+                                          <div className="text-[8px] text-emerald-600 font-black mt-0.5">
+                                            ₹{(it.amount / (it.sqft || 1)).toFixed(2)}/SqFt
+                                          </div>
+                                        )}
                                       </div>
-                                    )}
+                                    );
+                                  })()}
                                   </td>
                                   <td className="px-3 sm:px-4 py-3 text-right font-black text-slate-900 text-sm">₹{it.amount.toLocaleString()}</td>
                                 </tr>
