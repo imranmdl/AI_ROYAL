@@ -1059,12 +1059,34 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
                                       )}
                                       <div className="flex-1 min-w-0">
                                         <div className="font-black text-slate-800 text-[11px] sm:text-xs">{it.productName}</div>
+
+                                        {/* Size — shown for tile/box items */}
+                                        {!isSlab && prod?.size && (
+                                          <div className="text-[8px] text-slate-500 font-bold mt-0.5">
+                                            <i className="fas fa-ruler-combined text-[7px] mr-1 opacity-60"></i>{prod.size}
+                                            {prod.brand && ` · ${prod.brand}`}
+                                          </div>
+                                        )}
+
                                         {it.purpose && <div className="text-[8px] text-slate-400 font-bold mt-0.5">{it.purpose}</div>}
-                                        {slabNos.length > 0 && (
-                                          <div className="flex flex-wrap gap-1 mt-1">
-                                            {slabNos.map(no => (
-                                              <span key={no} className="text-[7px] font-black bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full">#{no}</span>
-                                            ))}
+
+                                        {/* Kadapa — show count per size, NOT individual slab numbers (too many) */}
+                                        {isSlab && it.productCategory === 'Kadapa' && slabNos.length > 0 && (
+                                          <div className="text-[8px] text-amber-700 font-bold mt-0.5">
+                                            {slabNos.length} slab{slabNos.length > 1 ? 's' : ''} · {it.sqft?.toFixed(2)} SqFt total
+                                            {prod?.size && ` · ${prod.size} ft`}
+                                          </div>
+                                        )}
+
+                                        {/* Granite / Marble — show individual slab numbers (for verification at site) */}
+                                        {isSlab && it.productCategory !== 'Kadapa' && slabNos.length > 0 && (
+                                          <div className="mt-1 space-y-0.5">
+                                            <div className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Slab Nos:</div>
+                                            <div className="flex flex-wrap gap-1">
+                                              {slabNos.map(no => (
+                                                <span key={no} className="text-[7px] font-black bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full border border-purple-100">#{no}</span>
+                                              ))}
+                                            </div>
                                           </div>
                                         )}
                                       </div>
@@ -1073,8 +1095,18 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
                                   <td className="px-3 sm:px-4 py-3 text-center">
                                     {isSlab ? (
                                       <div>
-                                        {slabNos.length > 0 && <div className="font-black text-slate-700 text-sm">{slabNos.length} Slab{slabNos.length > 1 ? 's' : ''}</div>}
-                                        {(it.sqft || 0) > 0 && <div className="text-[9px] text-slate-400 font-bold">{it.sqft?.toFixed(2)} SqFt</div>}
+                                        {slabNos.length > 0 && (
+                                          <div className="font-black text-slate-700 text-sm">{slabNos.length} Slab{slabNos.length > 1 ? 's' : ''}</div>
+                                        )}
+                                        {(it.sqft || 0) > 0 && (
+                                          <div className="text-[9px] text-slate-400 font-bold">{it.sqft?.toFixed(2)} SqFt</div>
+                                        )}
+                                        {/* Per-slab sqft for Kadapa */}
+                                        {it.productCategory === 'Kadapa' && slabNos.length > 0 && (it.sqft || 0) > 0 && (
+                                          <div className="text-[8px] text-amber-600 font-bold">
+                                            {((it.sqft || 0) / slabNos.length).toFixed(2)} SqFt/slab
+                                          </div>
+                                        )}
                                       </div>
                                     ) : (
                                       <div>
