@@ -126,11 +126,15 @@ const InventoryImportExport: React.FC = () => {
   const [mapVendorName, setMapVendorName] = useState('');
   const [mapDate, setMapDate] = useState(new Date().toISOString().slice(0,10));
   const [mapInvoiceNo, setMapInvoiceNo] = useState('');
-  const [mapTargetOrderId, setMapTargetOrderId] = useState('');   // '' = create/consolidate by date; else append to this existing order
-  const [mapItems, setMapItems] = useState<{ productId:string; name:string; category:string; qty:number; purchaseRate:number; sellingPrice:number }[]>([]);
+  const [mapTargetOrderId, setMapTargetOrderId] = useState('');
+  const [mapItems, setMapItems] = useState<{ productId:string; name:string; category:string; qty:number; purchaseRate:number; sellingPrice:number; vendorName:string; targetOrderId:string; }[]>([]);
   const [mapTransport, setMapTransport] = useState({ totalWeightTons: 0, ratePerTon: 3500, loadingCharges: 0, unloadingCharges: 0, driverExpenses: 0 });
   const [mapLaborCharges, setMapLaborCharges] = useState(0);
   const [mapSaving, setMapSaving] = useState(false);
+  const [mappingResult, setMappingResult] = useState<any[]>([]);  // results per vendor group
+  const [globalVendorName, setGlobalVendorName] = useState('');   // apply-all vendor
+  const [globalTargetOrderId, setGlobalTargetOrderId] = useState('');
+  const [expandedVendors, setExpandedVendors] = useState<Set<string>>(new Set(['__new__']));
   const fileRef = useRef<HTMLInputElement>(null);
 
   // ── Save import history ────────────────────────────────────────────────
@@ -379,14 +383,17 @@ const InventoryImportExport: React.FC = () => {
           setMapItems(imported.map(p => ({
             productId: p.id, name: p.name, category: p.category,
             qty: p.qty || 0, purchaseRate: p.purchasePrice || 0, sellingPrice: p.sellingPrice || 0,
+            vendorName: p.vendorName || '',     // pre-filled from CSV Vendor Name column
+            targetOrderId: p.orderNo || '',     // pre-filled from CSV Order ID column
           })));
           // Prefill vendor name from CSV if all rows share the same vendor
-          const vendors = [...new Set(imported.map(p=>p.vendorName).filter(Boolean))];
-          setMapVendorName(vendors.length === 1 ? vendors[0] : '');
+          const vendors = [...new Set(imported.map((p:any)=>p.vendorName).filter(Boolean))];
+          setMapVendorName(vendors.length === 1 ? String(vendors[0]) : '');
+          setGlobalVendorName(vendors.length === 1 ? String(vendors[0]) : '');
           // Prefill Order ID from CSV if all rows share the same Order ID/No
-          const orderNos = [...new Set(imported.map(p=>p.orderNo).filter(Boolean))];
-          setMapTargetOrderId(orderNos.length === 1 ? orderNos[0] : '');
-          if (orderNos.length === 1 && !mapInvoiceNo) setMapInvoiceNo(orderNos[0]);
+          const orderNos = [...new Set(imported.map((p:any)=>p.orderNo).filter(Boolean))];
+          setMapTargetOrderId(orderNos.length === 1 ? String(orderNos[0]) : '');
+          if (orderNos.length === 1 && !mapInvoiceNo) setMapInvoiceNo(String(orderNos[0]));
           setActiveTab('mapping');
         }
 
@@ -724,199 +731,269 @@ const InventoryImportExport: React.FC = () => {
       )}
 
       {/* ── VENDOR MAPPING TAB (shown after a successful import) ─────────── */}
-      {activeTab === 'mapping' && (
+      {activeTab === 'mapping' && (() => {
+        // ── Group items by their vendorName for display ────────────────────────
+        const allVendorNames = [...new Set(mapItems.map(i => i.vendorName || '__unassigned__'))];
+        const knownVendors = [...new Set((store.vendorOrders||[]).map(o=>o.vendorName))].filter(Boolean).sort();
+
+        const applyGlobalVendor = () => {
+          if (!globalVendorName.trim()) return;
+          setMapItems(prev => prev.map(i => ({
+            ...i, vendorName: globalVendorName.trim(),
+            targetOrderId: globalTargetOrderId,
+          })));
+        };
+
+        const saveVendorGroups = async () => {
+          setMapSaving(true); setMappingResult([]);
+          const results: any[] = [];
+          // Process each unique vendor group
+          const vendorGroups = new Map<string, typeof mapItems>();
+          mapItems.forEach(it => {
+            const v = it.vendorName?.trim() || '';
+            if (!v) return;
+            if (!vendorGroups.has(v)) vendorGroups.set(v, []);
+            vendorGroups.get(v)!.push(it);
+          });
+
+          for (const [vendorName, items] of Array.from(vendorGroups.entries())) {
+            // Find existing order if targetOrderId is specified
+            const targetOrderNo = items[0]?.targetOrderId?.trim() || '';
+            const existingOrder = targetOrderNo
+              ? (store.vendorOrders||[]).find(o => o.orderNo === targetOrderNo || o.id === targetOrderNo)
+              : null;
+
+            const orderItems = items.map(it => ({
+              id: `item-csv-${Date.now()}-${Math.random().toString(36).substr(2,5)}`,
+              productId: it.productId, productName: it.name, category: it.category,
+              unit: 'Box', orderedQty: it.qty, actualQty: it.qty,
+              billedQty: it.qty, billedRate: it.purchaseRate, billedAmount: it.qty * it.purchaseRate,
+              actualRate: it.purchaseRate, actualAmount: it.qty * it.purchaseRate,
+              receivedQty: it.qty, damagedQty: 0, goodQty: it.qty,
+              transportShare: 0, laborShare: 0,
+              landedCostPerUnit: it.purchaseRate, sellingPrice: it.sellingPrice,
+              marginPct: it.sellingPrice > it.purchaseRate ? Math.round(((it.sellingPrice - it.purchaseRate) / it.sellingPrice) * 10000) / 100 : 0,
+            }));
+
+            if (existingOrder) {
+              // Append to existing order
+              const merged = { ...existingOrder, items: [...existingOrder.items, ...orderItems], updatedAt: Date.now() };
+              store.updateVendorOrder(existingOrder.id, merged);
+              results.push({ vendorName, action: 'appended', orderNo: existingOrder.orderNo, itemCount: items.length });
+            } else {
+              // Auto-create new order
+              const newOrderNo = `INW-CSV-${Date.now().toString().slice(-6)}`;
+              const newOrder = {
+                id: `vo-csv-${Date.now()}-${Math.random().toString(36).substr(2,5)}`,
+                orderNo: newOrderNo, vendorName, vendorPhone: '', vendorGst: '', vendorAddress: '',
+                orderDate: mapDate, status: 'Received' as const,
+                paymentStatus: 'Pending' as const,
+                billingInvoice: { invoiceNo: mapInvoiceNo, date: mapDate, amount: 0, notes: '' },
+                actualInvoice:  { invoiceNo: mapInvoiceNo, date: mapDate, amount: 0, notes: '' },
+                items: orderItems,
+                totalBilledAmount: items.reduce((s,i)=>s+i.qty*i.purchaseRate,0),
+                totalActualAmount:  items.reduce((s,i)=>s+i.qty*i.purchaseRate,0),
+                totalTransportCost: 0, laborCharges: 0, miscCharges: 0, miscDescription: '',
+                grandTotal: items.reduce((s,i)=>s+i.qty*i.purchaseRate,0),
+                cashAmount: 0, rtgsAmount: 0, paidAmount: 0, balanceAmount: items.reduce((s,i)=>s+i.qty*i.purchaseRate,0),
+                transport: { totalWeightTons:0, ratePerTon:0, loadingCharges:0, unloadingCharges:0, driverExpenses:0, totalTransportCost:0, perUnitCost:0 },
+                paymentHistory: [], receivedGodownId: store.godowns[0]?.id || 'g1',
+                isImportBatch: true, updatedAt: Date.now(),
+              };
+              store.addVendorOrder(newOrder as any);
+              results.push({ vendorName, action: 'created', orderNo: newOrderNo, itemCount: items.length });
+            }
+          }
+          const unassigned = mapItems.filter(i => !i.vendorName?.trim());
+          if (unassigned.length) results.push({ vendorName: '(no vendor)', action: 'skipped', orderNo:'—', itemCount: unassigned.length });
+          setMappingResult(results);
+          setMapSaving(false);
+        };
+
+        return (
         <div className="space-y-5">
           <div className="bg-emerald-50 border border-emerald-200 rounded-2xl px-5 py-4 flex items-start gap-3">
             <i className="fas fa-check-circle text-emerald-500 text-lg mt-0.5"></i>
             <div>
-              <div className="font-black text-emerald-700 text-sm">{importedProducts.length} item(s) imported successfully</div>
+              <div className="font-black text-emerald-700 text-sm">{importedProducts.length} item(s) imported</div>
               <div className="text-[10px] text-emerald-600 font-bold mt-0.5">
-                Now map this batch to a vendor — set purchase rates, selling prices, and transport so
-                landed cost and vendor analytics are accurate. Stock levels from the CSV are kept as-is
-                (this step will NOT add stock again).
+                Now assign each item to a vendor. Items pre-filled from CSV "Vendor Name" and "Order ID" columns.
+                Assign to an existing order to append, or leave blank to auto-create a new order per vendor.
               </div>
             </div>
           </div>
 
-          {/* Vendor + date */}
-          <div className="bg-white border border-slate-100 rounded-2xl p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Vendor Name</label>
-              <input className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400"
-                list="import-vendor-list" value={mapVendorName} onChange={e=>setMapVendorName(e.target.value)} placeholder="e.g. Pradeep Suppliers" />
-              <datalist id="import-vendor-list">
-                {[...new Set((store.vendorOrders||[]).map(o=>o.vendorName))].filter(Boolean).map(v=><option key={v} value={v} />)}
-              </datalist>
+          {/* ── Global apply-to-all shortcut ── */}
+          <div className="bg-white border border-slate-100 rounded-2xl p-5">
+            <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">
+              Apply Single Vendor to ALL Items (shortcut)
             </div>
-            <div>
-              <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Date</label>
-              <input type="date" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400"
-                value={mapDate} onChange={e=>setMapDate(e.target.value)} />
-            </div>
-            <div>
-              <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Invoice / Ref No (optional)</label>
-              <input className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400"
-                value={mapInvoiceNo} onChange={e=>setMapInvoiceNo(e.target.value)} placeholder="INV-1234" />
-            </div>
-          </div>
-
-          {/* Order targeting — append to an existing order for this vendor, or create a new one */}
-          {mapVendorName.trim() && (() => {
-            const vendorOrdersForThisVendor = (store.vendorOrders||[]).filter(o =>
-              (o.vendorName||'').trim().toLowerCase() === mapVendorName.trim().toLowerCase() &&
-              o.status !== 'Closed' && o.status !== 'Cancelled'
-            );
-            return (
-              <div className="bg-white border border-slate-100 rounded-2xl p-5">
-                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">
-                  Add Items To
-                </label>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+              <div>
+                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1">Vendor Name</label>
+                <input className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400"
+                  list="global-vendor-list" value={globalVendorName}
+                  onChange={e => setGlobalVendorName(e.target.value)}
+                  placeholder="e.g. Pradeep Suppliers" />
+                <datalist id="global-vendor-list">
+                  {knownVendors.map(v=><option key={v} value={v}/>)}
+                </datalist>
+              </div>
+              <div>
+                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1">Link to Existing Order (optional)</label>
                 <select className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400"
-                  value={mapTargetOrderId} onChange={e=>setMapTargetOrderId(e.target.value)}>
-                  <option value="">+ Create New Order (or consolidate by date)</option>
-                  {vendorOrdersForThisVendor.map(o=>(
-                    <option key={o.id} value={o.orderNo}>
-                      #{o.orderNo} — {o.orderDate} — {o.items.length} item(s) — {o.status}
-                    </option>
+                  value={globalTargetOrderId} onChange={e=>setGlobalTargetOrderId(e.target.value)}>
+                  <option value="">+ Auto-create new order</option>
+                  {(store.vendorOrders||[]).filter(o=>!globalVendorName||o.vendorName?.toLowerCase()===globalVendorName.toLowerCase()).map(o=>(
+                    <option key={o.id} value={o.orderNo}>#{o.orderNo} — {o.vendorName} — {o.orderDate} — {o.items.length} items</option>
                   ))}
                 </select>
-                {mapTargetOrderId && (
-                  <div className="text-[10px] font-bold text-purple-600 mt-2">
-                    <i className="fas fa-link mr-1"></i>
-                    These {mapItems.length} item(s) will be added to existing order #{mapTargetOrderId} — no new order will be created.
-                  </div>
-                )}
               </div>
-            );
-          })()}
+              <button onClick={applyGlobalVendor} disabled={!globalVendorName.trim()}
+                className="py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase hover:bg-slate-800 disabled:opacity-40 flex items-center justify-center gap-2">
+                <i className="fas fa-magic"></i> Apply to All {mapItems.length} Items
+              </button>
+            </div>
+          </div>
 
-          {/* Items table — qty, purchase rate, selling price, landed cost (live) */}
+          {/* ── Per-item vendor assignment table ── */}
           <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100 font-black text-sm text-slate-900">Items — Review Pricing</div>
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+              <div className="font-black text-sm text-slate-900">Per-Item Vendor Assignment</div>
+              <div className="text-[9px] font-bold text-slate-400">
+                {mapItems.filter(i=>i.vendorName?.trim()).length}/{mapItems.length} assigned
+              </div>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead className="bg-slate-50">
                   <tr>
-                    {['Item','Category','Qty','Purchase Rate','Selling Price','Landed Cost','Margin'].map(h=>(
-                      <th key={h} className="px-4 py-2.5 text-left text-[9px] font-black text-slate-400 uppercase">{h}</th>
+                    {['Item','Category','Qty','Purchase Rate','Selling Price','Vendor','Existing Order'].map(h=>(
+                      <th key={h} className="px-3 py-2.5 text-left text-[9px] font-black text-slate-400 uppercase whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {(() => {
-                    const totalQty = mapItems.reduce((s,i)=>s+(i.qty||0),0);
-                    const freight = (mapTransport.totalWeightTons||0) * (mapTransport.ratePerTon||0);
-                    const totalTransport = freight + (mapTransport.loadingCharges||0) + (mapTransport.unloadingCharges||0) + (mapTransport.driverExpenses||0);
-                    const transportPerUnit = totalQty>0 ? totalTransport/totalQty : 0;
-                    const laborPerUnit = totalQty>0 ? mapLaborCharges/totalQty : 0;
-                    return mapItems.map((it, idx) => {
-                      const landed = it.purchaseRate + transportPerUnit + laborPerUnit;
-                      const margin = it.sellingPrice>0 ? ((it.sellingPrice-landed)/it.sellingPrice)*100 : 0;
-                      return (
-                        <tr key={it.productId}>
-                          <td className="px-4 py-2.5 font-bold text-slate-900">{it.name}</td>
-                          <td className="px-4 py-2.5 text-slate-500">{it.category}</td>
-                          <td className="px-4 py-2.5">
-                            <input type="number" className="w-20 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs"
-                              value={it.qty} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,qty:+e.target.value}:x))} />
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <input type="number" className="w-24 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs"
-                              value={it.purchaseRate} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,purchaseRate:+e.target.value}:x))} />
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <input type="number" className="w-24 px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg font-bold text-xs"
-                              value={it.sellingPrice} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,sellingPrice:+e.target.value}:x))} />
-                          </td>
-                          <td className="px-4 py-2.5 font-black text-purple-600">₹{landed.toFixed(2)}</td>
-                          <td className={`px-4 py-2.5 font-black ${margin>=20?'text-emerald-600':margin>=10?'text-amber-600':'text-rose-600'}`}>{margin.toFixed(1)}%</td>
-                        </tr>
-                      );
-                    });
-                  })()}
+                <tbody className="divide-y divide-slate-50">
+                  {mapItems.map((it, idx) => {
+                    const vendorOrders = (store.vendorOrders||[]).filter(o =>
+                      !it.vendorName || o.vendorName?.toLowerCase() === it.vendorName.toLowerCase()
+                    );
+                    return (
+                      <tr key={it.productId} className={`hover:bg-slate-50 ${!it.vendorName?.trim()?'bg-amber-50/50':''}`}>
+                        <td className="px-3 py-2 font-bold text-slate-900 whitespace-nowrap">{it.name}</td>
+                        <td className="px-3 py-2 text-slate-500">{it.category}</td>
+                        <td className="px-3 py-2">
+                          <input type="number" className="w-16 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs"
+                            value={it.qty} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,qty:+e.target.value}:x))} />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="number" className="w-20 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs"
+                            value={it.purchaseRate} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,purchaseRate:+e.target.value}:x))} />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="number" className="w-20 px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg font-bold text-xs"
+                            value={it.sellingPrice} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,sellingPrice:+e.target.value}:x))} />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input className="w-36 px-2 py-1.5 bg-amber-50 border border-amber-200 rounded-lg font-bold text-xs"
+                            list={`vl-${idx}`}
+                            value={it.vendorName} placeholder="Type vendor…"
+                            onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,vendorName:e.target.value,targetOrderId:''}:x))} />
+                          <datalist id={`vl-${idx}`}>{knownVendors.map(v=><option key={v} value={v}/>)}</datalist>
+                        </td>
+                        <td className="px-3 py-2">
+                          <select className="w-44 px-2 py-1.5 bg-purple-50 border border-purple-200 rounded-lg font-bold text-xs"
+                            value={it.targetOrderId}
+                            onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,targetOrderId:e.target.value}:x))}>
+                            <option value="">+ Auto-create new order</option>
+                            {vendorOrders.map(o=>(
+                              <option key={o.id} value={o.orderNo}>#{o.orderNo} ({o.items.length} items)</option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
 
-          {/* Transport */}
-          <div className="bg-white border border-slate-100 rounded-2xl p-5 space-y-4">
-            <div className="font-black text-sm text-slate-900 flex items-center gap-2">
-              <i className="fas fa-truck text-purple-500"></i> Transport &amp; Logistics (allocated across all items)
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              <div>
-                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Total Weight (Tons)</label>
-                <input type="number" step="0.1" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm"
-                  value={mapTransport.totalWeightTons||''} onChange={e=>setMapTransport(p=>({...p,totalWeightTons:+e.target.value}))} />
+          {/* ── Summary by vendor before saving ── */}
+          {(() => {
+            const groups = new Map<string,{items:typeof mapItems; hasExisting:boolean}>();
+            mapItems.forEach(it => {
+              const v = it.vendorName?.trim() || '__unassigned__';
+              if (!groups.has(v)) groups.set(v, { items:[], hasExisting: false });
+              const g = groups.get(v)!;
+              g.items.push(it);
+              if (it.targetOrderId) g.hasExisting = true;
+            });
+            return (
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
+                <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Mapping Summary — Preview</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {Array.from(groups.entries()).map(([v, g]) => (
+                    <div key={v} className={`rounded-xl px-4 py-3 ${v==='__unassigned__'?'bg-amber-50 border border-amber-200':'bg-white border border-slate-100'}`}>
+                      <div className="font-black text-sm text-slate-900 flex items-center gap-2">
+                        <i className={`fas ${v==='__unassigned__'?'fa-exclamation-triangle text-amber-500':'fa-truck text-emerald-500'} text-xs`}></i>
+                        {v==='__unassigned__'?'⚠️ Unassigned':v}
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-bold mt-0.5">
+                        {g.items.length} items · {g.hasExisting ? `→ Append to existing order` : '→ New order will be created'}
+                      </div>
+                      {g.items[0]?.targetOrderId && (
+                        <div className="text-[9px] text-purple-600 font-black mt-0.5">Linking to #{g.items[0].targetOrderId}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div>
-                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Rate / Ton (₹)</label>
-                <input type="number" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm"
-                  value={mapTransport.ratePerTon||''} onChange={e=>setMapTransport(p=>({...p,ratePerTon:+e.target.value}))} />
-              </div>
-              <div>
-                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Loading (₹)</label>
-                <input type="number" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm"
-                  value={mapTransport.loadingCharges||''} onChange={e=>setMapTransport(p=>({...p,loadingCharges:+e.target.value}))} />
-              </div>
-              <div>
-                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Unloading (₹)</label>
-                <input type="number" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm"
-                  value={mapTransport.unloadingCharges||''} onChange={e=>setMapTransport(p=>({...p,unloadingCharges:+e.target.value}))} />
-              </div>
-              <div>
-                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Driver Extra (₹)</label>
-                <input type="number" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm"
-                  value={mapTransport.driverExpenses||''} onChange={e=>setMapTransport(p=>({...p,driverExpenses:+e.target.value}))} />
-              </div>
+            );
+          })()}
+
+          {/* Order date + reference */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Order Date</label>
+              <input type="date" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none"
+                value={mapDate} onChange={e=>setMapDate(e.target.value)} />
             </div>
             <div>
-              <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Labor Charges (₹)</label>
-              <input type="number" className="w-full md:w-48 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm"
-                value={mapLaborCharges||''} onChange={e=>setMapLaborCharges(+e.target.value)} />
+              <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Invoice / Ref No (optional)</label>
+              <input className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none"
+                value={mapInvoiceNo} onChange={e=>setMapInvoiceNo(e.target.value)} placeholder="INV-1234" />
             </div>
           </div>
 
-          {/* Actions */}
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={async ()=>{
-                setMapSaving(true);
-                try {
-                  // Ensure store.products has the freshly-imported items first
-                  await store.refreshFromServer(true);
-                  await store.linkImportBatchToVendor({
-                    vendorName: mapVendorName, date: mapDate, invoiceNo: mapInvoiceNo || undefined,
-                    targetOrderId: mapTargetOrderId || undefined,
-                    items: mapItems.map(i=>({
-                      productId:i.productId, name:i.name, category:i.category, unit:'Box',
-                      qty:i.qty, purchaseRate:i.purchaseRate, sellingPrice:i.sellingPrice,
-                    })),
-                    transport: mapTransport, laborCharges: mapLaborCharges,
-                  });
-                  await store.refreshFromServer(true);
-                  setImportedProducts([]);
-                  setMapItems([]);
-                  setMapTargetOrderId('');
-                  setActiveTab('import');
-                } finally { setMapSaving(false); }
-              }}
-              disabled={mapSaving || !mapVendorName.trim()}
-              className="px-8 py-3.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2">
-              {mapSaving ? <><i className="fas fa-spinner fa-spin"></i> Saving…</> : <><i className="fas fa-link"></i> Confirm Mapping — Link to Vendor</>}
-            </button>
-            <button
-              onClick={()=>{ setImportedProducts([]); setMapItems([]); setMapTargetOrderId(''); setActiveTab('import'); }}
-              className="px-8 py-3.5 bg-white border-2 border-slate-200 text-slate-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all">
-              Skip — Map Later from Vendor Supply Chain
-            </button>
-          </div>
-          {!mapVendorName.trim() && (
-            <div className="text-[10px] font-bold text-rose-500 uppercase">Enter a vendor name to confirm mapping</div>
+          {/* Save */}
+          <button onClick={saveVendorGroups} disabled={mapSaving || !mapItems.some(i=>i.vendorName?.trim())}
+            className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black text-sm uppercase hover:bg-slate-800 disabled:opacity-40 transition-all flex items-center justify-center gap-3">
+            {mapSaving ? <><i className="fas fa-spinner fa-spin"></i> Saving…</> : <><i className="fas fa-link"></i> Save Vendor Mapping — Create / Update Orders</>}
+          </button>
+
+          {/* Result */}
+          {mappingResult.length > 0 && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 space-y-3">
+              <div className="font-black text-emerald-700">✓ Vendor mapping complete</div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {mappingResult.map((r,i) => (
+                  <div key={i} className="bg-white rounded-xl px-4 py-3">
+                    <div className="font-black text-sm text-slate-900">{r.vendorName}</div>
+                    <div className="text-[10px] text-slate-500 font-bold mt-0.5">
+                      {r.action === 'created' ? '✅ New order created' : r.action === 'appended' ? '🔗 Appended to existing' : '⚠️ Skipped (no vendor)'}
+                      {r.orderNo !== '—' && <span> · #{r.orderNo}</span>}
+                    </div>
+                    <div className="text-[9px] text-emerald-600 font-black">{r.itemCount} items</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
-      )}
+        );
+      })()}
+
 
       {/* ── HISTORY TAB ────────────────────────────────────────────────── */}
       {activeTab === 'history' && (
