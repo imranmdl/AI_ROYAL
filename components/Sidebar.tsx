@@ -55,6 +55,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeTab, setActiveTab,
     { id: 'users', label: 'Staff Governance', icon: 'fa-user-shield', visible: perms?.canManageUsers },
     { id: 'system',          label: 'System Architecture', icon: 'fa-cog',          visible: isAdmin },
     { id: 'plans_features',  label: 'Plans & Features',    icon: 'fa-toggle-on',    visible: isAdmin },
+    { id: 'backup_restore',   label: 'Backup & Restore',    icon: 'fa-database',     visible: isAdmin },
     { id: 'profile',         label: 'My Account',          icon: 'fa-user-circle',  visible: true },
   ].filter(item => item.visible && store.isModuleEnabled(item.id));
 

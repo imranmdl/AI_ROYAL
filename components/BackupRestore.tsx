@@ -1,373 +1,331 @@
 /**
  * BackupRestore.tsx
- * Full backup/restore panel for the Subscription Admin Portal.
- * Supports per-tenant and full-DB backup in JSON or SQL format.
- * Restore: upload a JSON backup, choose target tenant, merge or replace.
+ * Intelligent Backup & Restore for Royal ERP.
+ * Super Admin: full DB + tenant-wise. Tenant Admin: own data.
  */
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { store } from '../store';
 
+interface Props { isSuperAdmin?: boolean; superKey?: string; }
+const INR = (n: number) => n.toLocaleString('en-IN');
 const BASE = window.location.origin;
-const SK   = 'test'; // must match SUPER_ADMIN_KEY
+type Status = 'idle'|'loading'|'success'|'error';
 
-interface Tenant { id: string; name: string; slug: string; }
-
-interface BackupRestoreProps {
-  tenants: Tenant[];
-  superAdminKey?: string;
-}
-
-const BackupRestore: React.FC<BackupRestoreProps> = ({ tenants, superAdminKey = SK }) => {
-  const KEY = superAdminKey || SK;
-
-  // ── Backup state ────────────────────────────────────────────────────────────
-  const [backupTenant,  setBackupTenant]  = useState<string>('ALL');
-  const [backupFormat,  setBackupFormat]  = useState<'json'|'sql'>('json');
-  const [backupLoading, setBackupLoading] = useState(false);
-  const [backupMsg,     setBackupMsg]     = useState('');
-
-  // ── Restore state ───────────────────────────────────────────────────────────
-  const [restoreFile,    setRestoreFile]    = useState<File|null>(null);
-  const [restoreTenant,  setRestoreTenant]  = useState<string>('');
-  const [restoreMode,    setRestoreMode]    = useState<'merge'|'replace'>('merge');
-  const [restoreLoading, setRestoreLoading] = useState(false);
-  const [restoreResult,  setRestoreResult]  = useState<any>(null);
+const BackupRestore: React.FC<Props> = ({ isSuperAdmin=false, superKey='' }) => {
+  const [tab, setTab] = useState<'backup'|'restore'|'validate'>('backup');
+  const [status, setStatus] = useState<Status>('idle');
+  const [message, setMessage] = useState('');
+  const [stats, setStats] = useState<any>(null);
+  const [validation, setValidation] = useState<any>(null);
+  const [uploadedBackup, setUploadedBackup] = useState<any>(null);
+  const [uploadedFilename, setUploadedFilename] = useState('');
+  const [restoreMode, setRestoreMode] = useState<'merge'|'replace'>('merge');
+  const [dryRunResult, setDryRunResult] = useState<any>(null);
+  const [restoreResult, setRestoreResult] = useState<any>(null);
+  const [targetTenantId, setTargetTenantId] = useState('');
+  const [tenants, setTenants] = useState<any[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  const token = (store as any).getAuthHeaders?.()?.Authorization || '';
+  const inp  = "w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-sm outline-none focus:border-amber-400 transition-all";
+  const lbl  = "text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5";
 
-  // ── Download helper ─────────────────────────────────────────────────────────
-  const triggerDownload = (url: string, filename: string) => {
-    const a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
+  useEffect(() => { fetchStats(); if(isSuperAdmin) fetchAllTenants(); }, []);
 
-  // ── Run backup ──────────────────────────────────────────────────────────────
-  const runBackup = async () => {
-    setBackupLoading(true); setBackupMsg('Fetching data from DB…');
+  const fetchStats = async () => {
     try {
-      const tid   = backupTenant === 'ALL' ? '' : backupTenant;
-      const query = `?key=${KEY}&format=${backupFormat}${tid ? `&tenantId=${tid}` : ''}`;
-      const r     = await fetch(`${BASE}/api/admin/backup${query}`);
-      if (!r.ok) throw new Error(await r.text());
-
-      const blob     = await r.blob();
-      const slug     = tid || 'full-db';
-      const dt       = new Date().toISOString().slice(0,10);
-      const filename = `royal-erp-backup-${slug}-${dt}.${backupFormat}`;
-      triggerDownload(URL.createObjectURL(blob), filename);
-      setBackupMsg(`✓ Downloaded: ${filename}`);
-    } catch(e:any) {
-      setBackupMsg('Error: ' + e.message);
-    } finally { setBackupLoading(false); }
+      const tParam = isSuperAdmin && targetTenantId ? `&tenant_id=${targetTenantId}` : '';
+      const kParam = isSuperAdmin ? `?key=${superKey}${tParam}` : '';
+      const r = await fetch(`${BASE}/api/backup/stats${kParam}`, { headers:{ Authorization: token }});
+      if(r.ok) setStats(await r.json());
+    } catch {}
   };
-
-  // ── Run restore ─────────────────────────────────────────────────────────────
-  const runRestore = async () => {
-    if (!restoreFile) { alert('Select a backup file first'); return; }
-    if (!restoreTenant) { alert('Select target tenant'); return; }
-    if (restoreMode === 'replace' && !confirm(
-      `⚠️ REPLACE mode will DELETE all existing data for "${restoreTenant}" before restoring.\n\nAre you sure?`
-    )) return;
-
-    setRestoreLoading(true); setRestoreResult(null);
+  const fetchAllTenants = async () => {
     try {
-      const text   = await restoreFile.text();
-      const parsed = JSON.parse(text);
-      const query  = `?key=${KEY}&tenantId=${restoreTenant}&mode=${restoreMode}`;
-      const r      = await fetch(`${BASE}/api/admin/restore${query}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed),
-      });
-      const result = await r.json();
-      setRestoreResult(result);
-    } catch(e:any) {
-      setRestoreResult({ error: e.message });
-    } finally { setRestoreLoading(false); }
+      const r = await fetch(`${BASE}/api/admin/tenants?key=${superKey}`);
+      if(r.ok) { const d = await r.json(); setTenants(d.tenants||[]); }
+    } catch {}
   };
 
-  const tenantName = (id: string) => tenants.find(t=>t.id===id)?.name || id;
+  const downloadBackup = async (type: 'tenant'|'full') => {
+    setStatus('loading'); setMessage('Preparing backup…');
+    try {
+      const params = type==='full' ? `?key=${superKey}` :
+        (targetTenantId&&isSuperAdmin) ? `?key=${superKey}&tenant_id=${targetTenantId}` : '';
+      const r = await fetch(`${BASE}/api/backup/${type}${params}`, { headers:{ Authorization: token }});
+      if(!r.ok) throw new Error((await r.json()).error||`HTTP ${r.status}`);
+      const data = await r.json();
+      const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+      const fname = `backup-${type}-${data._meta?.tenantId||'full'}-${new Date().toISOString().slice(0,10)}.json`;
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fname; a.click(); URL.revokeObjectURL(a.href);
+      const total = Object.values(data.counts||{}).reduce((s:any,v:any)=>s+v,0);
+      setStatus('success'); setMessage(`✓ Backup saved: ${fname} — ${total} records · checksum: ${data._meta?.checksum}`);
+    } catch(e:any){ setStatus('error'); setMessage(`✗ ${e.message}`); }
+  };
 
-  return (
-    <div className="space-y-8">
+  const onFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if(!f) return;
+    setUploadedFilename(f.name);
+    const r=new FileReader();
+    r.onload=ev=>{ try{ setUploadedBackup(JSON.parse(ev.target?.result as string)); setValidation(null); setDryRunResult(null); setRestoreResult(null); setStatus('idle'); setMessage('File loaded — click Validate.'); }catch{ setStatus('error'); setMessage('Invalid JSON file'); } };
+    r.readAsText(f);
+  };
 
-      {/* ── BACKUP ───────────────────────────────────────────────────────────── */}
-      <div className="bg-slate-900 border border-white/10 rounded-2xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-white/10 flex items-center gap-3">
-          <div className="w-9 h-9 bg-blue-500/20 rounded-xl flex items-center justify-center">
-            <i className="fas fa-cloud-download-alt text-blue-400"></i>
-          </div>
-          <div>
-            <div className="text-white font-black text-sm">Create Backup</div>
-            <div className="text-slate-400 text-[10px] font-bold">Export all data as JSON or SQL</div>
-          </div>
-        </div>
+  const validateBackup = async () => {
+    if(!uploadedBackup){ setMessage('Upload a file first.'); return; }
+    setStatus('loading'); setMessage('Validating…');
+    try{
+      const r=await fetch(`${BASE}/api/backup/validate`,{ method:'POST', headers:{'Content-Type':'application/json',Authorization:token}, body:JSON.stringify({backup:uploadedBackup})});
+      const result=await r.json(); setValidation(result);
+      setStatus(result.valid?'success':'error');
+      setMessage(result.valid?'✓ Backup is valid and safe to restore':`✗ Issues: ${result.issues.join('; ')}`);
+    }catch(e:any){ setStatus('error'); setMessage(`Validation error: ${e.message}`); }
+  };
 
-        <div className="p-6 space-y-5">
-          {/* Tenant selector */}
-          <div className="space-y-2">
-            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Select Scope</label>
-            <div className="grid grid-cols-2 gap-2">
-              <button onClick={()=>setBackupTenant('ALL')}
-                className={`px-4 py-3 rounded-xl font-black text-[10px] uppercase border transition-all ${backupTenant==='ALL' ? 'bg-blue-500 border-blue-500 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/30'}`}>
-                <i className="fas fa-database mr-2"></i>Full DB
-              </button>
-              <div className="relative">
-                <select value={backupTenant} onChange={e=>setBackupTenant(e.target.value)}
-                  className={`w-full px-4 py-3 rounded-xl font-black text-[10px] uppercase border appearance-none transition-all cursor-pointer ${backupTenant!=='ALL' ? 'bg-blue-500 border-blue-500 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/30'}`}>
-                  <option value="ALL">Choose Tenant →</option>
-                  {tenants.map(t => (
-                    <option key={t.id} value={t.id}>{t.name} ({t.slug})</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            {backupTenant !== 'ALL' && (
-              <div className="text-amber-400 text-[10px] font-bold px-1">
-                <i className="fas fa-store mr-1"></i>Backing up: {tenantName(backupTenant)}
-              </div>
-            )}
-          </div>
+  const runDryRun = async () => {
+    if(!uploadedBackup){ setMessage('Upload a file first.'); return; }
+    setStatus('loading'); setMessage('Running dry-run preview…');
+    try{
+      const q=isSuperAdmin&&targetTenantId?`?key=${superKey}&tenant_id=${targetTenantId}`:'';
+      const r=await fetch(`${BASE}/api/backup/restore/tenant${q}`,{ method:'POST', headers:{'Content-Type':'application/json',Authorization:token}, body:JSON.stringify({backup:uploadedBackup,mode:restoreMode,dryRun:true})});
+      const d=await r.json(); setDryRunResult(d); setStatus('success'); setMessage('Dry run complete. Review and click Commit to proceed.');
+    }catch(e:any){ setStatus('error'); setMessage(`Dry run failed: ${e.message}`); }
+  };
 
-          {/* Format selector */}
-          <div className="space-y-2">
-            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">File Format</label>
-            <div className="grid grid-cols-2 gap-2">
-              {(['json','sql'] as const).map(fmt => (
-                <button key={fmt} onClick={()=>setBackupFormat(fmt)}
-                  className={`px-4 py-3 rounded-xl font-black text-[10px] uppercase border transition-all flex items-center justify-center gap-2 ${backupFormat===fmt ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400' : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/30'}`}>
-                  <i className={`fas ${fmt==='json' ? 'fa-code' : 'fa-file-code'}`}></i>
-                  .{fmt.toUpperCase()}
-                  {fmt==='json' && <span className="text-[8px] opacity-60">Restorable</span>}
-                  {fmt==='sql' && <span className="text-[8px] opacity-60">MySQL import</span>}
-                </button>
-              ))}
-            </div>
-          </div>
+  const performRestore = async () => {
+    if(!uploadedBackup||!dryRunResult){ setMessage('Run dry-run first.'); return; }
+    if(!window.confirm(`⚠️ Restore ${restoreMode==='replace'?'REPLACE ALL DATA in':'merge data into'} "${dryRunResult.targetTenant}"?\n\nThis cannot be undone. Continue?`)) return;
+    setStatus('loading'); setMessage('Restoring…');
+    try{
+      const q=isSuperAdmin&&targetTenantId?`?key=${superKey}&tenant_id=${targetTenantId}`:'';
+      const r=await fetch(`${BASE}/api/backup/restore/tenant${q}`,{ method:'POST', headers:{'Content-Type':'application/json',Authorization:token}, body:JSON.stringify({backup:uploadedBackup,mode:restoreMode,dryRun:false})});
+      const d=await r.json(); setRestoreResult(d);
+      setStatus(d.success?'success':'error');
+      setMessage(d.success?'✓ Restore complete! Refresh to see data.':`✗ ${d.error}`);
+      if(d.success) fetchStats();
+    }catch(e:any){ setStatus('error'); setMessage(`Restore failed: ${e.message}`); }
+  };
 
-          <button onClick={runBackup} disabled={backupLoading}
-            className="w-full py-3.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2">
-            {backupLoading
-              ? <><i className="fas fa-spinner fa-spin"></i> Fetching data…</>
-              : <><i className="fas fa-download"></i> Download Backup</>}
-          </button>
-
-          {backupMsg && (
-            <div className={`text-[11px] font-bold px-4 py-2.5 rounded-xl ${backupMsg.startsWith('✓') ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20' : 'text-rose-400 bg-rose-500/10 border border-rose-500/20'}`}>
-              {backupMsg}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── RESTORE ──────────────────────────────────────────────────────────── */}
-      <div className="bg-slate-900 border border-white/10 rounded-2xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-white/10 flex items-center gap-3">
-          <div className="w-9 h-9 bg-amber-500/20 rounded-xl flex items-center justify-center">
-            <i className="fas fa-cloud-upload-alt text-amber-400"></i>
-          </div>
-          <div>
-            <div className="text-white font-black text-sm">Restore from Backup</div>
-            <div className="text-slate-400 text-[10px] font-bold">Upload a .json backup file to restore data</div>
-          </div>
-        </div>
-
-        <div className="p-6 space-y-5">
-          {/* File drop zone */}
-          <div
-            onClick={()=>fileRef.current?.click()}
-            className={`relative border-2 border-dashed rounded-xl p-6 cursor-pointer transition-all text-center ${restoreFile ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-white/20 hover:border-white/40 bg-white/5'}`}>
-            <input ref={fileRef} type="file" accept=".json"
-              className="hidden"
-              onChange={e=>{ const f=e.target.files?.[0]; if(f) setRestoreFile(f); }} />
-            {restoreFile ? (
-              <div className="space-y-1">
-                <div className="text-emerald-400 font-black text-sm"><i className="fas fa-check-circle mr-2"></i>{restoreFile.name}</div>
-                <div className="text-slate-400 text-[10px] font-bold">{(restoreFile.size/1024).toFixed(1)} KB — click to change</div>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <i className="fas fa-file-upload text-slate-500 text-2xl"></i>
-                <div className="text-slate-400 font-black text-xs">Click to select .json backup file</div>
-                <div className="text-slate-600 text-[10px] font-bold">Only JSON backups can be restored (SQL is for external tools)</div>
-              </div>
-            )}
-          </div>
-
-          {/* Target tenant */}
-          <div className="space-y-2">
-            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Restore to Tenant</label>
-            <select value={restoreTenant} onChange={e=>setRestoreTenant(e.target.value)}
-              className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white font-bold text-sm outline-none focus:border-amber-400">
-              <option value="">Select target tenant…</option>
-              {tenants.map(t => (
-                <option key={t.id} value={t.id}>{t.name} — {t.slug}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Restore mode */}
-          <div className="space-y-2">
-            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Restore Mode</label>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { id:'merge',   label:'Merge',   icon:'fa-code-merge',  desc:'Add/update, keep existing' },
-                { id:'replace', label:'Replace', icon:'fa-trash-alt',   desc:'Wipe first, then restore' },
-              ].map(m => (
-                <button key={m.id} onClick={()=>setRestoreMode(m.id as any)}
-                  className={`px-3 py-3 rounded-xl font-black text-[10px] uppercase border transition-all text-left ${restoreMode===m.id ? (m.id==='replace' ? 'bg-rose-500/20 border-rose-500 text-rose-400' : 'bg-emerald-500/20 border-emerald-500 text-emerald-400') : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/30'}`}>
-                  <i className={`fas ${m.icon} mr-1`}></i>{m.label}
-                  <div className="text-[8px] mt-0.5 font-bold opacity-70 normal-case">{m.desc}</div>
-                </button>
-              ))}
-            </div>
-            {restoreMode==='replace' && (
-              <div className="text-rose-400 text-[10px] font-bold px-1 flex items-start gap-1">
-                <i className="fas fa-exclamation-triangle mt-0.5"></i>
-                Warning: All existing data for the selected tenant will be permanently deleted before restore.
-              </div>
-            )}
-          </div>
-
-          <button onClick={runRestore} disabled={restoreLoading || !restoreFile || !restoreTenant}
-            className={`w-full py-3.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 disabled:opacity-40 ${restoreMode==='replace' ? 'bg-rose-500 hover:bg-rose-600 text-white' : 'bg-amber-500 hover:bg-amber-600 text-white'}`}>
-            {restoreLoading
-              ? <><i className="fas fa-spinner fa-spin"></i> Restoring…</>
-              : <><i className="fas fa-cloud-upload-alt"></i> {restoreMode==='replace'?'⚠ Replace & Restore':'Merge Restore'}</>}
-          </button>
-
-          {/* Restore result */}
-          {restoreResult && (
-            <div className={`rounded-xl p-4 space-y-2 border ${restoreResult.error ? 'bg-rose-500/10 border-rose-500/20' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
-              <div className={`font-black text-sm ${restoreResult.error ? 'text-rose-400' : 'text-emerald-400'}`}>
-                <i className={`fas ${restoreResult.error ? 'fa-times-circle' : 'fa-check-circle'} mr-2`}></i>
-                {restoreResult.error ? 'Restore Failed' : 'Restore Complete'}
-              </div>
-              {restoreResult.restored && (
-                <div className="grid grid-cols-2 gap-1">
-                  {Object.entries(restoreResult.restored).map(([table, count]) => (
-                    <div key={table} className="flex justify-between text-[10px] font-bold text-slate-400 bg-white/5 rounded-lg px-3 py-1.5">
-                      <span>{table}</span>
-                      <span className="text-white">{String(count)} rows</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {restoreResult.error && <div className="text-rose-300 text-[11px] font-mono">{restoreResult.error}</div>}
-              {restoreResult.log?.length > 0 && (
-                <div className="text-slate-500 text-[9px] font-mono space-y-0.5">
-                  {restoreResult.log.map((l: string, i: number) => <div key={i}>{l}</div>)}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── QUICK FIX TOOLS ──────────────────────────────────────────────────── */}
-      <div className="bg-slate-900 border border-white/10 rounded-2xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-white/10">
-          <div className="text-white font-black text-sm">Quick Fix Tools</div>
-          <div className="text-slate-400 text-[10px] font-bold mt-0.5">One-time data repair operations</div>
-        </div>
-        <div className="p-6 space-y-3">
-          <QuickFix
-            label="Fix NULL tenant products"
-            desc="Assign orphaned products (no tenant_id) to a specific tenant. Run after importing data before the isolation fix."
-            action={async (tenantId: string) => {
-              const r = await fetch(`${BASE}/api/admin/fix-null-tenants?key=${KEY}&tenantId=${tenantId}`, { method:'POST' });
-              return r.json();
-            }}
-            tenants={tenants}
-          />
-          <QuickFix
-            label="Reset user password"
-            desc="Set a specific user's password directly in the DB."
-            action={async (_tenantId: string, extra: any) => {
-              const r = await fetch(`${BASE}/api/admin/reset-user-password?key=${KEY}`, {
-                method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify(extra),
-              });
-              return r.json();
-            }}
-            tenants={tenants}
-            extraFields={[
-              { key:'email', label:'User Email', placeholder:'admin@shop.com' },
-              { key:'newPassword', label:'New Password', placeholder:'newpass123' },
-            ]}
-          />
-        </div>
-      </div>
-    </div>
+  const scol={idle:'text-slate-500',loading:'text-blue-600',success:'text-emerald-600',error:'text-rose-600'}[status];
+  const TAB=(id:typeof tab,label:string,icon:string)=>(
+    <button onClick={()=>setTab(id)} className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase transition-all ${tab===id?'bg-slate-900 text-white shadow':'text-slate-500 hover:bg-slate-100'}`}>
+      <i className={`fas ${icon} text-xs`}></i>{label}
+    </button>
   );
-};
-
-// ── Quick Fix helper component ──────────────────────────────────────────────
-interface QFProps {
-  label: string;
-  desc: string;
-  action: (tenantId: string, extra?: any) => Promise<any>;
-  tenants: Tenant[];
-  extraFields?: { key: string; label: string; placeholder: string }[];
-}
-
-const QuickFix: React.FC<QFProps> = ({ label, desc, action, tenants, extraFields }) => {
-  const [open,     setOpen]     = useState(false);
-  const [tenant,   setTenant]   = useState('');
-  const [extra,    setExtra]    = useState<Record<string,string>>({});
-  const [loading,  setLoading]  = useState(false);
-  const [result,   setResult]   = useState<any>(null);
-
-  const run = async () => {
-    if (!tenant) { alert('Select a tenant'); return; }
-    setLoading(true); setResult(null);
-    try {
-      const payload = extraFields
-        ? { ...extra, tenantId: tenant }
-        : undefined;
-      const r = await action(tenant, payload);
-      setResult(r);
-    } catch(e:any) { setResult({ error: e.message }); }
-    finally { setLoading(false); }
-  };
 
   return (
-    <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-      <button onClick={()=>setOpen(v=>!v)}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-all">
-        <div className="text-left">
-          <div className="text-white font-black text-xs">{label}</div>
-          <div className="text-slate-500 text-[9px] font-bold mt-0.5">{desc}</div>
+    <div className="p-6 max-w-4xl mx-auto space-y-6">
+      <div>
+        <h1 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-3">
+          <i className="fas fa-database text-amber-500 text-2xl"></i>
+          {isSuperAdmin?'Full DB Backup & Restore':'Data Backup & Restore'}
+        </h1>
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+          {isSuperAdmin?'Super Admin — all tenants or per-tenant backup + restore with validation':'Secure your data — download, validate, restore'}
+        </p>
+      </div>
+
+      {/* Live stats */}
+      {stats&&(<div className="bg-white border rounded-3xl p-5 shadow-sm">
+        <div className="flex justify-between items-center mb-3">
+          <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Live DB — {stats.tenantId}</div>
+          <button onClick={fetchStats} className="text-[9px] font-black text-slate-400 hover:text-slate-700 flex items-center gap-1"><i className="fas fa-sync text-[8px]"></i> Refresh</button>
         </div>
-        <i className={`fas fa-chevron-${open?'up':'down'} text-slate-500 text-xs`}></i>
-      </button>
-      {open && (
-        <div className="px-4 pb-4 space-y-3 border-t border-white/10 pt-3">
-          <select value={tenant} onChange={e=>setTenant(e.target.value)}
-            className="w-full px-3 py-2.5 bg-white/10 border border-white/20 rounded-xl text-white font-bold text-xs outline-none focus:border-amber-400">
-            <option value="">Select tenant…</option>
-            {tenants.map(t=><option key={t.id} value={t.id}>{t.name} ({t.slug})</option>)}
-          </select>
-          {extraFields?.map(f => (
-            <input key={f.key} type="text" placeholder={f.placeholder}
-              value={extra[f.key]||''}
-              onChange={e=>setExtra(prev=>({...prev,[f.key]:e.target.value}))}
-              className="w-full px-3 py-2.5 bg-white/10 border border-white/20 rounded-xl text-white font-bold text-xs outline-none focus:border-amber-400 placeholder:text-slate-600" />
+        <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
+          {Object.entries(stats.counts||{}).map(([k,v]:any)=>(
+            <div key={k} className="bg-slate-50 rounded-2xl px-4 py-3">
+              <div className="text-[8px] font-black text-slate-400 uppercase mb-0.5">{k}</div>
+              <div className="text-xl font-black">{INR(v)}</div>
+            </div>
           ))}
-          <button onClick={run} disabled={loading}
-            className="w-full py-2.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white rounded-xl font-black text-[10px] uppercase transition-all">
-            {loading ? <><i className="fas fa-spinner fa-spin mr-1"></i>Running…</> : 'Run'}
-          </button>
-          {result && (
-            <div className={`text-[10px] font-mono p-3 rounded-xl border ${result.error ? 'text-rose-300 bg-rose-500/10 border-rose-500/20' : 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20'}`}>
-              {JSON.stringify(result, null, 2).slice(0, 400)}
-            </div>
-          )}
         </div>
-      )}
+        <div className="text-[8px] text-slate-400 font-bold mt-2">As of {new Date(stats.as_of).toLocaleString()}</div>
+      </div>)}
+
+      <div className="flex flex-wrap gap-2">
+        {TAB('backup','Backup','fa-cloud-download-alt')}
+        {TAB('restore','Restore','fa-cloud-upload-alt')}
+        {TAB('validate','Validate','fa-shield-alt')}
+      </div>
+
+      {/* ── BACKUP ── */}
+      {tab==='backup'&&(<div className="space-y-5">
+        {isSuperAdmin&&(<div className="bg-rose-50 border border-rose-100 rounded-3xl p-6 space-y-3">
+          <div className="text-[9px] font-black text-rose-600 uppercase tracking-widest"><i className="fas fa-crown mr-1"></i> Super Admin — Full Database Backup</div>
+          <p className="text-xs text-rose-700 font-bold">All tables, all tenants. Run before every deployment.</p>
+          <button onClick={()=>downloadBackup('full')} disabled={status==='loading'}
+            className="px-7 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl font-black text-[10px] uppercase disabled:opacity-40 flex items-center gap-2">
+            <i className="fas fa-database"></i> Download Full DB Backup
+          </button>
+          <div className="pt-3 border-t border-rose-100 space-y-2">
+            <label className={lbl}>Specific Tenant Backup</label>
+            <input className={inp} value={targetTenantId} onChange={e=>setTargetTenantId(e.target.value)}
+              placeholder="Tenant ID e.g. royal-mudhol-d81d2d03" list="t-list"/>
+            <datalist id="t-list">{tenants.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</datalist>
+            <button onClick={()=>{if(targetTenantId)downloadBackup('tenant');}} disabled={!targetTenantId||status==='loading'}
+              className="px-5 py-2.5 bg-slate-700 hover:bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase disabled:opacity-40 flex items-center gap-2">
+              <i className="fas fa-user-shield"></i> Download Tenant: {targetTenantId||'—'}
+            </button>
+          </div>
+        </div>)}
+
+        <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm space-y-4">
+          <div className="text-[9px] font-black text-slate-400 uppercase">Your Tenant Backup</div>
+          <div className="text-xs text-slate-500 space-y-1 font-bold">
+            <p>✅ Products, sales, vendor orders, referral agents, settings</p>
+            <p>✅ Checksum embedded for tamper detection</p>
+            <p>✅ JSON format — versioned, human-readable</p>
+          </div>
+          <button onClick={()=>downloadBackup('tenant')} disabled={status==='loading'}
+            className="w-full py-5 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-black text-sm uppercase disabled:opacity-40 flex items-center justify-center gap-3">
+            {status==='loading'?<><i className="fas fa-spinner fa-spin"></i> Preparing…</>:<><i className="fas fa-cloud-download-alt"></i> Download Backup Now</>}
+          </button>
+        </div>
+        <div className="bg-amber-50 border border-amber-100 rounded-2xl px-5 py-4 text-amber-800 text-xs font-bold">
+          <i className="fas fa-lightbulb mr-2 text-amber-500"></i>
+          Take a backup before every deployment or major import. Store in Google Drive or email to yourself.
+        </div>
+      </div>)}
+
+      {/* ── RESTORE ── */}
+      {tab==='restore'&&(<div className="space-y-5">
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4 text-amber-800 text-xs font-bold flex gap-3">
+          <i className="fas fa-exclamation-triangle mt-0.5 text-amber-500 shrink-0"></i>
+          Process: Upload → Validate → Dry Run → Commit. Always merge-mode unless you want to wipe everything.
+        </div>
+
+        <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm space-y-4">
+          <div className="text-[9px] font-black text-slate-400 uppercase">Step 1 — Upload Backup File</div>
+          <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={onFileSelect}/>
+          <button onClick={()=>fileRef.current?.click()}
+            className="w-full py-5 border-2 border-dashed border-slate-200 rounded-2xl text-slate-500 hover:border-amber-400 hover:text-amber-600 font-black text-sm flex items-center justify-center gap-3 transition-all">
+            <i className="fas fa-file-upload text-xl"></i>
+            {uploadedFilename||'Click to upload backup .json file'}
+          </button>
+          {uploadedBackup&&(<div className="px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-2xl text-xs font-bold text-emerald-700 space-y-0.5">
+            <div>✓ <strong>{uploadedFilename}</strong></div>
+            <div>Tenant: {uploadedBackup._meta?.tenantId} · Exported: {uploadedBackup._meta?.exportedAt?.slice(0,19).replace('T',' ')}</div>
+            <div>Products: {(uploadedBackup.products||[]).length} · Sales: {(uploadedBackup.sales||[]).length} · Orders: {(uploadedBackup.vendorOrders||[]).length}</div>
+          </div>)}
+        </div>
+
+        {uploadedBackup&&(<div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm space-y-4">
+          <div className="text-[9px] font-black text-slate-400 uppercase">Step 2 — Options</div>
+          <div className="grid grid-cols-2 gap-3">
+            <button onClick={()=>setRestoreMode('merge')}
+              className={`py-4 rounded-2xl border-2 text-left px-5 transition-all ${restoreMode==='merge'?'border-emerald-500 bg-emerald-50':'border-slate-100 hover:border-slate-200'}`}>
+              <div className="font-black text-sm mb-1">🔀 Merge (Safe)</div>
+              <div className="text-[9px] text-slate-500 font-bold">Add/update from backup. Keep existing data not in backup.</div>
+            </button>
+            <button onClick={()=>setRestoreMode('replace')}
+              className={`py-4 rounded-2xl border-2 text-left px-5 transition-all ${restoreMode==='replace'?'border-rose-500 bg-rose-50':'border-slate-100 hover:border-slate-200'}`}>
+              <div className="font-black text-sm mb-1">⚠️ Replace (Full Wipe)</div>
+              <div className="text-[9px] text-slate-500 font-bold">Delete all data, then restore. Cannot be undone.</div>
+            </button>
+          </div>
+          {isSuperAdmin&&(<div><label className={lbl}>Override Target Tenant ID</label>
+            <input className={inp} value={targetTenantId} onChange={e=>setTargetTenantId(e.target.value)} placeholder="Leave blank to use backup's own tenant"/>
+          </div>)}
+          <div className="flex gap-3">
+            <button onClick={validateBackup} className="flex-1 py-3 bg-blue-50 border border-blue-100 text-blue-700 rounded-2xl font-black text-[10px] uppercase hover:bg-blue-100 flex items-center justify-center gap-2">
+              <i className="fas fa-shield-alt"></i> Validate
+            </button>
+            <button onClick={runDryRun} className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-2xl font-black text-[10px] uppercase hover:bg-slate-200 flex items-center justify-center gap-2">
+              <i className="fas fa-eye"></i> Dry Run
+            </button>
+          </div>
+        </div>)}
+
+        {dryRunResult&&(<div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
+          <div className="text-[9px] font-black text-slate-500 uppercase">Dry Run — No data changed yet</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {Object.entries(dryRunResult.preview||{}).map(([k,v]:any)=>(
+              <div key={k} className="bg-white rounded-xl px-3 py-2">
+                <div className="text-[8px] font-black text-slate-400 uppercase">{k}</div>
+                <div className="font-black text-xl">{v}</div>
+                <div className="text-[8px] text-slate-400">to restore</div>
+              </div>
+            ))}
+          </div>
+          <div className="text-xs font-bold text-slate-600">Mode: <strong>{dryRunResult.mode}</strong> · Target: <strong>{dryRunResult.targetTenant}</strong></div>
+          <button onClick={performRestore}
+            className={`w-full py-4 rounded-2xl font-black text-sm uppercase text-white flex items-center justify-center gap-2 ${restoreMode==='replace'?'bg-rose-600 hover:bg-rose-700':'bg-emerald-600 hover:bg-emerald-700'}`}>
+            <i className="fas fa-redo"></i> Commit Restore ({restoreMode==='replace'?'⚠️ Replace All':'Merge'})
+          </button>
+        </div>)}
+
+        {restoreResult?.success&&(<div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 space-y-3">
+          <div className="font-black text-emerald-700 flex items-center gap-2"><i className="fas fa-check-circle text-xl"></i> Restore Completed Successfully</div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {Object.entries(restoreResult.restored||{}).map(([k,v]:any)=>(
+              <div key={k} className="bg-white rounded-xl px-3 py-2">
+                <div className="text-[8px] font-black text-slate-400 uppercase">{k}</div>
+                <div className="font-black text-xl text-emerald-700">{v}</div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs font-bold text-emerald-700"><i className="fas fa-info-circle mr-1"></i> Refresh the page to see restored data.</p>
+        </div>)}
+      </div>)}
+
+      {/* ── VALIDATE ── */}
+      {tab==='validate'&&(<div className="space-y-5">
+        <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm space-y-4">
+          <div className="text-[9px] font-black text-slate-400 uppercase">Validate a Backup File</div>
+          <p className="text-xs text-slate-500 font-bold">Verify checksum, record counts, and schema version before trusting the file.</p>
+          <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={onFileSelect}/>
+          <button onClick={()=>fileRef.current?.click()}
+            className="w-full py-4 border-2 border-dashed border-slate-200 rounded-2xl text-slate-500 hover:border-amber-400 hover:text-amber-600 font-black text-sm flex items-center justify-center gap-3 transition-all">
+            <i className="fas fa-file-search text-xl"></i>
+            {uploadedFilename||'Upload backup .json to validate'}
+          </button>
+          {uploadedBackup&&(<button onClick={validateBackup} disabled={status==='loading'}
+            className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black text-[10px] uppercase disabled:opacity-40 flex items-center justify-center gap-2">
+            {status==='loading'?<><i className="fas fa-spinner fa-spin"></i> Validating…</>:<><i className="fas fa-shield-alt"></i> Validate Now</>}
+          </button>)}
+        </div>
+
+        {validation&&(<div className={`border rounded-3xl p-6 space-y-4 ${validation.valid?'bg-emerald-50 border-emerald-200':'bg-rose-50 border-rose-200'}`}>
+          <div className={`flex items-center gap-3 font-black text-lg ${validation.valid?'text-emerald-700':'text-rose-700'}`}>
+            <i className={`fas ${validation.valid?'fa-check-circle':'fa-times-circle'} text-2xl`}></i>
+            {validation.valid?'Backup Valid ✓':'Validation Failed ✗'}
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="bg-white rounded-xl p-3">
+              <div className="text-[8px] font-black opacity-60 uppercase mb-1">Checksum</div>
+              <div className={`font-black ${validation.checksumOk?'text-emerald-600':'text-rose-600'}`}>{validation.checksumOk?'✓ Valid':'✗ Mismatch'}</div>
+              <div className="text-[8px] text-slate-400 mt-0.5 break-all">{validation.meta?.checksum}</div>
+            </div>
+            <div className="bg-white rounded-xl p-3">
+              <div className="text-[8px] font-black opacity-60 uppercase mb-1">Exported</div>
+              <div className="font-bold">{validation.meta?.exportedAt?.slice(0,16).replace('T',' ')}</div>
+              <div className="text-[8px] text-slate-400">{validation.meta?.exportedBy} · {validation.meta?.schema}</div>
+            </div>
+          </div>
+          <div className="space-y-1">
+            <div className="text-[8px] font-black opacity-60 uppercase">Record Counts</div>
+            {Object.entries(validation.validation||{}).map(([k,v]:any)=>(
+              <div key={k} className="flex items-center justify-between bg-white rounded-xl px-4 py-2 text-xs">
+                <span className="font-bold capitalize">{k}</span>
+                <div className="flex items-center gap-2">
+                  {v.stated!==undefined&&<span className="text-slate-400">expected {v.stated}</span>}
+                  <span className={`font-black ${v.ok===false?'text-rose-600':'text-emerald-600'}`}>
+                    {v.actual??v.count} found {v.ok===false?'✗':'✓'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {validation.issues.length>0&&validation.issues.map((iss:string,i:number)=>(
+            <div key={i} className="text-xs text-rose-700 font-bold flex items-start gap-2"><i className="fas fa-exclamation-circle mt-0.5 shrink-0"></i>{iss}</div>
+          ))}
+        </div>)}
+      </div>)}
+
+      {message&&(<div className={`px-5 py-3 rounded-2xl text-xs font-bold flex items-center gap-2 ${status==='error'?'bg-rose-50 border border-rose-100':status==='success'?'bg-emerald-50 border border-emerald-100':'bg-blue-50 border border-blue-100'}`}>
+        <i className={`fas ${status==='loading'?'fa-spinner fa-spin':status==='success'?'fa-check-circle':'fa-exclamation-circle'} ${scol}`}></i>
+        <span className={scol}>{message}</span>
+      </div>)}
     </div>
   );
 };
-
 export default BackupRestore;

@@ -19,6 +19,7 @@ const Expenses = lazy(() => import('./components/Expenses'));
 const VendorTracking = lazy(() => import('./components/VendorSupplyChain'));
 const SystemControl = lazy(() => import('./components/SystemControl'));
 const PlansFeatures = lazy(() => import('./components/PlansFeatures'));
+const BackupRestore = lazy(() => import('./components/BackupRestore'));
 const Login = lazy(() => import('./components/Login'));
 const WebGallery = lazy(() => import('./components/WebGallery'));
 const ProfileSettings = lazy(() => import('./components/ProfileSettings'));
@@ -311,6 +312,8 @@ const App: React.FC = () => {
               return currentUser.role === UserRole.ADMIN ? <SystemControl /> : <AccessDenied />;
             case 'plans_features':
               return currentUser.role === UserRole.ADMIN ? <PlansFeatures /> : <AccessDenied />;
+            case 'backup_restore':
+              return currentUser.role === UserRole.ADMIN ? <BackupRestore /> : <AccessDenied />;
             default: return <Dashboard />;
           }
         })()}

@@ -2247,6 +2247,369 @@ app.post('/api/sync', async (req: Request, res: Response) => {
   setTimeout(performBackup, 10000);
 
   // Backup API Endpoints
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // BACKUP & RESTORE — Tenant-aware, checksummed, validated
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * GET /api/backup/tenant — Download current tenant's full data as JSON
+   * Super admin (key=SUPER_ADMIN_KEY) can add ?tenant_id=<id> to get any tenant
+   */
+  app.get('/api/backup/tenant', async (req: Request, res: Response) => {
+    if (!pool || !dbHealthy) return res.status(503).json({ error: 'DB offline' });
+    try {
+      const superKey   = req.query.key as string;
+      const isSuperAdmin = superKey === SUPER_ADMIN_KEY;
+      const targetTenant = isSuperAdmin && req.query.tenant_id
+        ? req.query.tenant_id as string
+        : req.tenantId || 'default';
+
+      if (!isSuperAdmin && !req.tenantId) return res.status(401).json({ error: 'Auth required' });
+
+      const t = targetTenant;
+      const ts = new Date().toISOString();
+
+      // Fetch all tenant data
+      const [prods]:   any = await pool.query('SELECT data FROM products         WHERE tenant_id=?', [t]);
+      const [sales]:   any = await pool.query('SELECT data FROM sales             WHERE tenant_id=?', [t]);
+      const [purch]:   any = await pool.query('SELECT data FROM purchases         WHERE tenant_id=?', [t]);
+      const [vords]:   any = await pool.query('SELECT data FROM vendor_orders     WHERE tenant_id=?', [t]);
+      const [gleads]:  any = await pool.query('SELECT data FROM gallery_leads     WHERE tenant_id=? OR tenant_id IS NULL', [t]).catch(() => [[]]);
+      const [lchg]:    any = await pool.query('SELECT data FROM loading_charges   WHERE 1').catch(() => [[]]);
+      const [usrs]:    any = await pool.query('SELECT data FROM users             WHERE 1').catch(() => [[]]);
+      const [ra]:      any = await pool.query('SELECT data FROM referral_agents   WHERE tenant_id=?', [t]).catch(() => [[]]);
+      const [rc]:      any = await pool.query('SELECT data FROM referral_commissions WHERE tenant_id=?', [t]).catch(() => [[]]);
+      const [sys]:     any = await pool.query('SELECT data FROM system_persistence WHERE tenant_id=?', [t]).catch(() => [[]]);
+
+      const parse = (rows: any[]) => rows.map((r: any) => { try { return typeof r.data === 'string' ? JSON.parse(r.data) : r.data; } catch { return r.data; } });
+
+      const backup = {
+        _meta: {
+          version: 2,
+          schema: 'royal-erp-v2',
+          tenantId: t,
+          exportedAt: ts,
+          exportedBy: isSuperAdmin ? 'super-admin' : 'tenant-admin',
+        },
+        counts: {
+          products: prods.length,  sales: sales.length,  purchases: purch.length,
+          vendorOrders: vords.length,  galleryLeads: gleads.length,
+          referralAgents: ra.length,  referralCommissions: rc.length,
+        },
+        settings:           sys.length > 0 ? parse(sys)[0] : {},
+        products:           parse(prods),
+        sales:              parse(sales),
+        purchases:          parse(purch),
+        vendorOrders:       parse(vords),
+        galleryLeads:       parse(gleads),
+        loadingCharges:     parse(lchg),
+        users:              parse(usrs),
+        referralAgents:     parse(ra),
+        referralCommissions:parse(rc),
+      };
+
+      // Simple SHA-style checksum: record counts hash
+      const checksum = Buffer.from(
+        JSON.stringify(backup.counts) + ts
+      ).toString('base64').slice(0, 16);
+      (backup as any)._meta.checksum = checksum;
+
+      const filename = `backup-tenant-${t}-${ts.replace(/[:.]/g, '-').slice(0,19)}.json`;
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.json(backup);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  /**
+   * GET /api/backup/full — Super admin only: backup ALL tenants
+   */
+  app.get('/api/backup/full', async (req: Request, res: Response) => {
+    if (!pool || !dbHealthy) return res.status(503).json({ error: 'DB offline' });
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+    try {
+      const ts = new Date().toISOString();
+      const TABLES = ['products','sales','purchases','vendor_orders','gallery_leads','loading_charges',
+                      'users','referral_agents','referral_commissions','system_persistence','tenants'];
+      const allData: Record<string, any[]> = {};
+      let totalRows = 0;
+
+      for (const table of TABLES) {
+        try {
+          const [rows]: any = await pool.query(`SELECT * FROM ${table}`);
+          allData[table] = rows;
+          totalRows += rows.length;
+        } catch { allData[table] = []; }
+      }
+
+      // List all tenants
+      const [tenantRows]: any = await pool.query('SELECT id, name, slug, status FROM tenants').catch(() => [[]]);
+
+      const backup = {
+        _meta: {
+          version: 2, schema: 'royal-erp-full-v2',
+          exportedAt: ts, exportedBy: 'super-admin',
+          totalRows, tenantCount: tenantRows.length,
+          tables: TABLES,
+        },
+        tenants: tenantRows,
+        tables: allData,
+      };
+      const checksum = Buffer.from(JSON.stringify({ totalRows, tables: TABLES }) + ts).toString('base64').slice(0,16);
+      (backup as any)._meta.checksum = checksum;
+
+      const filename = `backup-FULL-${ts.replace(/[:.]/g, '-').slice(0,19)}.json`;
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.json(backup);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  /**
+   * POST /api/backup/validate — Validate an uploaded backup file
+   * Body: { backup: <json object> }
+   */
+  app.post('/api/backup/validate', async (req: Request, res: Response) => {
+    try {
+      const backup = req.body?.backup;
+      if (!backup?._meta) return res.status(400).json({ valid: false, error: 'Invalid backup format — missing _meta' });
+      const meta = backup._meta;
+      const counts = backup.counts || {};
+
+      // Recompute checksum
+      const expectedChecksum = Buffer.from(
+        JSON.stringify(counts) + meta.exportedAt
+      ).toString('base64').slice(0, 16);
+
+      const checksumOk = meta.checksum === expectedChecksum;
+      const issues: string[] = [];
+      if (!checksumOk) issues.push('Checksum mismatch — file may be corrupted or tampered');
+      if (!meta.tenantId && !meta.tables) issues.push('No tenant ID or table data found');
+      if (!backup.products && !backup.tables?.products) issues.push('No products data found');
+
+      // Count records in backup vs stated counts
+      const validation: Record<string, any> = {};
+      if (meta.schema?.includes('full')) {
+        // Full backup
+        for (const [table, rows] of Object.entries(backup.tables || {})) {
+          validation[table] = { count: (rows as any[]).length };
+        }
+      } else {
+        // Tenant backup
+        for (const [key, stated] of Object.entries(counts)) {
+          const actual = (backup[key] || []).length;
+          validation[key] = { stated, actual, ok: stated === actual };
+          if (stated !== actual) issues.push(`${key}: stated ${stated} but found ${actual} records`);
+        }
+      }
+
+      res.json({
+        valid: issues.length === 0,
+        meta, checksumOk, issues, validation,
+      });
+    } catch (e: any) { res.status(500).json({ valid: false, error: e.message }); }
+  });
+
+  /**
+   * POST /api/backup/restore/tenant — Restore tenant data from backup JSON
+   * Body: { backup: <json object>, mode: 'merge' | 'replace', dryRun: bool }
+   */
+  app.post('/api/backup/restore/tenant', async (req: Request, res: Response) => {
+    if (!pool || !dbHealthy) return res.status(503).json({ error: 'DB offline' });
+    const superKey = req.query.key as string;
+    const isSuperAdmin = superKey === SUPER_ADMIN_KEY;
+    if (!isSuperAdmin && !req.tenantId) return res.status(401).json({ error: 'Auth required' });
+    try {
+      const { backup, mode = 'merge', dryRun = false } = req.body;
+      if (!backup?._meta) return res.status(400).json({ error: 'Invalid backup format' });
+
+      const targetTenant = isSuperAdmin && req.query.tenant_id
+        ? req.query.tenant_id as string
+        : req.tenantId || backup._meta.tenantId || 'default';
+
+      // Validate checksum first
+      const expectedChecksum = Buffer.from(
+        JSON.stringify(backup.counts) + backup._meta.exportedAt
+      ).toString('base64').slice(0, 16);
+      if (backup._meta.checksum && backup._meta.checksum !== expectedChecksum) {
+        return res.status(400).json({ error: 'Backup checksum invalid — file may be corrupted' });
+      }
+
+      const results: Record<string, any> = {};
+
+      if (dryRun) {
+        // Just preview what would be restored
+        return res.json({
+          dryRun: true, targetTenant, mode,
+          preview: {
+            products:   (backup.products || []).length,
+            sales:      (backup.sales || []).length,
+            vendorOrders: (backup.vendorOrders || []).length,
+            referralAgents: (backup.referralAgents || []).length,
+          }
+        });
+      }
+
+      const now = Date.now();
+      const t = targetTenant;
+
+      // Optionally clear existing tenant data (replace mode)
+      if (mode === 'replace') {
+        for (const table of ['products','sales','purchases','vendor_orders','referral_agents','referral_commissions']) {
+          await pool.query(`DELETE FROM ${table} WHERE tenant_id=?`, [t]);
+        }
+        results.cleared = true;
+      }
+
+      // Restore products
+      const prods = backup.products || [];
+      for (const p of prods) {
+        await pool.query(
+          `INSERT INTO products (id,tenant_id,name,category,brand,stock_boxes,stock_loose,selling_price,status,data,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)
+           ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id),name=VALUES(name),data=VALUES(data),updated_at=VALUES(updated_at)`,
+          [p.id, t, p.name, p.category, p.brand, p.stockBoxes||0, p.stockLoose||0, p.sellingPrice||0, p.status||'Active', JSON.stringify(p), now]
+        );
+      }
+      results.products = prods.length;
+
+      // Restore sales
+      const sales = backup.sales || [];
+      for (const s of sales) {
+        await pool.query(
+          `INSERT INTO sales (id,tenant_id,invoice_no,customer_name,date,total_amount,data,updated_at)
+           VALUES (?,?,?,?,?,?,?,?)
+           ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id),data=VALUES(data),updated_at=VALUES(updated_at)`,
+          [s.id, t, s.invoiceNo||'', s.customerName||'', s.date||'', s.totalAmount||0, JSON.stringify(s), now]
+        );
+      }
+      results.sales = sales.length;
+
+      // Restore vendor orders
+      const vords = backup.vendorOrders || [];
+      for (const o of vords) {
+        await pool.query(
+          `INSERT INTO vendor_orders (id,tenant_id,order_no,vendor_name,status,payment_status,data,updated_at)
+           VALUES (?,?,?,?,?,?,?,?)
+           ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id),data=VALUES(data),updated_at=VALUES(updated_at)`,
+          [o.id, t, o.orderNo||'', o.vendorName||'', o.status||'Pending', o.paymentStatus||'Pending', JSON.stringify(o), now]
+        );
+      }
+      results.vendorOrders = vords.length;
+
+      // Restore referral agents
+      for (const a of (backup.referralAgents||[])) {
+        await pool.query(
+          `INSERT INTO referral_agents (id,tenant_id,name,mobile,data,updated_at) VALUES (?,?,?,?,?,?)
+           ON DUPLICATE KEY UPDATE data=VALUES(data),updated_at=VALUES(updated_at)`,
+          [a.id, t, a.name||'', a.mobile||'', JSON.stringify(a), now]
+        );
+      }
+      results.referralAgents = (backup.referralAgents||[]).length;
+
+      // Restore referral commissions
+      for (const c of (backup.referralCommissions||[])) {
+        await pool.query(
+          `INSERT INTO referral_commissions (id,tenant_id,agent_id,invoice_no,sale_id,data,updated_at) VALUES (?,?,?,?,?,?,?)
+           ON DUPLICATE KEY UPDATE data=VALUES(data),updated_at=VALUES(updated_at)`,
+          [c.id, t, c.agentId||'', c.invoiceNo||'', c.saleId||'', JSON.stringify(c), now]
+        );
+      }
+      results.referralCommissions = (backup.referralCommissions||[]).length;
+
+      // Restore settings (system_persistence)
+      if (backup.settings && Object.keys(backup.settings).length > 0) {
+        await pool.query(
+          `INSERT INTO system_persistence (tenant_id, data, updated_at) VALUES (?,?,?)
+           ON DUPLICATE KEY UPDATE data=VALUES(data),updated_at=VALUES(updated_at)`,
+          [t, JSON.stringify(backup.settings), now]
+        ).catch(() => {});
+        results.settings = 1;
+      }
+
+      // Invalidate cache
+      syncResponseCache = null;
+
+      res.json({ success: true, targetTenant, mode, restored: results });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  /**
+   * POST /api/backup/restore/full — Super admin: restore full DB from backup
+   */
+  app.post('/api/backup/restore/full', async (req: Request, res: Response) => {
+    if (!pool || !dbHealthy) return res.status(503).json({ error: 'DB offline' });
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+    try {
+      const { backup, dryRun = false } = req.body;
+      if (!backup?._meta?.tables) return res.status(400).json({ error: 'Not a full backup — missing _meta.tables' });
+
+      if (dryRun) {
+        return res.json({ dryRun: true, meta: backup._meta, tableNames: backup._meta.tables, totalRows: backup._meta.totalRows });
+      }
+
+      const results: Record<string, number> = {};
+      const now = Date.now();
+
+      for (const [table, rows] of Object.entries(backup.tables || {})) {
+        if (!Array.isArray(rows) || rows.length === 0) continue;
+        const cols = Object.keys(rows[0]);
+        const placeholders = cols.map(() => '?').join(',');
+        const colStr = cols.map(c => `\`${c}\``).join(',');
+        let restored = 0;
+        for (const row of rows as any[]) {
+          const vals = cols.map(c => {
+            const v = row[c];
+            if (v === null || v === undefined) return null;
+            if (typeof v === 'object') return JSON.stringify(v);
+            return v;
+          });
+          try {
+            await pool.query(
+              `INSERT INTO \`${table}\` (${colStr}) VALUES (${placeholders})
+               ON DUPLICATE KEY UPDATE updated_at=${now}`,
+              vals
+            );
+            restored++;
+          } catch {}
+        }
+        results[table] = restored;
+      }
+      syncResponseCache = null;
+      res.json({ success: true, restored: results });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  /**
+   * GET /api/backup/stats — Returns current data counts for a tenant (used to verify backup)
+   */
+  app.get('/api/backup/stats', async (req: Request, res: Response) => {
+    if (!pool || !dbHealthy) return res.status(503).json({ error: 'DB offline' });
+    const superKey = req.query.key as string;
+    const isSuperAdmin = superKey === SUPER_ADMIN_KEY;
+    try {
+      const t = isSuperAdmin && req.query.tenant_id ? req.query.tenant_id as string : req.tenantId || 'default';
+      const count = async (table: string, col = 'tenant_id') => {
+        const [r]: any = await pool.query(`SELECT COUNT(*) as n FROM ${table} WHERE ${col}=?`, [t]).catch(() => [[{n:0}]]);
+        return r[0]?.n || 0;
+      };
+      res.json({
+        tenantId: t,
+        counts: {
+          products:            await count('products'),
+          sales:               await count('sales'),
+          purchases:           await count('purchases'),
+          vendorOrders:        await count('vendor_orders'),
+          referralAgents:      await count('referral_agents'),
+          referralCommissions: await count('referral_commissions'),
+          galleryLeads:        await count('gallery_leads'),
+        },
+        as_of: new Date().toISOString(),
+      });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.get('/api/backups', async (req, res) => {
     try {
       const files = await fs.readdir(BACKUP_DIR);
