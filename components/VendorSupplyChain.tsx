@@ -88,11 +88,11 @@ const VendorSupplyChain: React.FC = () => {
     const totalLanded    = totalActual + totalTransport + totalLabor;
 
     // Potential revenue based on selling prices set in order items
-    const tPerUnitAll = totalActual > 0 ? totalTransport / src.reduce((s,o)=>s+o.items.reduce((si,i)=>si+(i.actualQty||0),0),0) : 0;
+    const tPerUnitAll = totalActual > 0 ? totalTransport / src.reduce((s,o)=>s+(o.items||[]).reduce((si,i)=>si+(i.actualQty||0),0),0) : 0;
     const potentialRevenue = src.reduce((s,o) => {
-      const tpu = o.items.length > 0 ? (o.totalTransportCost||0) / o.items.reduce((si,i)=>si+(i.actualQty||0),1) : 0;
-      const lpu = o.items.length > 0 ? (o.laborCharges||0) / o.items.reduce((si,i)=>si+(i.actualQty||0),1) : 0;
-      return s + o.items.reduce((is,i) => {
+      const tpu = (o.items||[]).length > 0 ? (o.totalTransportCost||0) / (o.items||[]).reduce((si,i)=>si+(i.actualQty||0),1) : 0;
+      const lpu = (o.items||[]).length > 0 ? (o.laborCharges||0) / (o.items||[]).reduce((si,i)=>si+(i.actualQty||0),1) : 0;
+      return s + (o.items||[]).reduce((is,i) => {
         const qty = i.actualQty||0;
         const selling = i.sellingPrice||0;
         return is + (qty * selling);
@@ -103,14 +103,14 @@ const VendorSupplyChain: React.FC = () => {
 
     // Realized revenue from actual sales of vendor products
     const sales = store.sales || [];
-    const vendorProductIds = new Set(src.flatMap(o=>o.items.map(i=>i.productId)));
+    const vendorProductIds = new Set(src.flatMap(o=>(o.items||[]).map(i=>i.productId)));
     const vendorSales = (sales as any[]).filter((s:any) => s.items?.some((i:any)=>vendorProductIds.has(i.productId)));
     const totalSaleValue = vendorSales.reduce((s:number,sale:any)=>s+(sale.totalAmount||0),0);
     const realizedProfit = totalSaleValue - totalLanded;
     const realizedMargin = totalSaleValue > 0 ? (realizedProfit/totalSaleValue)*100 : 0;
 
-    const totalDamaged = src.reduce((s,o)=>s+o.damagedItems.reduce((ds,d)=>ds+(d.qtyDamaged||0),0),0);
-    const allItems = src.flatMap(o=>o.items);
+    const totalDamaged = src.reduce((s,o)=>s+(o.damagedItems||[]).reduce((ds,d)=>ds+(d.qtyDamaged||0),0),0);
+    const allItems = src.flatMap(o=>o.items||[]);
     const avgQuality = allItems.filter(i=>i.qualityRating).length
       ? allItems.reduce((s,i)=>s+(i.qualityRating||0),0)/allItems.filter(i=>i.qualityRating).length : 0;
     const totalOrders = src.length;
@@ -199,12 +199,12 @@ const VendorSupplyChain: React.FC = () => {
                     const trans  = vo.reduce((s,o)=>s+(o.totalTransportCost||0),0);
                     const labor  = vo.reduce((s,o)=>s+(o.laborCharges||0),0);
                     const landed = actual+trans+labor;
-                    const potRev = vo.reduce((s,o)=>s+o.items.reduce((is,i)=>is+(i.actualQty||0)*(i.sellingPrice||0),0),0);
+                    const potRev = vo.reduce((s,o)=>s+(o.items||[]).reduce((is,i)=>is+(i.actualQty||0)*(i.sellingPrice||0),0),0);
                     const potProfit = potRev - landed;
                     const potMargin = potRev>0?(potProfit/potRev)*100:0;
                     const pids   = new Set(vo.flatMap(o=>o.items.map(i=>i.productId)));
                     const sv     = (store.sales||[]).filter((s:any)=>s.items?.some((i:any)=>pids.has(i.productId))).reduce((s:number,x:any)=>s+(x.totalAmount||0),0);
-                    const damaged= vo.reduce((s,o)=>s+o.damagedItems.reduce((d,x)=>d+(x.qtyDamaged||0),0),0);
+                    const damaged= vo.reduce((s,o)=>s+(o.damagedItems||[]).reduce((d,x)=>d+(x.qtyDamaged||0),0),0);
                     return (
                       <tr key={v} className="hover:bg-white/5 transition-colors cursor-pointer" onClick={()=>{ setAnalyticsVendor(v); }}>
                         <td className="px-4 py-3 text-white font-bold">{v}</td>
@@ -252,8 +252,8 @@ const VendorSupplyChain: React.FC = () => {
               </div>
             )}
             {filtered.map(o=>{
-              const totalQty  = o.items.reduce((s,i)=>s+(i.actualQty||i.qtyBoxes||0),0);
-              const receivedQ = o.items.reduce((s,i)=>s+(i.receivedQty||0),0);
+              const totalQty  = (o.items||[]).reduce((s,i)=>s+(i.actualQty||i.qtyBoxes||0),0);
+              const receivedQ = (o.items||[]).reduce((s,i)=>s+(i.receivedQty||0),0);
               const pctRecv   = totalQty>0 ? Math.round((receivedQ/totalQty)*100) : 0;
               return (
                 <div key={o.id} className="bg-slate-900 border border-white/10 rounded-2xl p-5 hover:border-amber-500/30 transition-all">

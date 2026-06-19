@@ -25,18 +25,23 @@ const BackupRestore: React.FC<Props> = ({ isSuperAdmin=false, superKey='' }) => 
   const [targetTenantId, setTargetTenantId] = useState('');
   const [tenants, setTenants] = useState<any[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
-  const token = (store as any).getAuthHeaders?.()?.Authorization || '';
+  // Refresh token from store on every render (in case it changes)
+  const authHeaders = store.getAuthHeaders?.() || {};
+  const token = authHeaders.Authorization || authHeaders['Authorization'] || '';
   const inp  = "w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-sm outline-none focus:border-amber-400 transition-all";
   const lbl  = "text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5";
 
   useEffect(() => { fetchStats(); if(isSuperAdmin) fetchAllTenants(); }, []);
 
   const fetchStats = async () => {
+    if (!token && !superKey) return; // don't call without auth
     try {
       const tParam = isSuperAdmin && targetTenantId ? `&tenant_id=${targetTenantId}` : '';
       const kParam = isSuperAdmin ? `?key=${superKey}${tParam}` : '';
-      const r = await fetch(`${BASE}/api/backup/stats${kParam}`, { headers:{ Authorization: token }});
-      if(r.ok) setStats(await r.json());
+      const headers: Record<string,string> = {};
+      if (token) headers['Authorization'] = token;
+      const r = await fetch(`${BASE}/api/backup/stats${kParam}`, { headers });
+      if (r.ok) setStats(await r.json());
     } catch {}
   };
   const fetchAllTenants = async () => {
@@ -51,7 +56,9 @@ const BackupRestore: React.FC<Props> = ({ isSuperAdmin=false, superKey='' }) => 
     try {
       const params = type==='full' ? `?key=${superKey}` :
         (targetTenantId&&isSuperAdmin) ? `?key=${superKey}&tenant_id=${targetTenantId}` : '';
-      const r = await fetch(`${BASE}/api/backup/${type}${params}`, { headers:{ Authorization: token }});
+      const hdrs: Record<string,string> = {};
+      if (token) hdrs['Authorization'] = token;
+      const r = await fetch(`${BASE}/api/backup/${type}${params}`, { headers: hdrs });
       if(!r.ok) throw new Error((await r.json()).error||`HTTP ${r.status}`);
       const data = await r.json();
       const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
@@ -74,7 +81,9 @@ const BackupRestore: React.FC<Props> = ({ isSuperAdmin=false, superKey='' }) => 
     if(!uploadedBackup){ setMessage('Upload a file first.'); return; }
     setStatus('loading'); setMessage('Validating…');
     try{
-      const r=await fetch(`${BASE}/api/backup/validate`,{ method:'POST', headers:{'Content-Type':'application/json',Authorization:token}, body:JSON.stringify({backup:uploadedBackup})});
+      const hdrs2: Record<string,string> = {'Content-Type':'application/json'};
+      if(token) hdrs2['Authorization']=token;
+      const r=await fetch(`${BASE}/api/backup/validate`,{ method:'POST', headers:hdrs2, body:JSON.stringify({backup:uploadedBackup})});
       const result=await r.json(); setValidation(result);
       setStatus(result.valid?'success':'error');
       setMessage(result.valid?'✓ Backup is valid and safe to restore':`✗ Issues: ${result.issues.join('; ')}`);

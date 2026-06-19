@@ -357,7 +357,7 @@ const Dashboard: React.FC = () => {
             <h3 className="font-black text-[11px] uppercase tracking-[0.2em] text-slate-400">Booking Velocity (7D)</h3>
             <span className="text-[9px] font-black bg-blue-50 text-blue-600 px-3 py-1 rounded-full uppercase">Volume Trend</span>
           </div>
-          <div className="h-64">
+          <div className="h-64" style={{minHeight:256}}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -375,7 +375,7 @@ const Dashboard: React.FC = () => {
             <h3 className="font-black text-[11px] uppercase tracking-[0.2em] text-slate-400">Commission & Performance</h3>
             <span className="text-[9px] font-black bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full uppercase">Profitability Matrix</span>
           </div>
-          <div className="h-64">
+          <div className="h-64" style={{minHeight:256}}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
