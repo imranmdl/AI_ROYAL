@@ -202,7 +202,7 @@ const VendorSupplyChain: React.FC = () => {
                     const potRev = vo.reduce((s,o)=>s+(o.items||[]).reduce((is,i)=>is+(i.actualQty||0)*(i.sellingPrice||0),0),0);
                     const potProfit = potRev - landed;
                     const potMargin = potRev>0?(potProfit/potRev)*100:0;
-                    const pids   = new Set(vo.flatMap(o=>o.items.map(i=>i.productId)));
+                    const pids   = new Set(vo.flatMap(o=>(o.items||[]).map(i=>i.productId)));
                     const sv     = (store.sales||[]).filter((s:any)=>s.items?.some((i:any)=>pids.has(i.productId))).reduce((s:number,x:any)=>s+(x.totalAmount||0),0);
                     const damaged= vo.reduce((s,o)=>s+(o.damagedItems||[]).reduce((d,x)=>d+(x.qtyDamaged||0),0),0);
                     return (
@@ -269,7 +269,7 @@ const VendorSupplyChain: React.FC = () => {
                       </div>
                       <div className="flex gap-4 mt-2 flex-wrap">
                         <span className="text-slate-400 text-[10px] font-bold"><i className="fas fa-calendar mr-1"></i>{o.orderDate}</span>
-                        <span className="text-slate-400 text-[10px] font-bold"><i className="fas fa-box mr-1"></i>{o.items.length} items</span>
+                        <span className="text-slate-400 text-[10px] font-bold"><i className="fas fa-box mr-1"></i>{(o.items||[]).length} items</span>
                         <span className="text-amber-400 text-[10px] font-bold">Billed: {fmt(o.totalBilledAmount||0)}</span>
                         <span className="text-blue-400 text-[10px] font-bold">Actual: {fmt(o.totalActualAmount||0)}</span>
                         {o.totalTransportCost>0 && <span className="text-purple-400 text-[10px] font-bold">Transport: {fmt(o.totalTransportCost)}</span>}
@@ -292,12 +292,12 @@ const VendorSupplyChain: React.FC = () => {
                         const reverse = confirm(
                           `Delete order #${o.orderNo} (${o.vendorName})?\n\n` +
                           `Click OK to also REMOVE the stock this order added to inventory ` +
-                          `(${o.items.reduce((s,i)=>s+(i.goodQty||i.receivedQty||0),0)} units across ${o.items.length} item(s)).\n\n` +
+                          `(${(o.items||[]).reduce((s,i)=>s+(i.goodQty||i.receivedQty||0),0)} units across ${(o.items||[]).length} item(s)).\n\n` +
                           `Click Cancel to delete the order record only and keep current stock as-is.`
                         );
                         const proceed = confirm(
                           reverse
-                            ? `This will delete the order AND subtract ${o.items.reduce((s,i)=>s+(i.goodQty||i.receivedQty||0),0)} units from inventory stock. Continue?`
+                            ? `This will delete the order AND subtract ${(o.items||[]).reduce((s,i)=>s+(i.goodQty||i.receivedQty||0),0)} units from inventory stock. Continue?`
                             : `This will delete order #${o.orderNo} but keep current inventory stock unchanged. Continue?`
                         );
                         if (!proceed) return;
@@ -309,11 +309,11 @@ const VendorSupplyChain: React.FC = () => {
                     </div>
                   </div>
                   {/* Damage alerts */}
-                  {o.damagedItems.length > 0 && (
+                  {(o.damagedItems||[]).length > 0 && (
                     <div className="mt-3 px-3 py-2 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center gap-2">
                       <i className="fas fa-exclamation-triangle text-rose-400 text-xs"></i>
                       <span className="text-rose-400 text-[10px] font-bold">
-                        {o.damagedItems.reduce((s,d)=>s+(d.qtyDamaged||0),0)} damaged units across {o.damagedItems.length} items
+                        {(o.damagedItems||[]).reduce((s,d)=>s+(d.qtyDamaged||0),0)} damaged units across {(o.damagedItems||[]).length} items
                       </span>
                     </div>
                   )}
