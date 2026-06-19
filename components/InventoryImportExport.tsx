@@ -732,257 +732,256 @@ const InventoryImportExport: React.FC = () => {
 
       {/* ── VENDOR MAPPING TAB (shown after a successful import) ─────────── */}
       {activeTab === 'mapping' && (() => {
-        // ── Group items by their vendorName for display ────────────────────────
-        const allVendorNames = [...new Set(mapItems.map(i => i.vendorName || '__unassigned__'))];
         const knownVendors = [...new Set((store.vendorOrders||[]).map(o=>o.vendorName))].filter(Boolean).sort();
+        const allSelected  = mapItems.length > 0 && mapItems.every(i=>(i as any)._checked);
+        const nSelected    = mapItems.filter(i=>(i as any)._checked).length;
 
-        const applyGlobalVendor = () => {
-          if (!globalVendorName.trim()) return;
-          setMapItems(prev => prev.map(i => ({
-            ...i, vendorName: globalVendorName.trim(),
-            targetOrderId: globalTargetOrderId,
-          })));
+        const toggleAll  = () => setMapItems(p=>p.map(i=>({...i,_checked:!allSelected} as any)));
+        const toggleItem = (idx:number) => setMapItems(p=>p.map((i,n)=>n===idx?({...i,_checked:!(i as any)._checked} as any):i));
+
+        // Assign selected items to a vendor+order
+        const assignSelected = (vendor:string, orderId:string) => {
+          if (!vendor.trim()) return;
+          setMapItems(p=>p.map(i=>(i as any)._checked ? ({...i, vendorName:vendor, targetOrderId:orderId, _checked:false} as any) : i));
+          setGlobalVendorName(''); setGlobalTargetOrderId('');
         };
+
+        // Groups: assigned items by vendor, plus unassigned
+        const groups = new Map<string,{items:{idx:number;it:typeof mapItems[0]}[]}>();
+        const unassigned:{idx:number;it:typeof mapItems[0]}[] = [];
+        mapItems.forEach((it,idx)=>{
+          const v=(it as any).vendorName?.trim()||'';
+          if(!v){ unassigned.push({idx,it}); return; }
+          if(!groups.has(v)) groups.set(v,[]);
+          groups.get(v)!.push({idx,it});
+        });
 
         const saveVendorGroups = async () => {
           setMapSaving(true); setMappingResult([]);
-          const results: any[] = [];
-          // Process each unique vendor group
-          const vendorGroups = new Map<string, typeof mapItems>();
-          mapItems.forEach(it => {
-            const v = it.vendorName?.trim() || '';
-            if (!v) return;
-            if (!vendorGroups.has(v)) vendorGroups.set(v, []);
-            vendorGroups.get(v)!.push(it);
-          });
-
-          for (const [vendorName, items] of Array.from(vendorGroups.entries())) {
-            // Find existing order if targetOrderId is specified
-            const targetOrderNo = items[0]?.targetOrderId?.trim() || '';
-            const existingOrder = targetOrderNo
-              ? (store.vendorOrders||[]).find(o => o.orderNo === targetOrderNo || o.id === targetOrderNo)
-              : null;
-
-            const orderItems = items.map(it => ({
-              id: `item-csv-${Date.now()}-${Math.random().toString(36).substr(2,5)}`,
-              productId: it.productId, productName: it.name, category: it.category,
-              unit: 'Box', orderedQty: it.qty, actualQty: it.qty,
-              billedQty: it.qty, billedRate: it.purchaseRate, billedAmount: it.qty * it.purchaseRate,
-              actualRate: it.purchaseRate, actualAmount: it.qty * it.purchaseRate,
-              receivedQty: it.qty, damagedQty: 0, goodQty: it.qty,
-              transportShare: 0, laborShare: 0,
-              landedCostPerUnit: it.purchaseRate, sellingPrice: it.sellingPrice,
-              marginPct: it.sellingPrice > it.purchaseRate ? Math.round(((it.sellingPrice - it.purchaseRate) / it.sellingPrice) * 10000) / 100 : 0,
+          const results:any[]=[];
+          for(const [vendorName,gItems] of Array.from(groups.entries())){
+            const items = gItems.map(g=>g.it);
+            const targetOrderNo = (items[0] as any)?.targetOrderId?.trim()||'';
+            const existingOrder = targetOrderNo ? (store.vendorOrders||[]).find(o=>o.orderNo===targetOrderNo||o.id===targetOrderNo) : null;
+            const orderItems = items.map(it=>({
+              id:`item-csv-${Date.now()}-${Math.random().toString(36).substr(2,5)}`,
+              productId:it.productId, productName:it.name, category:it.category,
+              unit:'Box', orderedQty:it.qty, actualQty:it.qty,
+              billedQty:it.qty, billedRate:it.purchaseRate, billedAmount:it.qty*it.purchaseRate,
+              actualRate:it.purchaseRate, actualAmount:it.qty*it.purchaseRate,
+              receivedQty:it.qty, damagedQty:0, goodQty:it.qty,
+              transportShare:0, laborShare:0,
+              landedCostPerUnit:it.purchaseRate, sellingPrice:it.sellingPrice,
+              marginPct:it.sellingPrice>it.purchaseRate?Math.round(((it.sellingPrice-it.purchaseRate)/it.sellingPrice)*10000)/100:0,
             }));
-
-            if (existingOrder) {
-              // Append to existing order
-              const merged = { ...existingOrder, items: [...existingOrder.items, ...orderItems], updatedAt: Date.now() };
-              store.updateVendorOrder(existingOrder.id, merged);
-              results.push({ vendorName, action: 'appended', orderNo: existingOrder.orderNo, itemCount: items.length });
+            if(existingOrder){
+              store.updateVendorOrder(existingOrder.id,{...existingOrder,items:[...existingOrder.items,...orderItems],updatedAt:Date.now()});
+              results.push({vendorName,action:'appended',orderNo:existingOrder.orderNo,itemCount:items.length});
             } else {
-              // Auto-create new order
-              const newOrderNo = `INW-CSV-${Date.now().toString().slice(-6)}`;
-              const newOrder = {
-                id: `vo-csv-${Date.now()}-${Math.random().toString(36).substr(2,5)}`,
-                orderNo: newOrderNo, vendorName, vendorPhone: '', vendorGst: '', vendorAddress: '',
-                orderDate: mapDate, status: 'Received' as const,
-                paymentStatus: 'Pending' as const,
-                billingInvoice: { invoiceNo: mapInvoiceNo, date: mapDate, amount: 0, notes: '' },
-                actualInvoice:  { invoiceNo: mapInvoiceNo, date: mapDate, amount: 0, notes: '' },
-                items: orderItems,
-                totalBilledAmount: items.reduce((s,i)=>s+i.qty*i.purchaseRate,0),
-                totalActualAmount:  items.reduce((s,i)=>s+i.qty*i.purchaseRate,0),
-                totalTransportCost: 0, laborCharges: 0, miscCharges: 0, miscDescription: '',
-                grandTotal: items.reduce((s,i)=>s+i.qty*i.purchaseRate,0),
-                cashAmount: 0, rtgsAmount: 0, paidAmount: 0, balanceAmount: items.reduce((s,i)=>s+i.qty*i.purchaseRate,0),
-                transport: { totalWeightTons:0, ratePerTon:0, loadingCharges:0, unloadingCharges:0, driverExpenses:0, totalTransportCost:0, perUnitCost:0 },
-                paymentHistory: [], receivedGodownId: store.godowns[0]?.id || 'g1',
-                isImportBatch: true, updatedAt: Date.now(),
-              };
-              store.addVendorOrder(newOrder as any);
-              results.push({ vendorName, action: 'created', orderNo: newOrderNo, itemCount: items.length });
+              const newOrderNo=`INW-CSV-${Date.now().toString().slice(-6)}`;
+              store.addVendorOrder({
+                id:`vo-csv-${Date.now()}-${Math.random().toString(36).substr(2,5)}`,
+                orderNo:newOrderNo, vendorName, vendorPhone:'', vendorGst:'', vendorAddress:'',
+                orderDate:mapDate, status:'Received' as any, paymentStatus:'Pending' as any,
+                billingInvoice:{invoiceNo:mapInvoiceNo,date:mapDate,amount:0,notes:''},
+                actualInvoice:{invoiceNo:mapInvoiceNo,date:mapDate,amount:0,notes:''},
+                items:orderItems,
+                totalBilledAmount:items.reduce((s,i)=>s+i.qty*i.purchaseRate,0),
+                totalActualAmount:items.reduce((s,i)=>s+i.qty*i.purchaseRate,0),
+                totalTransportCost:0,laborCharges:0,miscCharges:0,miscDescription:'',
+                grandTotal:items.reduce((s,i)=>s+i.qty*i.purchaseRate,0),
+                cashAmount:0,rtgsAmount:0,paidAmount:0,balanceAmount:items.reduce((s,i)=>s+i.qty*i.purchaseRate,0),
+                transport:{totalWeightTons:0,ratePerTon:0,loadingCharges:0,unloadingCharges:0,driverExpenses:0,totalTransportCost:0,perUnitCost:0},
+                paymentHistory:[],receivedGodownId:store.godowns[0]?.id||'g1',
+                isImportBatch:true,updatedAt:Date.now(),
+              } as any);
+              results.push({vendorName,action:'created',orderNo:newOrderNo,itemCount:items.length});
             }
           }
-          const unassigned = mapItems.filter(i => !i.vendorName?.trim());
-          if (unassigned.length) results.push({ vendorName: '(no vendor)', action: 'skipped', orderNo:'—', itemCount: unassigned.length });
+          if(unassigned.length) results.push({vendorName:'(no vendor)',action:'skipped',orderNo:'—',itemCount:unassigned.length});
           setMappingResult(results);
           setMapSaving(false);
         };
 
+        const VENDOR_COLORS = ['bg-blue-50 border-blue-200 text-blue-700','bg-purple-50 border-purple-200 text-purple-700','bg-emerald-50 border-emerald-200 text-emerald-700','bg-amber-50 border-amber-200 text-amber-700','bg-rose-50 border-rose-200 text-rose-700'];
+        const vendorColorMap = new Map<string,number>(); let ci=0;
+        Array.from(groups.keys()).forEach(v=>{ vendorColorMap.set(v,ci%VENDOR_COLORS.length); ci++; });
+        const itemVendorColor = (v:string) => v ? VENDOR_COLORS[vendorColorMap.get(v)||0] : 'bg-amber-50 border-amber-200 text-amber-600';
+
         return (
         <div className="space-y-5">
+          {/* Header */}
           <div className="bg-emerald-50 border border-emerald-200 rounded-2xl px-5 py-4 flex items-start gap-3">
-            <i className="fas fa-check-circle text-emerald-500 text-lg mt-0.5"></i>
+            <i className="fas fa-check-circle text-emerald-500 text-lg mt-0.5 shrink-0"></i>
             <div>
-              <div className="font-black text-emerald-700 text-sm">{importedProducts.length} item(s) imported</div>
+              <div className="font-black text-emerald-700 text-sm">{importedProducts.length} items imported</div>
               <div className="text-[10px] text-emerald-600 font-bold mt-0.5">
-                Now assign each item to a vendor. Items pre-filled from CSV "Vendor Name" and "Order ID" columns.
-                Assign to an existing order to append, or leave blank to auto-create a new order per vendor.
+                <strong>How to use:</strong> ① Check items → ② Pick vendor + order → ③ Click Assign. Repeat for each vendor group. Then click Save.
               </div>
             </div>
           </div>
 
-          {/* ── Global apply-to-all shortcut ── */}
-          <div className="bg-white border border-slate-100 rounded-2xl p-5">
-            <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">
-              Apply Single Vendor to ALL Items (shortcut)
+          {/* ─────────── ASSIGN PANEL ─────────── */}
+          <div className={`bg-slate-900 rounded-2xl p-5 space-y-4 transition-all ${nSelected===0?'opacity-60':''}`}>
+            <div className="flex items-center justify-between">
+              <div className="text-white font-black text-sm flex items-center gap-2">
+                <i className="fas fa-magic text-amber-400"></i>
+                Assign {nSelected>0?<span className="bg-amber-400 text-slate-900 px-2 py-0.5 rounded-full text-[10px]">{nSelected} selected</span>:<span className="text-slate-400">selected items</span>} to vendor
+              </div>
+              <div className="text-[9px] text-slate-400 font-bold">{groups.size} vendor group{groups.size!==1?'s':''} · {unassigned.length} unassigned</div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
               <div>
-                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1">Vendor Name</label>
-                <input className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400"
-                  list="global-vendor-list" value={globalVendorName}
-                  onChange={e => setGlobalVendorName(e.target.value)}
-                  placeholder="e.g. Pradeep Suppliers" />
-                <datalist id="global-vendor-list">
-                  {knownVendors.map(v=><option key={v} value={v}/>)}
-                </datalist>
+                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Vendor Name *</label>
+                <input className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl font-bold text-sm text-white outline-none focus:border-amber-400 placeholder:text-slate-500"
+                  list="gvl" value={globalVendorName} onChange={e=>{setGlobalVendorName(e.target.value);setGlobalTargetOrderId('');}}
+                  placeholder="Type or pick vendor…"/>
+                <datalist id="gvl">{knownVendors.map(v=><option key={v} value={v}/>)}</datalist>
               </div>
               <div>
-                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1">Link to Existing Order (optional)</label>
-                <select className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400"
+                <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Link to Existing Order (optional)</label>
+                <select className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl font-bold text-sm text-white outline-none focus:border-amber-400 appearance-none"
                   value={globalTargetOrderId} onChange={e=>setGlobalTargetOrderId(e.target.value)}>
                   <option value="">+ Auto-create new order</option>
                   {(store.vendorOrders||[]).filter(o=>!globalVendorName||o.vendorName?.toLowerCase()===globalVendorName.toLowerCase()).map(o=>(
-                    <option key={o.id} value={o.orderNo}>#{o.orderNo} — {o.vendorName} — {o.orderDate} — {o.items.length} items</option>
+                    <option key={o.id} value={o.orderNo}>#{o.orderNo} — {o.orderDate} — {o.items.length} items</option>
                   ))}
                 </select>
               </div>
-              <button onClick={applyGlobalVendor} disabled={!globalVendorName.trim()}
-                className="py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase hover:bg-slate-800 disabled:opacity-40 flex items-center justify-center gap-2">
-                <i className="fas fa-magic"></i> Apply to All {mapItems.length} Items
+              <button onClick={()=>assignSelected(globalVendorName,globalTargetOrderId)}
+                disabled={nSelected===0||!globalVendorName.trim()}
+                className="py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white rounded-xl font-black text-[10px] uppercase flex items-center justify-center gap-2 transition-all">
+                <i className="fas fa-check-double"></i>
+                Assign {nSelected>0?nSelected:'Selected'} Items
               </button>
             </div>
           </div>
 
-          {/* ── Per-item vendor assignment table ── */}
-          <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
-              <div className="font-black text-sm text-slate-900">Per-Item Vendor Assignment</div>
-              <div className="text-[9px] font-bold text-slate-400">
-                {mapItems.filter(i=>i.vendorName?.trim()).length}/{mapItems.length} assigned
+          {/* ─────────── ITEMS CHECKLIST ─────────── */}
+          <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden shadow-sm">
+            {/* Column header */}
+            <div className="grid gap-0 border-b border-slate-100 bg-slate-50" style={{gridTemplateColumns:'40px 1fr 80px 80px 90px 90px 1fr'}}>
+              <div className="px-3 py-2.5 flex items-center">
+                <input type="checkbox" className="w-4 h-4 accent-amber-500 cursor-pointer"
+                  checked={allSelected && mapItems.length>0} onChange={toggleAll}/>
               </div>
+              {['Item','Qty','Purchase ₹','Selling ₹','Vendor Assigned','Order'].map(h=>(
+                <div key={h} className="px-3 py-2.5 text-[9px] font-black text-slate-400 uppercase">{h}</div>
+              ))}
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr>
-                    {['Item','Category','Qty','Purchase Rate','Selling Price','Vendor','Existing Order'].map(h=>(
-                      <th key={h} className="px-3 py-2.5 text-left text-[9px] font-black text-slate-400 uppercase whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {mapItems.map((it, idx) => {
-                    const vendorOrders = (store.vendorOrders||[]).filter(o =>
-                      !it.vendorName || o.vendorName?.toLowerCase() === it.vendorName.toLowerCase()
-                    );
-                    return (
-                      <tr key={it.productId} className={`hover:bg-slate-50 ${!it.vendorName?.trim()?'bg-amber-50/50':''}`}>
-                        <td className="px-3 py-2 font-bold text-slate-900 whitespace-nowrap">{it.name}</td>
-                        <td className="px-3 py-2 text-slate-500">{it.category}</td>
-                        <td className="px-3 py-2">
-                          <input type="number" className="w-16 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs"
-                            value={it.qty} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,qty:+e.target.value}:x))} />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input type="number" className="w-20 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs"
-                            value={it.purchaseRate} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,purchaseRate:+e.target.value}:x))} />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input type="number" className="w-20 px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg font-bold text-xs"
-                            value={it.sellingPrice} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,sellingPrice:+e.target.value}:x))} />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input className="w-36 px-2 py-1.5 bg-amber-50 border border-amber-200 rounded-lg font-bold text-xs"
-                            list={`vl-${idx}`}
-                            value={it.vendorName} placeholder="Type vendor…"
-                            onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,vendorName:e.target.value,targetOrderId:''}:x))} />
-                          <datalist id={`vl-${idx}`}>{knownVendors.map(v=><option key={v} value={v}/>)}</datalist>
-                        </td>
-                        <td className="px-3 py-2">
-                          <select className="w-44 px-2 py-1.5 bg-purple-50 border border-purple-200 rounded-lg font-bold text-xs"
-                            value={it.targetOrderId}
-                            onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,targetOrderId:e.target.value}:x))}>
-                            <option value="">+ Auto-create new order</option>
-                            {vendorOrders.map(o=>(
-                              <option key={o.id} value={o.orderNo}>#{o.orderNo} ({o.items.length} items)</option>
-                            ))}
-                          </select>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
 
-          {/* ── Summary by vendor before saving ── */}
-          {(() => {
-            const groups = new Map<string,{items:typeof mapItems; hasExisting:boolean}>();
-            mapItems.forEach(it => {
-              const v = it.vendorName?.trim() || '__unassigned__';
-              if (!groups.has(v)) groups.set(v, { items:[], hasExisting: false });
-              const g = groups.get(v)!;
-              g.items.push(it);
-              if (it.targetOrderId) g.hasExisting = true;
-            });
-            return (
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
-                <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Mapping Summary — Preview</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {Array.from(groups.entries()).map(([v, g]) => (
-                    <div key={v} className={`rounded-xl px-4 py-3 ${v==='__unassigned__'?'bg-amber-50 border border-amber-200':'bg-white border border-slate-100'}`}>
-                      <div className="font-black text-sm text-slate-900 flex items-center gap-2">
-                        <i className={`fas ${v==='__unassigned__'?'fa-exclamation-triangle text-amber-500':'fa-truck text-emerald-500'} text-xs`}></i>
-                        {v==='__unassigned__'?'⚠️ Unassigned':v}
+            {/* Rows grouped by vendor */}
+            {unassigned.length>0&&(
+              <div className="border-l-4 border-amber-400">
+                <div className="px-4 py-2 bg-amber-50 flex items-center gap-2">
+                  <i className="fas fa-exclamation-circle text-amber-500 text-xs"></i>
+                  <span className="text-[9px] font-black text-amber-700 uppercase tracking-widest">Unassigned — {unassigned.length} items</span>
+                </div>
+                {unassigned.map(({idx,it})=>(
+                  <div key={it.productId} className="grid items-center hover:bg-amber-50/50 border-t border-slate-50" style={{gridTemplateColumns:'40px 1fr 80px 80px 90px 90px 1fr'}}>
+                    <div className="px-3 py-2 flex items-center">
+                      <input type="checkbox" className="w-4 h-4 accent-amber-500 cursor-pointer"
+                        checked={(it as any)._checked||false} onChange={()=>toggleItem(idx)}/>
+                    </div>
+                    <div className="px-3 py-2">
+                      <div className="font-bold text-sm text-slate-900">{it.name}</div>
+                      <div className="text-[9px] text-slate-400">{it.category}</div>
+                    </div>
+                    <div className="px-2 py-2"><input type="number" className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold" value={it.qty} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,qty:+e.target.value}:x))}/></div>
+                    <div className="px-2 py-2"><input type="number" className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold" value={it.purchaseRate} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,purchaseRate:+e.target.value}:x))}/></div>
+                    <div className="px-2 py-2"><input type="number" className="w-full px-2 py-1 bg-emerald-50 border border-emerald-200 rounded-lg text-xs font-bold" value={it.sellingPrice} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,sellingPrice:+e.target.value}:x))}/></div>
+                    <div className="px-3 py-2 text-amber-400 text-[9px] font-black">—</div>
+                    <div className="px-3 py-2 text-amber-400 text-[9px] font-black">—</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {Array.from(groups.entries()).map(([v,gItems],gi)=>{
+              const color=VENDOR_COLORS[vendorColorMap.get(v)||0];
+              const borderColor=['border-blue-400','border-purple-400','border-emerald-400','border-amber-500','border-rose-400'][vendorColorMap.get(v)||0];
+              const orderLabel = gItems[0]?.it.targetOrderId ? `#${(gItems[0].it as any).targetOrderId}` : 'New order';
+              const totalAmt = gItems.reduce((s,g)=>s+g.it.qty*g.it.purchaseRate,0);
+              return (
+                <div key={v} className={`border-l-4 ${borderColor}`}>
+                  <div className={`px-4 py-2 flex items-center justify-between ${color.replace('text-','').replace('border-','')}`} style={{background:gi%2===0?'#f8f9fc':'#fff'}}>
+                    <div className="flex items-center gap-2">
+                      <i className="fas fa-truck text-xs opacity-60"></i>
+                      <span className="text-[9px] font-black uppercase tracking-widest">{v}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[8px] font-black border ${color}`}>{gItems.length} items</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-[9px] font-bold">
+                      <span className="text-slate-500">{orderLabel}</span>
+                      <span className="font-black">₹{totalAmt.toLocaleString('en-IN')}</span>
+                      <button onClick={()=>setMapItems(p=>p.map((it,i)=>gItems.some(g=>g.idx===i)?({...it,vendorName:'',targetOrderId:''} as any):it))}
+                        className="text-slate-400 hover:text-rose-500 ml-2 text-[9px]" title="Unassign this group">
+                        <i className="fas fa-times"></i> Unassign
+                      </button>
+                    </div>
+                  </div>
+                  {gItems.map(({idx,it})=>(
+                    <div key={it.productId} className="grid items-center hover:bg-slate-50 border-t border-slate-50" style={{gridTemplateColumns:'40px 1fr 80px 80px 90px 90px 1fr'}}>
+                      <div className="px-3 py-2 flex items-center">
+                        <input type="checkbox" className="w-4 h-4 accent-amber-500 cursor-pointer"
+                          checked={(it as any)._checked||false} onChange={()=>toggleItem(idx)}/>
                       </div>
-                      <div className="text-[10px] text-slate-500 font-bold mt-0.5">
-                        {g.items.length} items · {g.hasExisting ? `→ Append to existing order` : '→ New order will be created'}
+                      <div className="px-3 py-2">
+                        <div className="font-bold text-sm text-slate-900">{it.name}</div>
+                        <div className="text-[9px] text-slate-400">{it.category}</div>
                       </div>
-                      {g.items[0]?.targetOrderId && (
-                        <div className="text-[9px] text-purple-600 font-black mt-0.5">Linking to #{g.items[0].targetOrderId}</div>
-                      )}
+                      <div className="px-2 py-2"><input type="number" className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold" value={it.qty} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,qty:+e.target.value}:x))}/></div>
+                      <div className="px-2 py-2"><input type="number" className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold" value={it.purchaseRate} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,purchaseRate:+e.target.value}:x))}/></div>
+                      <div className="px-2 py-2"><input type="number" className="w-full px-2 py-1 bg-emerald-50 border border-emerald-200 rounded-lg text-xs font-bold" value={it.sellingPrice} onChange={e=>setMapItems(p=>p.map((x,i)=>i===idx?{...x,sellingPrice:+e.target.value}:x))}/></div>
+                      <div className={`px-3 py-2 text-[9px] font-black truncate ${color.split(' ')[2]}`}>{v}</div>
+                      <div className="px-3 py-2 text-[9px] text-purple-600 font-black">{(it as any).targetOrderId||<span className="text-slate-400">New</span>}</div>
                     </div>
                   ))}
                 </div>
-              </div>
-            );
-          })()}
+              );
+            })}
+          </div>
 
-          {/* Order date + reference */}
+          {/* ─────────── FOOTER: date + save ─────────── */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Order Date</label>
-              <input type="date" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none"
-                value={mapDate} onChange={e=>setMapDate(e.target.value)} />
+              <input type="date" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400"
+                value={mapDate} onChange={e=>setMapDate(e.target.value)}/>
             </div>
             <div>
-              <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Invoice / Ref No (optional)</label>
-              <input className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none"
-                value={mapInvoiceNo} onChange={e=>setMapInvoiceNo(e.target.value)} placeholder="INV-1234" />
+              <label className="text-[8px] font-black text-slate-400 uppercase block mb-1.5">Invoice / Ref (optional)</label>
+              <input className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-amber-400"
+                value={mapInvoiceNo} onChange={e=>setMapInvoiceNo(e.target.value)} placeholder="INV-1234"/>
             </div>
           </div>
 
-          {/* Save */}
-          <button onClick={saveVendorGroups} disabled={mapSaving || !mapItems.some(i=>i.vendorName?.trim())}
+          {/* Unassigned warning */}
+          {unassigned.length>0&&groups.size>0&&(
+            <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 text-[10px] font-bold flex items-center gap-2">
+              <i className="fas fa-exclamation-triangle"></i>
+              {unassigned.length} item{unassigned.length>1?'s':''} still unassigned — check them and assign a vendor, or they will be skipped.
+            </div>
+          )}
+
+          <button onClick={saveVendorGroups} disabled={mapSaving||groups.size===0}
             className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black text-sm uppercase hover:bg-slate-800 disabled:opacity-40 transition-all flex items-center justify-center gap-3">
-            {mapSaving ? <><i className="fas fa-spinner fa-spin"></i> Saving…</> : <><i className="fas fa-link"></i> Save Vendor Mapping — Create / Update Orders</>}
+            {mapSaving?<><i className="fas fa-spinner fa-spin"></i>Saving…</>:<>
+              <i className="fas fa-link"></i>
+              Save — {groups.size} Vendor Group{groups.size!==1?'s':''} · {mapItems.filter(i=>(i as any).vendorName?.trim()).length} items
+            </>}
           </button>
 
           {/* Result */}
-          {mappingResult.length > 0 && (
+          {mappingResult.length>0&&(
             <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 space-y-3">
-              <div className="font-black text-emerald-700">✓ Vendor mapping complete</div>
+              <div className="font-black text-emerald-700 text-sm">✓ Vendor mapping complete</div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {mappingResult.map((r,i) => (
-                  <div key={i} className="bg-white rounded-xl px-4 py-3">
+                {mappingResult.map((r,i)=>(
+                  <div key={i} className="bg-white rounded-xl px-4 py-3 border border-slate-100">
                     <div className="font-black text-sm text-slate-900">{r.vendorName}</div>
                     <div className="text-[10px] text-slate-500 font-bold mt-0.5">
-                      {r.action === 'created' ? '✅ New order created' : r.action === 'appended' ? '🔗 Appended to existing' : '⚠️ Skipped (no vendor)'}
-                      {r.orderNo !== '—' && <span> · #{r.orderNo}</span>}
+                      {r.action==='created'?'✅ New order created':r.action==='appended'?'🔗 Appended to existing':'⚠️ Skipped'}
+                      {r.orderNo!=='—'&&<span className="text-purple-600"> · #{r.orderNo}</span>}
                     </div>
                     <div className="text-[9px] text-emerald-600 font-black">{r.itemCount} items</div>
                   </div>
