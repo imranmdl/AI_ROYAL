@@ -88,6 +88,20 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ tenants, superAdminKey = 
   const [sourceTenant,       setSourceTenant]       = useState<string>('');     // which tenant to pull from backup
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // ── Validate state ──────────────────────────────────────────────────────────
+  const [validateFile,    setValidateFile]    = useState<File|null>(null);
+  const [validateResult,  setValidateResult]  = useState<any>(null);
+  const [validateLoading, setValidateLoading] = useState(false);
+  const validateRef = useRef<HTMLInputElement>(null);
+
+  // ── Wipe state ─────────────────────────────────────────────────────────────
+  const [wipeTenant,    setWipeTenant]    = useState('');
+  const [wipePreview,   setWipePreview]   = useState<any>(null);
+  const [wipeLoading,   setWipeLoading]   = useState(false);
+  const [wipeResult,    setWipeResult]    = useState<any>(null);
+  const [wipeTables,    setWipeTables]    = useState<string[]>([]);   // empty = all
+  const [backupSubTab,  setBackupSubTab]  = useState<'backup'|'restore'|'validate'|'wipe'>('backup');
+
   // ── Download helper ─────────────────────────────────────────────────────────
   const triggerDownload = (url: string, filename: string) => {
     const a = document.createElement('a');
@@ -95,6 +109,59 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ tenants, superAdminKey = 
     document.body.appendChild(a); a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  // ── Validate backup file ─────────────────────────────────────────────────
+  const runValidate = async () => {
+    if (!validateFile) { alert('Select a backup file'); return; }
+    setValidateLoading(true); setValidateResult(null);
+    try {
+      const text = await validateFile.text();
+      const parsed = JSON.parse(text);
+      const r = await fetch(`${BASE}/api/backup/validate`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backup: parsed }),
+      });
+      setValidateResult(await r.json());
+    } catch(e:any) { setValidateResult({ valid: false, issues: [e.message], validation: {} }); }
+    setValidateLoading(false);
+  };
+
+  // ── Preview wipe ────────────────────────────────────────────────────────────
+  const runWipePreview = async () => {
+    if (!wipeTenant) { alert('Select a tenant'); return; }
+    setWipeLoading(true); setWipePreview(null); setWipeResult(null);
+    try {
+      const r = await fetch(`${BASE}/api/admin/wipe-tenant/preview?key=${KEY}&tenant_id=${wipeTenant}`);
+      setWipePreview(await r.json());
+    } catch(e:any) { setWipePreview({ error: e.message }); }
+    setWipeLoading(false);
+  };
+
+  // ── Execute wipe ────────────────────────────────────────────────────────────
+  const runWipe = async () => {
+    if (!wipeTenant || !wipePreview) return;
+    const tname = tenants.find(t=>t.id===wipeTenant)?.name || wipeTenant;
+    const tablesParam = wipeTables.length > 0 ? `&tables=${wipeTables.join(',')}` : '';
+    if (!confirm(
+      `⚠️ PERMANENTLY DELETE DATA for "${tname}"?
+
+` +
+      `This will remove ${wipePreview.total} rows across ${Object.keys(wipePreview.counts||{}).length} tables.
+
+` +
+      `OTHER TENANTS ARE NOT AFFECTED.
+
+Type the tenant ID to confirm:
+`
+    )) return;
+    setWipeLoading(true);
+    try {
+      const r = await fetch(`${BASE}/api/admin/wipe-tenant?key=${KEY}&tenant_id=${wipeTenant}${tablesParam}`, { method: 'DELETE' });
+      setWipeResult(await r.json());
+      setWipePreview(null);
+    } catch(e:any) { setWipeResult({ error: e.message }); }
+    setWipeLoading(false);
   };
 
   // ── Run backup ──────────────────────────────────────────────────────────────
@@ -147,8 +214,18 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ tenants, superAdminKey = 
   return (
     <div className="space-y-8">
 
-      {/* ── BACKUP ───────────────────────────────────────────────────────────── */}
-      <div className="bg-slate-900 border border-white/10 rounded-2xl overflow-hidden">
+      {/* ── Sub-tabs ── */}
+      <div className="flex flex-wrap gap-2">
+        {([['backup','Backup','fa-cloud-download-alt'],['restore','Restore','fa-cloud-upload-alt'],['validate','Validate','fa-shield-alt'],['wipe','Wipe Tenant','fa-trash-alt']] as const).map(([id,label,icon])=>(
+          <button key={id} onClick={()=>setBackupSubTab(id as any)}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-black text-[10px] uppercase transition-all ${backupSubTab===id?(id==='wipe'?'bg-rose-600 text-white':'bg-amber-500 text-white'):'bg-white/5 text-slate-400 hover:bg-white/10'}`}>
+            <i className={`fas ${icon} text-xs`}></i>{label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── BACKUP ── */}
+      {backupSubTab === 'backup' && <div className="bg-slate-900 border border-white/10 rounded-2xl overflow-hidden">
         <div className="px-6 py-4 border-b border-white/10 flex items-center gap-3">
           <div className="w-9 h-9 bg-blue-500/20 rounded-xl flex items-center justify-center">
             <i className="fas fa-cloud-download-alt text-blue-400"></i>
@@ -214,10 +291,10 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ tenants, superAdminKey = 
             </div>
           )}
         </div>
-      </div>
+      </div>}
 
-      {/* ── RESTORE ──────────────────────────────────────────────────────────── */}
-      <div className="bg-slate-900 border border-white/10 rounded-2xl overflow-hidden">
+      {/* ── RESTORE ── */}
+      {backupSubTab === 'restore' && <div className="bg-slate-900 border border-white/10 rounded-2xl overflow-hidden">
         <div className="px-6 py-4 border-b border-white/10 flex items-center gap-3">
           <div className="w-9 h-9 bg-amber-500/20 rounded-xl flex items-center justify-center">
             <i className="fas fa-cloud-upload-alt text-amber-400"></i>
@@ -358,7 +435,132 @@ const BackupRestore: React.FC<BackupRestoreProps> = ({ tenants, superAdminKey = 
             </div>
           )}
         </div>
-      </div>
+      </div>}
+
+      {/* ── VALIDATE ── */}
+      {backupSubTab === 'validate' && (
+        <div className="bg-slate-900 border border-white/10 rounded-2xl overflow-hidden">
+          <div className="px-6 py-4 border-b border-white/10 flex items-center gap-3">
+            <div className="w-9 h-9 bg-blue-500/20 rounded-xl flex items-center justify-center"><i className="fas fa-shield-alt text-blue-400"></i></div>
+            <div><div className="text-white font-black text-sm">Validate Backup</div><div className="text-slate-400 text-[10px] font-bold">Checksum + record count verification</div></div>
+          </div>
+          <div className="p-6 space-y-4">
+            <p className="text-slate-400 text-xs font-bold">Upload a backup file to verify its integrity — checks SHA-style checksum and record counts match what was exported.</p>
+            <input ref={validateRef} type="file" accept=".json" className="hidden" onChange={e=>{setValidateFile(e.target.files?.[0]||null);setValidateResult(null);}}/>
+            <button onClick={()=>validateRef.current?.click()} className="w-full py-4 border-2 border-dashed border-white/10 rounded-xl text-slate-400 hover:border-amber-400 hover:text-amber-400 font-black text-sm flex items-center justify-center gap-2 transition-all">
+              <i className="fas fa-file-search text-lg"></i>{validateFile?.name||'Choose backup .json file'}
+            </button>
+            {validateFile&&(
+              <button onClick={runValidate} disabled={validateLoading}
+                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-[10px] uppercase disabled:opacity-40 flex items-center justify-center gap-2">
+                {validateLoading?<><i className="fas fa-spinner fa-spin"></i>Validating…</>:<><i className="fas fa-shield-alt"></i>Validate Now</>}
+              </button>
+            )}
+            {validateResult&&(
+              <div className={`rounded-xl p-4 space-y-3 border ${validateResult.valid?'bg-emerald-500/10 border-emerald-500/20':'bg-rose-500/10 border-rose-500/20'}`}>
+                <div className={`font-black text-sm flex items-center gap-2 ${validateResult.valid?'text-emerald-400':'text-rose-400'}`}>
+                  <i className={`fas ${validateResult.valid?'fa-check-circle':'fa-times-circle'}`}></i>
+                  {validateResult.valid?'✓ Backup is Valid and Safe to Restore':'✗ Validation Failed'}
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="bg-white/5 rounded-lg px-3 py-2">
+                    <div className="text-[8px] font-black text-slate-400 uppercase mb-0.5">Checksum</div>
+                    <div className={`font-black ${validateResult.checksumOk?'text-emerald-400':'text-rose-400'}`}>{validateResult.checksumOk?'✓ Valid':'✗ Mismatch'}</div>
+                    <div className="text-[8px] text-slate-500 break-all mt-0.5">{validateResult.meta?.checksum}</div>
+                  </div>
+                  <div className="bg-white/5 rounded-lg px-3 py-2">
+                    <div className="text-[8px] font-black text-slate-400 uppercase mb-0.5">Exported</div>
+                    <div className="font-bold text-white">{validateResult.meta?.exportedAt?.slice(0,16).replace('T',' ')}</div>
+                    <div className="text-[8px] text-slate-500">{validateResult.meta?.tenantId}</div>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  {Object.entries(validateResult.validation||{}).map(([k,v]:any)=>(
+                    <div key={k} className="flex justify-between items-center bg-white/5 rounded-lg px-3 py-1.5 text-[10px]">
+                      <span className="text-slate-300 font-bold capitalize">{k}</span>
+                      <div className="flex items-center gap-2">
+                        {v.stated!==undefined&&<span className="text-slate-500">expected {v.stated}</span>}
+                        <span className={`font-black ${v.ok===false?'text-rose-400':'text-emerald-400'}`}>{v.actual??v.count} {v.ok===false?'✗':'✓'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {validateResult.issues?.length>0&&validateResult.issues.map((iss:string,i:number)=>(
+                  <div key={i} className="text-rose-400 text-[10px] font-bold flex items-start gap-1"><i className="fas fa-exclamation-circle mt-0.5 shrink-0"></i>{iss}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── WIPE TENANT ── */}
+      {backupSubTab === 'wipe' && (
+        <div className="space-y-4">
+          <div className="bg-rose-950/60 border border-rose-500/30 rounded-2xl p-5 text-rose-300 text-xs font-bold flex items-start gap-3">
+            <i className="fas fa-exclamation-triangle text-rose-500 text-lg mt-0.5 shrink-0"></i>
+            <div>
+              <div className="font-black text-rose-400 text-sm mb-1">⚠️ Wipe Tenant Data — Irreversible</div>
+              This permanently deletes ALL data for the selected tenant. <strong>Other tenants are completely unaffected.</strong>
+              Always take a backup before wiping. This cannot be undone.
+            </div>
+          </div>
+          <div className="bg-slate-900 border border-white/10 rounded-2xl p-6 space-y-4">
+            <div>
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-2">Select Tenant to Wipe</label>
+              <select value={wipeTenant} onChange={e=>{setWipeTenant(e.target.value);setWipePreview(null);setWipeResult(null);}}
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white font-bold text-sm outline-none focus:border-rose-500 appearance-none">
+                <option value="">Choose tenant…</option>
+                {tenants.map(t=><option key={t.id} value={t.id}>{t.name} ({t.slug})</option>)}
+              </select>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={runWipePreview} disabled={!wipeTenant||wipeLoading}
+                className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-black text-[10px] uppercase disabled:opacity-40 flex items-center justify-center gap-2">
+                {wipeLoading?<><i className="fas fa-spinner fa-spin"></i>Checking…</>:<><i className="fas fa-eye"></i>Preview What Will Be Deleted</>}
+              </button>
+            </div>
+            {wipePreview&&!wipePreview.error&&(
+              <div className="bg-rose-950/40 border border-rose-500/20 rounded-xl p-4 space-y-3">
+                <div className="font-black text-rose-400 text-sm">Data that will be permanently deleted from: <span className="text-white">{tenants.find(t=>t.id===wipeTenant)?.name}</span></div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {Object.entries(wipePreview.counts||{}).map(([table,count]:any)=>(
+                    <div key={table} className="bg-white/5 rounded-lg px-3 py-2">
+                      <div className="text-[8px] font-black text-slate-400 uppercase">{table}</div>
+                      <div className={`font-black text-lg ${count>0?'text-rose-400':'text-slate-500'}`}>{count}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="font-black text-rose-300 text-sm">Total: {wipePreview.total} rows across {Object.keys(wipePreview.counts||{}).length} tables</div>
+                {wipePreview.total > 0 && (
+                  <button onClick={runWipe} disabled={wipeLoading}
+                    className="w-full py-4 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-black text-sm uppercase disabled:opacity-40 flex items-center justify-center gap-2">
+                    <i className="fas fa-trash-alt"></i> Permanently Delete All Data for This Tenant
+                  </button>
+                )}
+                {wipePreview.total === 0 && (
+                  <div className="text-slate-400 text-xs font-bold text-center">This tenant has no data to wipe.</div>
+                )}
+              </div>
+            )}
+            {wipeResult&&(
+              <div className={`rounded-xl p-4 space-y-2 border ${wipeResult.error?'bg-rose-500/10 border-rose-500/20':'bg-emerald-500/10 border-emerald-500/20'}`}>
+                <div className={`font-black text-sm ${wipeResult.error?'text-rose-400':'text-emerald-400'}`}>
+                  {wipeResult.error ? `✗ ${wipeResult.error}` : `✓ ${wipeResult.message}`}
+                </div>
+                {!wipeResult.error&&(<div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {Object.entries(wipeResult.deleted||{}).map(([t,n]:any)=>(
+                    <div key={t} className="bg-white/5 rounded-lg px-3 py-2">
+                      <div className="text-[8px] text-slate-400 font-black uppercase">{t}</div>
+                      <div className="text-emerald-400 font-black">{n} deleted</div>
+                    </div>
+                  ))}
+                </div>)}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── QUICK FIX TOOLS ──────────────────────────────────────────────────── */}
       <div className="bg-slate-900 border border-white/10 rounded-2xl overflow-hidden">

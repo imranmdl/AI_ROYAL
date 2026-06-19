@@ -2610,6 +2610,69 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  /**
+   * DELETE /api/admin/wipe-tenant — Wipe a specific tenant's data without touching others.
+   * Requires super admin key. Supports selective table wipe.
+   * This is IRREVERSIBLE — always take a backup first.
+   */
+  app.delete('/api/admin/wipe-tenant', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+    if (!pool || !dbHealthy) return res.status(503).json({ error: 'DB offline' });
+    const tenantId = req.query.tenant_id as string;
+    if (!tenantId) return res.status(400).json({ error: 'tenant_id required' });
+    // Safety: cannot wipe default or empty tenant
+    if (tenantId === 'default' || tenantId.trim() === '') {
+      return res.status(400).json({ error: 'Cannot wipe default tenant' });
+    }
+    // Which tables to wipe (defaults to all, can be overridden via ?tables=products,sales)
+    const allTenantTables = ['products','sales','purchases','vendor_orders','gallery_leads',
+                             'referral_agents','referral_commissions','system_persistence'];
+    const requested = (req.query.tables as string || '').split(',').filter(Boolean);
+    const tables = requested.length > 0
+      ? allTenantTables.filter(t => requested.includes(t))
+      : allTenantTables;
+    const dryRun = req.query.dry_run === '1';
+    const results: Record<string,number> = {};
+    try {
+      for (const table of tables) {
+        const [countRes]: any = await pool.query(`SELECT COUNT(*) as n FROM ${table} WHERE tenant_id=?`, [tenantId]);
+        const count = countRes[0]?.n || 0;
+        if (!dryRun) {
+          await pool.query(`DELETE FROM ${table} WHERE tenant_id=?`, [tenantId]);
+        }
+        results[table] = count;
+      }
+      syncResponseCache = null;
+      res.json({
+        success: true, tenantId, dryRun, tables,
+        deleted: results,
+        total: Object.values(results).reduce((s,n)=>s+n,0),
+        message: dryRun
+          ? `Dry run: would delete ${Object.values(results).reduce((s,n)=>s+n,0)} rows across ${tables.length} tables`
+          : `Wiped ${Object.values(results).reduce((s,n)=>s+n,0)} rows from tenant ${tenantId}`
+      });
+    } catch(e:any) { res.status(500).json({ error: e.message }); }
+  });
+
+  /**
+   * GET /api/admin/wipe-tenant/preview — Preview what would be deleted (dry-run)
+   */
+  app.get('/api/admin/wipe-tenant/preview', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+    if (!pool || !dbHealthy) return res.status(503).json({ error: 'DB offline' });
+    const tenantId = req.query.tenant_id as string;
+    if (!tenantId) return res.status(400).json({ error: 'tenant_id required' });
+    const tables = ['products','sales','purchases','vendor_orders','gallery_leads',
+                    'referral_agents','referral_commissions','system_persistence'];
+    const counts: Record<string,number> = {};
+    for (const table of tables) {
+      const [r]: any = await pool.query(`SELECT COUNT(*) as n FROM ${table} WHERE tenant_id=?`, [tenantId]).catch(()=>[[{n:0}]]);
+      counts[table] = r[0]?.n || 0;
+    }
+    const total = Object.values(counts).reduce((s,n)=>s+n,0);
+    res.json({ tenantId, counts, total, warning: total === 0 ? 'Tenant has no data' : undefined });
+  });
+
   app.get('/api/backups', async (req, res) => {
     try {
       const files = await fs.readdir(BACKUP_DIR);
