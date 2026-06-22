@@ -29,8 +29,9 @@ const config: CapacitorConfig = {
     allowMixedContent:           false,
     captureInput:                true,
     webContentsDebuggingEnabled: false,
-    // Deep link: when user scans QR and opens royalerp:// link, app handles it
     appendUserAgent: 'RoyalERP-Android/1.0',
+    // Force hardware acceleration for smoother rendering
+    initialFocus: true,
   },
   ios: {
     contentInset:  'always',

@@ -66,13 +66,72 @@
 
       /* Better touch targets — minimum 44px for accessibility */
       button, a, input[type="checkbox"], input[type="radio"] {
-        min-height: 44px;
+        min-height: 36px;
       }
 
       /* Input zoom prevention — iOS zooms in when font-size < 16px */
       input, select, textarea {
         font-size: 16px !important;
       }
+
+      /* ── MOBILE OVERFLOW FIX — prevents need to zoom out ───────── */
+      html, body, #root {
+        max-width: 100vw;
+        overflow-x: hidden;
+      }
+
+      /* Tables scroll horizontally instead of pushing page wider */
+      .overflow-x-auto {
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+      }
+
+      /* FontAwesome icons: ensure they're always visible on small screens */
+      @media (max-width: 768px) {
+        .fas, .far, .fab, .fa {
+          min-width: 10px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        /* Table cells: tighten horizontal padding on small screens */
+        td.px-8, th.px-8 {
+          padding-left: 6px !important;
+          padding-right: 6px !important;
+        }
+        td.py-6 {
+          padding-top: 10px !important;
+          padding-bottom: 10px !important;
+        }
+
+        /* Modals: full width on mobile, no overflow */
+        .fixed.inset-0 > .bg-white,
+        .fixed.inset-0 > .bg-slate-900 {
+          width: calc(100vw - 16px) !important;
+          max-width: 100% !important;
+          margin: 8px !important;
+          border-radius: 20px !important;
+        }
+
+        /* Large heading text: scale down on narrow screens */
+        .text-4xl { font-size: 1.75rem !important; line-height: 1.2 !important; }
+        .text-5xl { font-size: 2rem !important; line-height: 1.1 !important; }
+
+        /* Grid: don't collapse unnecessarily — let tailwind md: handle it */
+        /* But force wrapping flex rows */
+        .flex-wrap { flex-wrap: wrap !important; }
+      }
+
+      /* Hardware-accelerated scrolling containers */
+      .overflow-y-auto {
+        transform: translateZ(0);
+        -webkit-overflow-scrolling: touch;
+        will-change: scroll-position;
+      }
+
+      /* Prevent text from becoming tiny in WebView */
+      * { -webkit-text-size-adjust: 100% !important; text-size-adjust: 100% !important; }
 
       /* Print: hide mobile chrome when printing */
       @media print {
