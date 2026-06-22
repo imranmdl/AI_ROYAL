@@ -34,7 +34,18 @@ const ActionMenu: React.FC<{
   const toggle = () => {
     if (!open && btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+      const vh = window.innerHeight;
+      // Estimated menu height (9 items × ~38px = ~340px)
+      const menuH = 340;
+      const spaceBelow = vh - r.bottom - 8;
+      const spaceAbove = r.top - 8;
+      // Flip upward if not enough space below but more space above
+      if (spaceBelow < menuH && spaceAbove > spaceBelow) {
+        // Position above the button
+        setPos({ top: Math.max(8, r.top - menuH - 4), right: window.innerWidth - r.right });
+      } else {
+        setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+      }
     }
     setOpen(v => !v);
   };
@@ -73,7 +84,8 @@ const ActionMenu: React.FC<{
 
       {open && typeof document !== 'undefined' && ReactDOM.createPortal(
         <div
-          style={{ position:'fixed', top: pos.top, right: pos.right, zIndex: 9999 }}
+          style={{ position:'fixed', top: pos.top, right: pos.right, zIndex: 9999,
+            maxHeight: `calc(100vh - ${pos.top}px - 16px)`, overflowY: 'auto' }}
           className="bg-white border border-slate-200 rounded-2xl shadow-2xl py-1.5 min-w-[180px]"
           onMouseDown={e => e.stopPropagation()}>
           {actions.map((a, i) => (
