@@ -2,6 +2,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { store } from './store';
+
+// ── One-time purge of legacy 'royal_jwt' key that caused cross-tenant contamination ──
+store.purgeLegacyJwt?.();
 
 /**
  * RESILIENT NETWORK BRIDGE RESET

@@ -286,12 +286,23 @@ class DataStore {
   private setJwt(token: string) {
     if (typeof localStorage === 'undefined') return;
     localStorage.setItem(this.getJwtKey(), token);
-    localStorage.setItem('royal_jwt', token); // keep legacy key in sync
+    // DO NOT write to 'royal_jwt' legacy key — it caused cross-tenant contamination
   }
   private clearJwt() {
     if (typeof localStorage === 'undefined') return;
     localStorage.removeItem(this.getJwtKey());
-    localStorage.setItem('royal_jwt', '');
+    // Clean up legacy key too if present
+    localStorage.removeItem('royal_jwt');
+  }
+  /** Called once on app load to purge stale legacy JWT keys */
+  purgeLegacyJwt() {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      if (localStorage.getItem('royal_jwt')) {
+        localStorage.removeItem('royal_jwt');
+        console.log('[Store] Purged legacy royal_jwt key (tenant isolation fix)');
+      }
+    } catch {}
   }
 
   private getApiUrl(path: string) {
