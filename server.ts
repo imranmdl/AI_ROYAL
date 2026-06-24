@@ -3093,13 +3093,30 @@ app.post('/api/sync', async (req: Request, res: Response) => {
             const widthIn  = Math.round(slabWidthFt  * 12);
             const base     = `${pfx}-${slabHeightFt}ft-${widthIn}in`;
 
+            // ── Resolve existingId early so slab continuation numbering can use it ──
+            // (Full existingId logic is repeated below; this early lookup is for slabs only)
+            let existingIdForSlabs: string | null = null;
+            if (pool && dbHealthy) {
+              const dupTenantId = req.tenantId || 'default';
+              const [earlyExist]: any = await pool.query(
+                'SELECT id FROM products WHERE tenant_id=? AND name=? AND (size=? OR size IS NULL)',
+                [dupTenantId, name, size]).catch(() => [[]]);
+              if (earlyExist.length > 0) existingIdForSlabs = earlyExist[0].id;
+            } else {
+              const found = (inMemoryDb?.products || []).find((p: any) =>
+                p.name.trim().toLowerCase() === name.toLowerCase() &&
+                (!size || (p.size || '').trim().toLowerCase() === size.toLowerCase())
+              );
+              if (found) existingIdForSlabs = found.id;
+            }
+
             // Find existing slabs for this product+base to continue numbering correctly
             // (handles update/re-import without resetting slab numbers)
             let existingSlabsForBase: any[] = [];
-            if (existingId && pool && dbHealthy) {
+            if (existingIdForSlabs && pool && dbHealthy) {
               try {
                 const [existRows]: any = await pool.query(
-                  'SELECT data FROM products WHERE id=?', [existingId]);
+                  'SELECT data FROM products WHERE id=?', [existingIdForSlabs]);
                 if (existRows.length > 0) {
                   const existData = parseData(existRows[0].data);
                   existingSlabsForBase = (existData.slabs || []).filter(
