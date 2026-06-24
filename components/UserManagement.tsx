@@ -159,7 +159,7 @@ const iconColorMap: Record<string,string> = {
 };
 
 const UserManagement: React.FC = () => {
-  const users = store.users.filter(u => u.role !== UserRole.ADMIN);
+  const users = store.users;
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -358,8 +358,9 @@ const UserManagement: React.FC = () => {
                   const r = e.target.value as UserRole;
                   setFormUser(p=>({...p, role:r, permissions: FULL_PERMS(ROLE_PRESETS[r]||{})}));
                 }}>
-                  <option value={UserRole.SALESPERSON}>Salesperson</option>
+                  <option value={UserRole.ADMIN}>Admin (Full Access)</option>
                   <option value={UserRole.MANAGER}>Manager</option>
+                  <option value={UserRole.SALESPERSON}>Salesperson</option>
                   <option value={UserRole.STOREKEEPER}>Storekeeper</option>
                   <option value={UserRole.VIEWER}>Viewer</option>
                 </select>
