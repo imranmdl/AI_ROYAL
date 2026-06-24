@@ -597,7 +597,7 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
             <div><label className={label}>Expected Delivery</label><input type="date" className={inp} value={expectedDate} onChange={e=>setExpectedDate(e.target.value)} /></div>
             <div>
               <label className={label}>Status</label>
-              <select className={inp} value={status} onChange={e= style={{colorScheme:'dark'}}>setStatus(e.target.value)}>
+              <select className={inp} value={status} onChange={e=>setStatus(e.target.value)} style={{colorScheme:'dark'}}>
                 {['Draft','Ordered','In Transit','Partially Received','Received','Closed'].map(s=><option key={s} value={s}>{s}</option>)}
               </select>
             </div>
@@ -1100,7 +1100,7 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div>
                 <label className={label}>Mode</label>
-                <select className={inp} value={paymentMode} onChange={e= style={{colorScheme:'dark'}}>setPaymentMode(e.target.value as any)}>
+                <select className={inp} value={paymentMode} onChange={e=>setPaymentMode(e.target.value as any)} style={{colorScheme:'dark'}}>
                   {['Cash','RTGS','UPI','Cheque'].map(m=><option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
@@ -1163,8 +1163,7 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div>
                   <label className={label}>Product</label>
-                  <select className={inp} value={d.productId} onChange={e= style={{colorScheme:'dark'}}>{ const p=products.find(x=>x.id===e.target.value); setDamagedItems(prev=>prev.map((x:any,i:number)=>i===idx?{...x,productId:e.target.value,productName:p?.name||''}:x)); }}
-                    style={{colorScheme:'dark'}}>
+                  <select className={inp} value={d.productId} onChange={e=>{ const p=products.find(x=>x.id===e.target.value); setDamagedItems(prev=>prev.map((x:any,i:number)=>i===idx?{...x,productId:e.target.value,productName:p?.name||''}:x)); }} style={{colorScheme:'dark'}}>
                     <option value="" style={{background:'#1e293b',color:'#fff'}}>Select product…</option>
                     {items.map(i=><option key={i.productId} value={i.productId} style={{background:'#1e293b',color:'#fff'}}>{i.productName}</option>)}
                   </select>
