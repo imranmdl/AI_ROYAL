@@ -9,15 +9,60 @@ export enum UserRole {
 export type UserStatus = 'Active' | 'Suspended';
 
 export interface UserPermissions {
-  canViewDashboard: boolean;
-  canManageInventory: boolean;
-  canManageSales: boolean;
-  canViewReports: boolean;
-  canManageUsers: boolean;
-  canViewCredits: boolean;
-  canManageCustomers: boolean;
-  canManageReturns: boolean;
-  canManageGallery: boolean;
+  // ── Core ─────────────────────────────────────────────────────────────────
+  canViewDashboard:       boolean;
+
+  // ── Inventory ────────────────────────────────────────────────────────────
+  canManageInventory:     boolean;   // view product list
+  canCreateProduct:       boolean;   // Create Master Node / Quick Add
+  canEditProduct:         boolean;   // Edit product details, pricing, images
+  canDeleteProduct:       boolean;   // Suspend / Delete product
+  canInwardStock:         boolean;   // Add Inward Item / Inward Stock (Advanced)
+  canAdjustStock:         boolean;   // Adjust Stock (corrections, damages)
+  canImportExportCSV:     boolean;   // Import / Export CSV
+  canViewStockLedger:     boolean;   // View Stock Ledger per product
+  canViewVendorTracking:  boolean;   // View Vendor Supply Chain
+  canManageVendorOrders:  boolean;   // Create / edit vendor purchase orders
+  canMarkReceivedDamaged: boolean;   // Mark goods received / damaged in vendor orders
+
+  // ── Sales / Billing ──────────────────────────────────────────────────────
+  canManageSales:         boolean;   // Access Billing & POS
+  canCreateInvoice:       boolean;   // Create new billing invoice
+  canApplyDiscount:       boolean;   // Apply discount on invoice
+  canDeleteInvoice:       boolean;   // Delete / void an invoice
+  canPrintInvoice:        boolean;   // Print / PDF / Share invoice
+  canManageQuotations:    boolean;   // Create & manage quotations
+  canManageReturns:       boolean;   // Process returns & refunds
+  canManageOffers:        boolean;   // Create promotions & offers
+  canViewCredits:         boolean;   // View credit ledger
+  canManageCredits:       boolean;   // Collect outstanding / update credit
+
+  // ── Collections & Payments ───────────────────────────────────────────────
+  canRecordPayment:       boolean;   // Record cash/UPI/card payment
+  canViewCollections:     boolean;   // View collections report
+
+  // ── Expenses ─────────────────────────────────────────────────────────────
+  canManageExpenses:      boolean;   // Add / edit / delete expenses
+
+  // ── CRM & Leads ─────────────────────────────────────────────────────────
+  canManageCustomers:     boolean;   // View & manage CRM customers
+  canManageGallery:       boolean;   // View & manage gallery leads
+
+  // ── Analytics & Reports ──────────────────────────────────────────────────
+  canViewReports:         boolean;   // P&L Reports (invoice-wise, item-wise)
+  canViewVendorAnalytics: boolean;   // Vendor analytics tab
+  canExportReports:       boolean;   // Download / export report data
+
+  // ── HR & Commissions ─────────────────────────────────────────────────────
+  canManageIncentives:    boolean;   // Incentives / commission rules
+  canManageReferralComm:  boolean;   // Referral commission agents & payouts
+
+  // ── Staff & Admin ────────────────────────────────────────────────────────
+  canManageUsers:         boolean;   // Create / manage staff accounts
+  canViewSystemSettings:  boolean;   // View system architecture settings
+  canChangeSystemSettings:boolean;   // Edit system architecture settings
+  canAccessBackupRestore: boolean;   // Backup & Restore module
+  canManagePlansFeatures: boolean;   // Enable / disable modules
 }
 
 export type Category = string;
