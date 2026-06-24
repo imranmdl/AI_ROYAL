@@ -2978,6 +2978,17 @@ app.post('/api/sync', async (req: Request, res: Response) => {
         return res.status(400).json({ error: 'No rows provided' });
       }
 
+      // ── Tenant safety: named-tenant import MUST have a resolved tenantId ──
+      // If req.tenantId is missing or 'default' but the request carries a JWT,
+      // the JWT failed to decode → reject rather than silently import to 'default'.
+      const csvTenantId = req.tenantId || 'default';
+      if (!req.tenantId && req.headers.authorization) {
+        // JWT was present but didn't decode — don't import to 'default' silently
+        console.warn('[CSV IMPORT] JWT present but tenantId missing — rejecting to prevent cross-tenant contamination');
+        return res.status(401).json({ error: 'Could not resolve tenant from JWT. Please log out and log in again.' });
+      }
+      console.log(`[CSV IMPORT] tenant=${csvTenantId} rows=${rows.length}`);
+
       const results = { created: 0, updated: 0, skipped: 0, errors: [] as string[] };
       const importedProducts: any[] = [];
       const now = Date.now();
@@ -3231,7 +3242,6 @@ app.post('/api/sync', async (req: Request, res: Response) => {
           }
 
           if (pool && dbHealthy) {
-            const csvTenantId = req.tenantId || 'default';
             const finalStock = productData.stockBoxes ?? effectiveStock;
             await pool.query(
               `INSERT INTO products (id, tenant_id, name, category, brand, stock_boxes, stock_loose, selling_price, status, data, updated_at)

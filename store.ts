@@ -277,10 +277,11 @@ class DataStore {
   /** Public: returns the JWT for the CURRENT tenant (from URL ?tenant= slug). */
   getJwt(): string {
     if (typeof localStorage === 'undefined') return '';
-    // Try tenant-scoped key first, fall back to legacy key for backwards compat
-    return localStorage.getItem(this.getJwtKey())
-        || localStorage.getItem('royal_jwt')  // legacy fallback
-        || '';
+    // Always use tenant-scoped key — never fall back to the legacy unscoped key.
+    // The legacy fallback was a cross-tenant contamination bug: if tenantA was
+    // the last to log in, 'royal_jwt' held tenantA's token; tenantB's imports
+    // would then silently use tenantA's JWT → products saved to the wrong tenant.
+    return localStorage.getItem(this.getJwtKey()) || '';
   }
   private setJwt(token: string) {
     if (typeof localStorage === 'undefined') return;
