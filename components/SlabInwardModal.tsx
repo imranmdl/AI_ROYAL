@@ -77,15 +77,45 @@ const SlabInwardModal: React.FC<Props> = ({ onClose, defaultVendorName = '', onD
   const onSelectProduct = (p: Product) => {
     setSelectedProductId(p.id);
     setSearch(p.name);
-    // Try to extract dimensions from product
-    const h = (p as any).slabHeightFt || (p.slabs?.[0] as any)?.heightFt || 0;
-    const w = (p as any).slabLengthFt || (p.slabs?.[0] as any)?.lengthFt || 0;
+
+    // ── Detect finish from product.kadapaType, slabs, or name prefix ──
+    const REVERSE_PREFIX: Record<string,string> = { SP:'Single Polish', DP:'Double Polish', DSP:'Big Single Polish', DDP:'Big Double Polish', GR:'Double Polish' };
+    const finishVal = (p as any).kadapaType
+      || (p.slabs?.[0] as any)?.finish
+      || (() => {
+           const pfx = p.name?.split('_')[0] || '';
+           return REVERSE_PREFIX[pfx] || 'Single Polish';
+         })();
+    setFinish(finishVal);
+
+    // ── Extract height × width from p.size (e.g. "3.5x1.25") ──────────
+    // Fallback chain: slabHeightFt → slabs[0].heightFt → parse p.size → parse p.name
+    let h = (p as any).slabHeightFt || (p.slabs?.[0] as any)?.heightFt || 0;
+    let w = (p as any).slabLengthFt || (p.slabs?.[0] as any)?.lengthFt || 0;
+    if (!h || !w) {
+      // Try parsing from p.size e.g. "3.5x1.25" or "3.5X1.25"
+      const sizeStr = p.size || '';
+      const parts = sizeStr.split(/[xX×]/);
+      if (parts.length >= 2) {
+        h = h || parseFloat(parts[0]) || 0;
+        w = w || parseFloat(parts[1]) || 0;
+      }
+    }
+    if (!h || !w) {
+      // Last fallback: parse from product name e.g. "DP_KDP_3.5x1.25"
+      const nameParts = (p.name || '').split('_');
+      const dimStr = nameParts[nameParts.length - 1] || '';   // "3.5x1.25"
+      const dims = dimStr.split(/[xX×]/);
+      if (dims.length >= 2) { h = h || parseFloat(dims[0]) || 0; w = w || parseFloat(dims[1]) || 0; }
+    }
     if (h) setHeightFt(h);
     if (w) setWidthFt(w);
-    const finishVal = (p as any).kadapaType || (p.slabs?.[0] as any)?.finish || 'Single Polish';
-    setFinish(finishVal);
+
+    // ── Pricing from existing product data ──────────────────────────────
     if (p.costPerSqft) setCostPerSqft(p.costPerSqft);
+    else if (p.purchasePrice && (p.sqftPerBox || 0) > 0) setCostPerSqft(r2(p.purchasePrice / p.sqftPerBox));
     if (p.sellingPricePerSqft) setSellingPerSqft(p.sellingPricePerSqft);
+    else if (p.sellingPrice && (p.sqftPerBox || 0) > 0) setSellingPerSqft(r2(p.sellingPrice / p.sqftPerBox));
   };
 
   // Derived values
@@ -170,6 +200,18 @@ const SlabInwardModal: React.FC<Props> = ({ onClose, defaultVendorName = '', onD
         };
         await store.updateProduct(selectedProduct.id, updated);
         product = { ...selectedProduct, ...updated } as Product;
+        // Record inward in Stock Ledger via adjustStock (actionType=Purchase)
+        // We add slabs manually above, so pass 0 boxes to avoid double-counting stock
+        // but create the ledger entry for audit trail
+        store.adjustStock(
+          selectedProduct.id,
+          store.godowns[0]?.id || 'g1',
+          slabCount,   // slabs added = qty
+          0,
+          'Purchase',
+          `Slab Inward from Vendor — ${slabCount} slabs added`,
+          new Date().toLocaleDateString(),
+        );
       } else {
         // Create new product
         const cat = newCategory;
@@ -312,37 +354,72 @@ const SlabInwardModal: React.FC<Props> = ({ onClose, defaultVendorName = '', onD
             )}
           </div>
 
-          {/* Step 2 — Slab Dimensions */}
+          {/* Step 2 — Slab Dimensions & Finish */}
           <div className="space-y-3">
             <label className={lbl}>Step 2 — Slab Dimensions & Finish</label>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className={lbl}>Height (Ft)</label>
-                <input type="number" step="0.1" className={inp} value={heightFt||''} onChange={e => setHeightFt(+e.target.value)} placeholder="e.g. 6.5" />
-              </div>
-              <div>
-                <label className={lbl}>Width (Ft)</label>
-                <input type="number" step="0.01" className={inp} value={widthFt||''} onChange={e => setWidthFt(+e.target.value)} placeholder="e.g. 1, 1.25" />
-              </div>
-              <div>
-                <label className={lbl}>SqFt / Slab</label>
-                <div className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-amber-400 font-black text-sm">
-                  {sqftPerSlab > 0 ? sqftPerSlab : '—'}
+
+            {/* EXISTING product: show auto-filled info, allow override */}
+            {mode === 'existing' && selectedProduct && (heightFt > 0 || widthFt > 0) ? (
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center gap-2 text-emerald-400 text-[10px] font-black uppercase tracking-widest">
+                  <i className="fas fa-magic text-xs"></i> Auto-filled from product
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-white/5 rounded-xl px-4 py-3 text-center">
+                    <div className="text-[9px] text-slate-400 font-black uppercase mb-1">Height</div>
+                    <div className="text-white font-black text-lg">{heightFt} ft</div>
+                  </div>
+                  <div className="bg-white/5 rounded-xl px-4 py-3 text-center">
+                    <div className="text-[9px] text-slate-400 font-black uppercase mb-1">Width</div>
+                    <div className="text-white font-black text-lg">{widthFt} ft</div>
+                  </div>
+                  <div className="bg-amber-500/20 rounded-xl px-4 py-3 text-center">
+                    <div className="text-[9px] text-slate-400 font-black uppercase mb-1">SqFt/Slab</div>
+                    <div className="text-amber-400 font-black text-lg">{sqftPerSlab > 0 ? sqftPerSlab : '—'}</div>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="bg-white/5 rounded-xl px-4 py-2 text-white font-black text-sm flex items-center gap-2">
+                    <i className="fas fa-certificate text-amber-400 text-xs"></i>
+                    {finish}
+                  </div>
+                  <button onClick={()=>{setHeightFt(0);setWidthFt(0);}} className="text-[9px] font-black text-slate-500 hover:text-amber-400 transition-colors">
+                    <i className="fas fa-edit text-[8px] mr-1"></i>Edit dimensions
+                  </button>
                 </div>
               </div>
-            </div>
-            <div>
-              <label className={lbl}>Finish Type</label>
-              <select className={inp} value={finish} onChange={e => setFinish(e.target.value)}>
-                <option value="Single Polish">Single Polish (SP)</option>
-                <option value="Double Polish">Double Polish (DP)</option>
-                <option value="Big Single Polish">Big Single Polish (DSP)</option>
-                <option value="Big Double Polish">Big Double Polish (DDP)</option>
-                {(mode === 'existing' ? selectedProduct?.category : newCategory) !== 'Kadapa' && (
-                  <option value="Natural">Natural (GR)</option>
-                )}
-              </select>
-            </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className={lbl}>Height (Ft)</label>
+                    <input type="number" step="0.1" className={inp} value={heightFt||''} onChange={e => setHeightFt(+e.target.value)} placeholder="e.g. 6.5" />
+                  </div>
+                  <div>
+                    <label className={lbl}>Width (Ft)</label>
+                    <input type="number" step="0.01" className={inp} value={widthFt||''} onChange={e => setWidthFt(+e.target.value)} placeholder="e.g. 1, 1.25" />
+                  </div>
+                  <div>
+                    <label className={lbl}>SqFt / Slab</label>
+                    <div className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-amber-400 font-black text-sm">
+                      {sqftPerSlab > 0 ? sqftPerSlab : '—'}
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className={lbl}>Finish Type</label>
+                  <select className={inp} value={finish} onChange={e => setFinish(e.target.value)}>
+                    <option value="Single Polish">Single Polish (SP)</option>
+                    <option value="Double Polish">Double Polish (DP)</option>
+                    <option value="Big Single Polish">Big Single Polish (DSP)</option>
+                    <option value="Big Double Polish">Big Double Polish (DDP)</option>
+                    {(mode === 'existing' ? selectedProduct?.category : newCategory) !== 'Kadapa' && (
+                      <option value="Natural">Natural (GR)</option>
+                    )}
+                  </select>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Step 3 — Pricing & Stock */}
