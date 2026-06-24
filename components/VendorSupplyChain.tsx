@@ -11,6 +11,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { store } from '../store';
 import QuickAddInward from './QuickAddInward';
 import SlabInwardModal from './SlabInwardModal';
+import VendorImportModal from './VendorImportModal';
 import type { VendorOrder, VendorOrderItem, VendorTransport, VendorInvoice } from '../types';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -404,6 +405,7 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
   const [productSearch, setProductSearch] = useState('');
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showSlabInward, setShowSlabInward] = useState(false);
+  const [showVendorImport, setShowVendorImport] = useState(false);
 
   // ── Computed totals ───────────────────────────────────────────────────────
   const t = calcTransport(transport);
@@ -691,7 +693,11 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
                 )}
               </div>
             )}
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
+              <button onClick={()=>setShowVendorImport(true)}
+                className="py-2.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-xl font-black text-[10px] uppercase hover:bg-blue-100 transition-all flex items-center justify-center gap-2">
+                <i className="fas fa-file-import text-xs"></i> Import from CSV
+              </button>
               <button onClick={()=>setShowSlabInward(true)}
                 className="py-2.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl font-black text-[10px] uppercase hover:bg-amber-500/20 transition-all flex items-center justify-center gap-2">
                 <i className="fas fa-layer-group text-xs"></i> Kadapa / Granite / Marble Slab
@@ -710,6 +716,40 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
               onClose={()=>setShowQuickAdd(false)}
               defaultVendorName={vendorName}
               onDone={(p)=>{ addItem(p); }}
+            />
+          )}
+
+          {/* CSV Import Modal — review before confirming to inventory */}
+          {showVendorImport && (
+            <VendorImportModal
+              vendorName={vendorName}
+              orderNo={order?.orderNo || ''}
+              onClose={()=>setShowVendorImport(false)}
+              onConfirm={(importedItems) => {
+                // Add all confirmed items to this vendor order
+                importedItems.forEach(it => {
+                  const actualAmount = it.qty * it.purchaseRate;
+                  setItems(prev => {
+                    // Don't add duplicate product
+                    if (prev.some(x => x.productId === it.productId)) return prev;
+                    return [...prev, {
+                      id: itemUid(), productId: it.productId, productName: it.productName,
+                      category: it.category || '', unit: 'Box',
+                      orderedQty: it.qty,
+                      billedQty: it.qty, billedRate: it.purchaseRate, billedAmount: actualAmount,
+                      actualQty: it.qty, actualRate: it.purchaseRate, actualAmount,
+                      receivedQty: it.qty, damagedQty: 0, goodQty: it.qty,
+                      transportShare: 0, laborShare: 0,
+                      landedCostPerUnit: it.purchaseRate,
+                      sellingPrice: it.sellingPrice,
+                      marginPct: it.sellingPrice > it.purchaseRate
+                        ? Math.round(((it.sellingPrice-it.purchaseRate)/it.sellingPrice)*10000)/100
+                        : 0,
+                    }];
+                  });
+                });
+                setShowVendorImport(false);
+              }}
             />
           )}
 

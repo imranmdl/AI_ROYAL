@@ -3164,7 +3164,10 @@ app.post('/api/sync', async (req: Request, res: Response) => {
             if (found) existingId = found.id;
           }
 
+          // If existingIdForSlabs was found earlier, ensure existingId matches so we UPDATE not INSERT-duplicate
+          if (!existingId && existingIdForSlabs) existingId = existingIdForSlabs;
           const productId = existingId || `csv-${now}-${Math.random().toString(36).substr(2, 6)}`;
+          // Also add name+tenant to the upsert guard
           // Compute correct sqftPerBox (per slab) and totalCostPerUnit (landed per sqft for P&L)
           const kadapaSqftPerBox    = isKadapa && slabSqft > 0 ? slabSqft : sqftPerBox;
           const kadapaTotalCostUnit = isKadapa && costPerSqft > 0 ? costPerSqft : purchasePrice;
@@ -3235,7 +3238,8 @@ app.post('/api/sync', async (req: Request, res: Response) => {
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), name=VALUES(name), category=VALUES(category),
                brand=VALUES(brand), stock_boxes=VALUES(stock_boxes), selling_price=VALUES(selling_price),
-               status=VALUES(status), data=VALUES(data), updated_at=VALUES(updated_at)`,
+               status=VALUES(status), data=VALUES(data), updated_at=VALUES(updated_at)
+               /* Note: productId=existingId when product already exists, so ON DUPLICATE KEY fires on PK */`,
               [productId, csvTenantId, name, category, brand, finalStock, 0, sellingPrice, status, JSON.stringify(productData), now]
             );
           }
