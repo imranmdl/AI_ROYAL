@@ -685,8 +685,7 @@ class DataStore {
         }
       }
     }
-    return rows.join('
-');
+    return rows.join('\n');
   }
 
   setModuleEnabled(moduleId: string, enabled: boolean) {
