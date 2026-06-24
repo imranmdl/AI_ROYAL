@@ -37,15 +37,35 @@ const calcTransport = (t: VendorTransport): VendorTransport => {
   return { ...t, freightCost: freight, totalTransportCost: total };
 };
 
+const SLAB_CATS = ['Kadapa','Granite','Marble'];
+
+/** Derive sqft per slab from product or item data */
+const slabSqft = (item: VendorOrderItem): number => {
+  const cat = (item as any).category || (item as any).productCategory || '';
+  if (!SLAB_CATS.includes(cat)) return 1;  // non-slab: qty is the unit, no sqft multiplier
+  // 1. Explicit sqftPerSlab stored on item
+  if ((item as any).sqftPerSlab > 0) return (item as any).sqftPerSlab;
+  // 2. From linked product (passed via item.productData)
+  const sqftPerBox = (item as any).sqftPerBox || (item as any).productSqftPerBox || 0;
+  if (sqftPerBox > 0) return sqftPerBox;
+  // 3. Parse from product name: "DP_KDP_3.5x1.25" → 3.5 × 1.25 = 4.375
+  const name = (item as any).productName || '';
+  const match = name.match(/(\d+\.?\d*)x(\d+\.?\d*)/i);
+  if (match) return Math.round(parseFloat(match[1]) * parseFloat(match[2]) * 1000) / 1000;
+  return 1;
+};
+
 const calcItem = (item: VendorOrderItem, transportPerUnit: number, laborPerUnit: number): VendorOrderItem => {
-  const billed   = (item.billedQty||0) * (item.billedRate||0);
-  const actual   = (item.actualQty||0) * (item.actualRate||0);
+  const sqft     = slabSqft(item);
+  // Amount = qty × sqftPerSlab × ratePerSqft  (for slab categories)
+  // Amount = qty × rate                        (for tile/box categories)
+  const billed   = (item.billedQty||0) * (item.billedRate||0) * sqft;
+  const actual   = (item.actualQty||0) * (item.actualRate||0) * sqft;
   const good     = Math.max(0, (item.receivedQty||0) - (item.damagedQty||0));
-  // Use actualQty as denominator when not yet received (good=0) so landed is always shown
   const denom    = good > 0 ? good : (item.actualQty||0);
   const transAmt = transportPerUnit * (item.actualQty||0);
   const laborAmt = laborPerUnit * (item.actualQty||0);
-  const landed   = denom > 0 ? (actual + transAmt + laborAmt) / denom : 0;
+  const landed   = denom > 0 ? (actual + transAmt + laborAmt) / (denom * sqft) : 0;  // landed per sqft
   const margin   = item.sellingPrice > 0 ? ((item.sellingPrice - landed) / item.sellingPrice) * 100 : 0;
   return { ...item, billedAmount: billed, actualAmount: actual, goodQty: good,
     transportShare: transAmt, laborShare: laborAmt,
@@ -426,15 +446,32 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
     p.category?.toLowerCase().includes(productSearch.toLowerCase()));
 
   const addItem = (prod: any) => {
+    const isSlabCat = ['Kadapa','Granite','Marble'].includes(prod.category||'');
+    const sqftPerSlab = prod.sqftPerBox || (() => {
+      const m = (prod.name||'').match(/(\d+\.?\d*)x(\d+\.?\d*)/i);
+      return m ? Math.round(parseFloat(m[1])*parseFloat(m[2])*1000)/1000 : 1;
+    })();
+    // For slab items store rate-per-sqft so calcItem multiplies correctly
+    const ratePerSqft = isSlabCat
+      ? (prod.costPerSqft > 0 ? prod.costPerSqft
+        : sqftPerSlab > 1 ? Math.round((prod.purchasePrice||0)/sqftPerSlab*100)/100
+        : prod.purchasePrice||0)
+      : prod.purchasePrice||0;
+    const sellPerSqft = isSlabCat
+      ? (prod.sellingPricePerSqft > 0 ? prod.sellingPricePerSqft
+        : sqftPerSlab > 1 ? Math.round((prod.sellingPrice||0)/sqftPerSlab*100)/100
+        : prod.sellingPrice||0)
+      : prod.sellingPrice||0;
     setItems(prev=>[...prev, {
       id: itemUid(), productId: prod.id, productName: prod.name,
-      category: prod.category||'', unit: prod.unitType||'Box',
-      orderedQty:0, billedQty:0, billedRate:0, billedAmount:0,
-      actualQty:0, actualRate:0, actualAmount:0,
+      category: prod.category||'', unit: isSlabCat ? 'Slab' : (prod.unitType||'Box'),
+      orderedQty:0, billedQty:0, billedRate: ratePerSqft, billedAmount:0,
+      actualQty:0, actualRate: ratePerSqft, actualAmount:0,
       receivedQty:0, damagedQty:0, goodQty:0,
-      transportShare:0, laborShare:0, landedCostPerUnit:0,
-      sellingPrice: prod.sellingPrice||0,
-    }]);
+      transportShare:0, laborShare:0, landedCostPerUnit: ratePerSqft,
+      sellingPrice: sellPerSqft,
+      sqftPerSlab: isSlabCat ? sqftPerSlab : 1,
+    } as any]);
     setProductSearch('');
   };
 
