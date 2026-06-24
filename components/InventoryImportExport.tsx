@@ -100,7 +100,7 @@ const InventoryImportExport: React.FC = () => {
   const currentUser = store.currentUser;
 
   // ── Import state
-  const [activeTab, setActiveTab]       = useState<'export'|'import'|'history'|'mapping'>('export');
+  const [activeTab, setActiveTab]       = useState<'export'|'import'|'history'|'mapping'|'kadapa_setup'>('export');
   const [dragOver, setDragOver]         = useState(false);
   const [parsedRows, setParsedRows]     = useState<ParsedRow[]>([]);
   const [fileName, setFileName]         = useState('');
@@ -136,6 +136,15 @@ const InventoryImportExport: React.FC = () => {
   const [globalTargetOrderId, setGlobalTargetOrderId] = useState('');
   const [expandedVendors, setExpandedVendors] = useState<Set<string>>(new Set(['__new__']));
   const fileRef = useRef<HTMLInputElement>(null);
+  // ── Kadapa Setup Wizard state ────────────────────────────────────────────
+  const [kdpFinishes, setKdpFinishes] = useState([
+    { name:'Single Polish',     ratePerSqft:28, sellingRate:60,  enabled:true  },
+    { name:'Double Polish',     ratePerSqft:35, sellingRate:75,  enabled:true  },
+    { name:'Big Single Polish', ratePerSqft:45, sellingRate:100, enabled:false },
+    { name:'Big Double Polish', ratePerSqft:55, sellingRate:120, enabled:false },
+  ]);
+  const [kdpSeedResult, setKdpSeedResult] = useState<{created:number;skipped:number}|null>(null);
+  const [kdpSeedDone,   setKdpSeedDone]   = useState(false);
 
   // ── Save import history ────────────────────────────────────────────────
   const saveHistory = (sessions: ImportSession[]) => {
@@ -446,6 +455,7 @@ const InventoryImportExport: React.FC = () => {
           {TAB('export',  'Export / Templates', 'fa-file-export')}
           {TAB('import',  'Import Data',        'fa-file-import')}
           {importedProducts.length > 0 && TAB('mapping', `Vendor Mapping (${importedProducts.length})`, 'fa-link')}
+          {TAB('kadapa_setup', 'Kadapa Catalog Setup', 'fa-gem')}
           {TAB('history', `History (${importHistory.length})`, 'fa-history')}
         </div>
       </div>
@@ -993,6 +1003,151 @@ const InventoryImportExport: React.FC = () => {
         );
       })()}
 
+
+      {/* ── KADAPA CATALOG SETUP ── */}
+      {activeTab === 'kadapa_setup' && (() => {
+        const selectedFinishes = kdpFinishes.filter(f=>f.enabled);
+        const totalProducts = selectedFinishes.length * 11 * 5; // 11 heights × 5 widths
+
+        const downloadTemplate = () => {
+          const csv = store.generateKadapaCSVTemplate(selectedFinishes);
+          const blob = new Blob([csv], {type:'text/csv'});
+          const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+          a.download = `kadapa-catalog-template-${new Date().toISOString().slice(0,10)}.csv`;
+          a.click(); URL.revokeObjectURL(a.href);
+        };
+
+        const seedProducts = () => {
+          const result = store.seedDefaultKadapaProducts(selectedFinishes);
+          setKdpSeedResult(result);
+          setKdpSeedDone(true);
+        };
+
+        return (
+        <div className="space-y-6">
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 flex items-start gap-4">
+            <i className="fas fa-gem text-amber-500 text-2xl shrink-0 mt-1"></i>
+            <div>
+              <div className="font-black text-amber-800 text-sm mb-1">Kadapa Catalog Auto-Setup</div>
+              <div className="text-xs text-amber-700 font-bold">
+                Automatically creates all standard Kadapa size products (11 heights × 5 widths) for selected finishes.
+                No manual entry needed — products start with 0 stock, add slabs via Provision Master Node or Vendor Inward.
+              </div>
+            </div>
+          </div>
+
+          {/* Finish selector */}
+          <div className="bg-white border border-slate-100 rounded-2xl p-5 space-y-4">
+            <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Select Finish Types to Include</div>
+            <div className="grid grid-cols-2 gap-3">
+              {kdpFinishes.map((f,idx) => (
+                <div key={f.name} className={`border-2 rounded-2xl p-4 transition-all ${f.enabled?'border-amber-400 bg-amber-50':'border-slate-100 bg-slate-50'}`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" className="w-4 h-4 accent-amber-500"
+                        checked={f.enabled} onChange={e=>setKdpFinishes(p=>p.map((x,i)=>i===idx?{...x,enabled:e.target.checked}:x))}/>
+                      <span className="font-black text-sm">{f.name}</span>
+                    </label>
+                    <span className="text-[9px] font-black bg-slate-900 text-white px-2 py-1 rounded-lg">
+                      {{'Single Polish':'SP','Double Polish':'DP','Big Single Polish':'DSP','Big Double Polish':'DDP'}[f.name]}
+                    </span>
+                  </div>
+                  {f.enabled && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[8px] font-black text-slate-400 uppercase block mb-1">Purchase ₹/SqFt</label>
+                        <input type="number" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none"
+                          value={f.ratePerSqft} onChange={e=>setKdpFinishes(p=>p.map((x,i)=>i===idx?{...x,ratePerSqft:+e.target.value}:x))}/>
+                      </div>
+                      <div>
+                        <label className="text-[8px] font-black text-slate-400 uppercase block mb-1">Selling ₹/SqFt</label>
+                        <input type="number" className="w-full px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-xl text-sm font-bold outline-none"
+                          value={f.sellingRate} onChange={e=>setKdpFinishes(p=>p.map((x,i)=>i===idx?{...x,sellingRate:+e.target.value}:x))}/>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Standard sizes preview */}
+          <div className="bg-white border border-slate-100 rounded-2xl p-5 space-y-3">
+            <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Standard Sizes That Will Be Created</div>
+            <div className="overflow-x-auto">
+              <table className="text-[10px] w-full">
+                <thead><tr className="bg-slate-50">
+                  <th className="px-3 py-2 text-left font-black text-slate-400 uppercase">Height</th>
+                  {[{ft:1,in:'9"'},{ft:1.25,in:'14"'},{ft:1.5,in:'17"'},{ft:2,in:'23"'},{ft:2.5,in:'29"'}].map(w=>(
+                    <th key={w.ft} className="px-3 py-2 text-center font-black text-slate-400 uppercase">{w.in}<br/>({w.ft}ft)</th>
+                  ))}
+                </tr></thead>
+                <tbody className="divide-y divide-slate-50">
+                  {[2,2.5,3,3.5,4,4.5,5,5.5,6,6.5,7].map(h=>(
+                    <tr key={h} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 font-black text-slate-700">{h} ft</td>
+                      {[1,1.25,1.5,2,2.5].map(w=>(
+                        <td key={w} className="px-3 py-2 text-center text-slate-500">
+                          {(h*w).toFixed(2)}<br/><span className="opacity-50">sqft</span>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="text-[9px] text-slate-400 font-bold">
+              {selectedFinishes.length} finish type{selectedFinishes.length!==1?'s':''} × 11 heights × 5 widths = <strong className="text-slate-700">{totalProducts} products</strong> total
+            </div>
+          </div>
+
+          {/* Action buttons */}
+          <div className="grid grid-cols-2 gap-4">
+            <button onClick={downloadTemplate} disabled={selectedFinishes.length===0}
+              className="py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-black text-[10px] uppercase disabled:opacity-40 transition-all flex items-center justify-center gap-2">
+              <i className="fas fa-download"></i> Download CSV Template<br/>
+              <span className="text-[8px] font-bold opacity-60">({totalProducts} rows pre-filled)</span>
+            </button>
+            <button onClick={seedProducts} disabled={selectedFinishes.length===0||kdpSeedDone}
+              className="py-4 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white rounded-2xl font-black text-[10px] uppercase transition-all flex items-center justify-center gap-2">
+              <i className="fas fa-magic"></i>
+              {kdpSeedDone ? `✓ Done! ${kdpSeedResult?.created} created` : `Auto-Create ${totalProducts} Products`}
+            </button>
+          </div>
+
+          {kdpSeedResult && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 space-y-2">
+              <div className="font-black text-emerald-700 text-sm">✓ Kadapa Catalog Created</div>
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="bg-white rounded-xl px-4 py-3">
+                  <div className="text-[8px] text-slate-400 font-black uppercase mb-1">Products Created</div>
+                  <div className="text-2xl font-black text-emerald-700">{kdpSeedResult.created}</div>
+                </div>
+                <div className="bg-white rounded-xl px-4 py-3">
+                  <div className="text-[8px] text-slate-400 font-black uppercase mb-1">Already Existed (skipped)</div>
+                  <div className="text-2xl font-black text-slate-500">{kdpSeedResult.skipped}</div>
+                </div>
+              </div>
+              <div className="text-[10px] text-emerald-700 font-bold">
+                Go to Inventory → select any Kadapa product → Provision Master Node to add slabs and stock.
+                Or use the Vendor Supply Chain → Slab Inward to add stock via purchase order.
+              </div>
+              <button onClick={()=>{setKdpSeedDone(false);setKdpSeedResult(null);}}
+                className="text-[9px] font-black text-slate-400 hover:text-slate-700">Run again (add more finishes)</button>
+            </div>
+          )}
+
+          {/* CSV import hint */}
+          <div className="bg-blue-50 border border-blue-100 rounded-2xl px-5 py-4 text-blue-700 text-[10px] font-bold flex items-start gap-3">
+            <i className="fas fa-info-circle mt-0.5 shrink-0"></i>
+            <div>
+              <strong>CSV Template workflow:</strong> Download the template → fill in your actual stock quantities and pricing for sizes you carry → import via the Import tab.
+              The template has all sizes pre-named (SP_KDP_2x1, DP_KDP_6.5x1.25…) so you just fill in numbers.
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* ── HISTORY TAB ────────────────────────────────────────────────── */}
       {activeTab === 'history' && (

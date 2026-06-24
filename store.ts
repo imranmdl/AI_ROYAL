@@ -595,6 +595,100 @@ class DataStore {
   updatePredefinedSizes(sizes: string[]) { this.settings.predefinedSizes = sizes; this.save(); }
   updatePredefinedBrands(brands: string[]) { this.settings.predefinedBrands = brands; this.save(); }
   /** Enable/disable a module by sidebar id */
+  // ── Kadapa Default Catalog Seeder ────────────────────────────────────────
+  /**
+   * Creates all standard Kadapa size products for the given finishes with 0 stock.
+   * Heights: 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7 ft
+   * Widths:  1, 1.25, 1.5, 2, 2.5 ft (9, 14, 17, 23, 29 inches)
+   * One product per unique size+finish combination.
+   * Returns the count of products created/skipped.
+   */
+  seedDefaultKadapaProducts(
+    selectedFinishes: Array<{name: string; ratePerSqft: number}>,
+    sellingMultiplier = 2.0
+  ): { created: number; skipped: number } {
+    const HEIGHTS = [2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7];
+    const WIDTHS  = [
+      { ft: 1,    inches: 9  },
+      { ft: 1.25, inches: 14 },
+      { ft: 1.5,  inches: 17 },
+      { ft: 2,    inches: 23 },
+      { ft: 2.5,  inches: 29 },
+    ];
+    const PREFIX: Record<string,string> = {
+      'Single Polish':'SP', 'Double Polish':'DP',
+      'Big Single Polish':'DSP', 'Big Double Polish':'DDP',
+    };
+    let created = 0, skipped = 0;
+    const now = Date.now();
+
+    for (const finish of selectedFinishes) {
+      const pfx = PREFIX[finish.name] || 'SP';
+      for (const h of HEIGHTS) {
+        for (const w of WIDTHS) {
+          const sqft = Math.round(h * w.ft * 100) / 100;
+          const size = `${h}x${w.ft}`;
+          const name = `${pfx}_KDP_${size}`;
+          // Skip if already exists
+          if (this.products.find(p => p.name === name && p.category === 'Kadapa')) { skipped++; continue; }
+          const landedPerSlab = Math.round(sqft * finish.ratePerSqft * 100) / 100;
+          const sellingPerSlab = Math.round(landedPerSlab * sellingMultiplier * 100) / 100;
+          const prod: any = {
+            id: `kadapa-default-${pfx}-${h}-${w.inches}-${now}-${Math.random().toString(36).substr(2,4)}`,
+            name, category: 'Kadapa', brand: 'Kadapa Stone',
+            size, unitType: 'Slab', tilesPerBox: 1, sqftPerBox: sqft,
+            purchasePrice: landedPerSlab, sellingPrice: sellingPerSlab,
+            costPerSqft: finish.ratePerSqft, sellingPricePerSqft: Math.round(finish.ratePerSqft * sellingMultiplier),
+            totalCostPerUnit: finish.ratePerSqft, transportCost: 0, otherCharges: 0,
+            kadapaType: finish.name, graniteName: '', grade: 'Premium', shadeNo: '', batchNo: '',
+            isTile: true, showInGallery: true, status: 'Active',
+            stockBoxes: 0, stockLoose: 0, reorderLevel: 5,
+            slabs: [], damageHistory: [], purchaseHistory: [], adjustmentLog: [],
+            locationStock: this.godowns.map((g, i) => ({ godownId: g.id, boxes: 0, loose: 0 })),
+            images: ['https://images.unsplash.com/photo-1517646331032-9e8563c520a1?auto=format&fit=crop&q=80&w=1000'],
+            updatedAt: now,
+          };
+          this.addProduct(prod as any);
+          created++;
+        }
+      }
+    }
+    return { created, skipped };
+  }
+
+  /**
+   * Generate a pre-filled Kadapa CSV template with all standard sizes.
+   * Returns CSV string ready for download.
+   */
+  generateKadapaCSVTemplate(
+    selectedFinishes: Array<{name: string; ratePerSqft: number; sellingRate: number}>
+  ): string {
+    const HEIGHTS = [2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7];
+    const WIDTHS  = [
+      { ft: 1, inches: 9 }, { ft: 1.25, inches: 14 },
+      { ft: 1.5, inches: 17 }, { ft: 2, inches: 23 }, { ft: 2.5, inches: 29 },
+    ];
+    const PREFIX: Record<string,string> = {
+      'Single Polish':'SP','Double Polish':'DP','Big Single Polish':'DSP','Big Double Polish':'DDP',
+    };
+    const header = 'Category,Product Name,Finish Type,Height (Ft),Width (Ft),Purchase Rate Per Sqft,Selling Price Per Sqft,Stock Slabs,Vendor Name,Order ID,Status';
+    const rows: string[] = [header];
+    for (const finish of selectedFinishes) {
+      const pfx = PREFIX[finish.name] || 'SP';
+      for (const h of HEIGHTS) {
+        for (const w of WIDTHS) {
+          const name = `${pfx}_KDP_${h}x${w.ft}`;
+          rows.push([
+            'Kadapa', name, finish.name, h, w.ft,
+            finish.ratePerSqft, finish.sellingRate, 0, '', '', 'Active'
+          ].join(','));
+        }
+      }
+    }
+    return rows.join('
+');
+  }
+
   setModuleEnabled(moduleId: string, enabled: boolean) {
     const disabled = this.settings.disabledModules || [];
     if (enabled) {
