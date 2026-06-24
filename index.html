@@ -133,6 +133,17 @@
       /* Prevent text from becoming tiny in WebView */
       * { -webkit-text-size-adjust: 100% !important; text-size-adjust: 100% !important; }
 
+      /* ── Dropdown options in dark-theme selects: always readable ── */
+      /* bg-white/10 on <select> causes options to inherit white text → invisible on OS popup */
+      select option {
+        background-color: #1e293b;
+        color: #f1f5f9;
+      }
+      /* Chrome/Edge: color-scheme hint for dark select elements */
+      select.dark-select, select[style*="colorScheme"] {
+        color-scheme: dark;
+      }
+
       /* Print: hide mobile chrome when printing */
       @media print {
         .no-print { display: none !important; }
