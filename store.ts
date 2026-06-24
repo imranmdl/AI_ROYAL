@@ -150,15 +150,23 @@ class DataStore {
         advances: this.advances, payrollRecords: this.payrollRecords, returns: this.returns,
         galleryLeads: this.galleryLeads, lastUpdated: this.lastUpdated, settings: this.settings,
       };
-      // Always write — even empty state must overwrite stale cache after a clear
-      // Tag cache with current tenant so it's rejected if tenant changes
       const _tenant = new URLSearchParams(window.location.search).get('tenant') || 'default';
-      localStorage.setItem('royal_erp_cache', JSON.stringify({ ...data, _tenant }));
+      // Named tenants: do NOT cache to localStorage — they always read fresh from DB.
+      // Only the default/single-tenant store uses localStorage cache as a speed optimization.
+      if (_tenant === 'default') {
+        localStorage.setItem(`royal_erp_cache_${_tenant}`, JSON.stringify({ ...data, _tenant }));
+      }
+      // Clean up old unscoped key and any stale tenant cache keys from previous sessions
+      if (localStorage.getItem('royal_erp_cache')) localStorage.removeItem('royal_erp_cache');
     } catch (e) { console.warn('[STORE] localStorage write failed:', e); }
   }
   private loadFromLocalStorage() {
     try {
-      const cached = localStorage.getItem('royal_erp_cache');
+      const _slug = new URLSearchParams(window.location.search).get('tenant') || 'default';
+      // Named tenants: only use their own scoped key — NEVER fall back to shared key
+      const cached = localStorage.getItem(`royal_erp_cache_${_slug}`);
+      // Clean up old unscoped key if still present
+      if (localStorage.getItem('royal_erp_cache')) localStorage.removeItem('royal_erp_cache');
       if (!cached) return;
       const data = JSON.parse(cached);
 
@@ -171,6 +179,8 @@ class DataStore {
       // On browser: discard cache if it belongs to a different tenant
       if (!isCapacitorApp2 && cachedTenant !== urlTenantForCache) {
         console.log(`[STORE] Cache tenant mismatch: cached="${cachedTenant}" url="${urlTenantForCache}" — discarding`);
+        const _cs = storedSlug || urlTenant;
+        localStorage.removeItem(`royal_erp_cache_${_cs}`);
         localStorage.removeItem('royal_erp_cache');
         return;
       }
@@ -234,6 +244,8 @@ class DataStore {
         console.log(`[STORE] Tenant switch detected (${storedSlug} → ${urlTenant}): clearing JWT`);
         this.clearJwt();
         localStorage.setItem('royal_tenant_slug', urlTenant);
+        const _cs = storedSlug || urlTenant;
+        localStorage.removeItem(`royal_erp_cache_${_cs}`);
         localStorage.removeItem('royal_erp_cache');
         this.products = []; this.sales = []; this.purchases = [];
         this.vendorOrders = []; this.quotations = []; this.lastUpdated = 0;

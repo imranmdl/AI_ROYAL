@@ -1054,10 +1054,12 @@ async function syncInMemoryToRelationalDb(data: any) {
 
 // ... (middleware setup)
 
-  function updateCache(collection: string, item: any, isDelete: boolean = false) {
+  function updateCache(collection: string, item: any, isDelete: boolean = false, tenantId?: string) {
+    // ONLY update in-memory cache for the default (single-shop) tenant.
+    // Named tenants always read fresh from DB — never from inMemoryDb.
+    if (tenantId && tenantId !== 'default') return;
     if (!inMemoryDb) inMemoryDb = getInitialData();
     if (!inMemoryDb[collection]) inMemoryDb[collection] = [];
-    
     const now = Date.now();
     if (isDelete) {
       inMemoryDb[collection] = inMemoryDb[collection].filter((x: any) => x.id !== (typeof item === 'string' ? item : item.id));
@@ -1068,7 +1070,7 @@ async function syncInMemoryToRelationalDb(data: any) {
       else inMemoryDb[collection].push(itemWithTs);
     }
     inMemoryDb.lastUpdated = now;
-    syncResponseCache = null; // Invalidate cache
+    syncResponseCache = null;
   }
 
   // Paginated Endpoints for Large Collections
@@ -1347,7 +1349,7 @@ async function syncInMemoryToRelationalDb(data: any) {
 
   app.delete('/api/products/:id', async (req: Request, res: Response) => {
     const id = req.params.id;
-    updateCache('products', id, true);
+    updateCache('products', id, true, req.tenantId);
     
     if (!pool || !dbHealthy) {
       return res.json({ success: true, mode: 'offline' });
@@ -1441,7 +1443,7 @@ async function syncInMemoryToRelationalDb(data: any) {
   app.delete('/api/users/:id', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      updateCache('users', id, true);
+      updateCache('users', id, true, req.tenantId);
       
       if (pool && dbHealthy) {
         await pool.query('DELETE FROM users WHERE id=? AND tenant_id=?', [id, req.tenantId || 'default']);
@@ -1454,7 +1456,7 @@ async function syncInMemoryToRelationalDb(data: any) {
 
   app.post('/api/sales', async (req: Request, res: Response) => {
     const s = req.body;
-    updateCache('sales', s);
+    updateCache('sales', s, false, tenantId);
     
     if (!pool || !dbHealthy) {
       return res.json({ success: true, mode: 'offline' });
@@ -1477,7 +1479,7 @@ async function syncInMemoryToRelationalDb(data: any) {
 
   app.post('/api/purchases', async (req: Request, res: Response) => {
     const p = req.body;
-    updateCache('purchases', p);
+    updateCache('purchases', p, false, tenantId);
     
     if (!pool || !dbHealthy) {
       return res.json({ success: true, mode: 'offline' });
@@ -1677,7 +1679,7 @@ async function syncInMemoryToRelationalDb(data: any) {
       const leadWithTs = { ...lead, updatedAt: now };
       
       console.log(`[GALLERY] Receiving order: ${lead.id} from ${lead.customerName}`);
-      updateCache('galleryLeads', leadWithTs);
+      updateCache('galleryLeads', leadWithTs, false, req.tenantId);
       
       // Ensure it's persisted to the main data store immediately
       if (inMemoryDb) {
@@ -2182,7 +2184,7 @@ app.post('/api/sync', async (req: Request, res: Response) => {
 
       // Purchases — update cache only for default
       if (isDefault) {
-        if (data.purchases) data.purchases.forEach((p: any) => updateCache('purchases', p));
+        if (data.purchases && isDefault) data.purchases.forEach((p: any) => updateCache('purchases', p));
       }
     }
 
