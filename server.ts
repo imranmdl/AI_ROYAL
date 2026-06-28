@@ -1203,13 +1203,8 @@ async function syncInMemoryToRelationalDb(data: any) {
       }
 
       const tenantId = req.tenantId || 'default';
-      // ── Optimized query: exclude heavy nested arrays (slabs, images, adjustmentLog)
-      // from the list view — they are loaded on-demand when editing a product.
-      // Use JSON_REMOVE if available, otherwise fall back to full data.
-      let query = `SELECT id, name, category, brand, stock_boxes, stock_loose, selling_price, status, updated_at,
-        JSON_REMOVE(JSON_REMOVE(JSON_REMOVE(JSON_REMOVE(data,
-          '$.slabs'), '$.images'), '$.adjustmentLog'), '$.damageHistory') AS data
-        FROM products WHERE tenant_id=? USE INDEX (idx_products_tenant_status)`;
+      // Safe query — always returns data; strips heavy arrays in map() instead
+      let query = 'SELECT id, name, category, brand, stock_boxes, stock_loose, selling_price, status, data, updated_at FROM products WHERE tenant_id=?';
       let countQuery = 'SELECT COUNT(*) as count FROM products WHERE tenant_id=?';
       const params: any[] = [tenantId];
 
@@ -1264,23 +1259,24 @@ async function syncInMemoryToRelationalDb(data: any) {
 
       const conn = await pool.getConnection();
       try {
-        // Run data + count in parallel for speed
-        const [rowsResult, countResult]: any = await Promise.all([
-          conn.query(query, [...params, limit, offset]),
-          conn.query(countQuery, params),
-        ]);
-        const rows = rowsResult[0];
-        const count = countResult[0][0]?.count || 0;
+        // Sequential for reliability on single connection
+        const [rows]: any = await conn.query(query, [...params, limit, offset]);
+        const [[{ count }]]: any = await conn.query(countQuery, params);
 
         res.json({
           data: rows.map((p: any) => {
-            let parsedData = {};
+            let parsedData: any = {};
             try {
               if (p.data) {
-                parsedData = typeof p.data === 'string' ? JSON.parse(p.data) : p.data;
+                const raw = typeof p.data === 'string' ? JSON.parse(p.data) : p.data;
+                // Strip heavy arrays for the list view — reduces payload significantly
+                const { slabs, images, adjustmentLog, damageHistory, purchaseHistory, ...rest } = raw;
+                parsedData = rest;
+                // Keep slab count but not full slab array
+                if (slabs) parsedData._slabCount = slabs.length;
               }
             } catch (e) {
-              console.error('Error parsing product data:', e);
+              console.error('[Products] parse error for', p.id, e);
             }
             
             return {
