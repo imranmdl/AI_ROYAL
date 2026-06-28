@@ -1772,11 +1772,44 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                     <div className="bg-slate-900 p-6 rounded-[40px] text-white shadow-2xl relative overflow-hidden">
                        <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 blur-[50px] pointer-events-none"></div>
                        <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Landed Intelligence</h3>
-                       <div className="mt-3">
-                          <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Per {productForm.unitType || 'Box'}</div>
-                          <div className="text-4xl font-black italic tracking-tighter text-amber-500">₹{calculatedLandedCost.toFixed(2)}</div>
-                       </div>
-                       {(productForm.sqftPerBox || 0) > 0 && (
+
+                       {(productForm.category === 'Granite' || productForm.category === 'Marble') ? (
+                         // ── Granite / Marble: landedCost IS per-sqft; per-slab varies by slab size ──
+                         <div className="space-y-3 mt-3">
+                           <div>
+                             <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Per SqFt (Landed)</div>
+                             <div className="text-4xl font-black italic tracking-tighter text-amber-500">
+                               ₹{calculatedLandedCost.toFixed(2)}
+                             </div>
+                           </div>
+                           {(productForm.sellingPricePerSqft || 0) > 0 && (
+                             <div className="pt-3 border-t border-white/10">
+                               <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Selling / SqFt</div>
+                               <div className="text-2xl font-black text-emerald-400">
+                                 ₹{(productForm.sellingPricePerSqft || 0).toFixed(2)}
+                               </div>
+                             </div>
+                           )}
+                           {calculatedLandedCost > 0 && (productForm.sellingPricePerSqft || 0) > 0 && (
+                             <div className="pt-3 border-t border-white/10">
+                               <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Margin / SqFt</div>
+                               <div className={`text-xl font-black ${(productForm.sellingPricePerSqft||0) >= calculatedLandedCost ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                 {(productForm.sellingPricePerSqft||0) >= calculatedLandedCost ? '+' : ''}₹{((productForm.sellingPricePerSqft||0) - calculatedLandedCost).toFixed(2)}
+                               </div>
+                               <div className="text-[8px] text-slate-500 mt-0.5">
+                                 Per-slab cost = this rate × each slab's SqFt
+                               </div>
+                             </div>
+                           )}
+                         </div>
+                       ) : (
+                         // ── Tiles / Kadapa / Adhesive: landedCost is per-box or per-slab ──
+                         <div className="mt-3">
+                           <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Per {productForm.unitType || 'Box'}</div>
+                           <div className="text-4xl font-black italic tracking-tighter text-amber-500">₹{calculatedLandedCost.toFixed(2)}</div>
+                         </div>
+                       )}
+                       {!(productForm.category === 'Granite' || productForm.category === 'Marble') && (productForm.sqftPerBox || 0) > 0 && (
                          <div className="mt-3 pt-3 border-t border-white/10">
                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Per SqFt</div>
                            <div className="text-2xl font-black text-teal-400">
@@ -1787,7 +1820,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                            </div>
                          </div>
                        )}
-                       {(productForm.sellingPrice || 0) > 0 && calculatedLandedCost > 0 && (
+                       {!(productForm.category === 'Granite' || productForm.category === 'Marble') && (productForm.sellingPrice || 0) > 0 && calculatedLandedCost > 0 && (
                          <div className="mt-3 pt-3 border-t border-white/10">
                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Margin / Box</div>
                            <div className={`text-xl font-black ${(productForm.sellingPrice || 0) >= calculatedLandedCost ? 'text-emerald-400' : 'text-rose-400'}`}>
