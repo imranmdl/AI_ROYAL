@@ -195,38 +195,98 @@ const VendorImportModal: React.FC<Props> = ({ onClose, vendorName, orderNo, onCo
 
     for (const row of validRows) {
       const isSlabCat = SLAB_CATS.includes(row.category);
-      const sqft = row.heightFt && row.widthFt ? Math.round(row.heightFt*row.widthFt*100)/100 : 0;
-      const landedPerUnit = isSlabCat && sqft > 0 ? row.purchaseRate : row.purchaseRate;
-      const sellingPerUnit = isSlabCat && sqft > 0 ? row.sellingPrice : row.sellingPrice;
+      const isVarSlab = ['Granite','Marble'].includes(row.category);
+      const isKadapa  = row.category === 'Kadapa';
+      const sqft = row.heightFt && row.widthFt ? Math.round(row.heightFt*row.widthFt*100)/100
+        : row.sqftPerBox || 0;
+      const landedPerUnit  = row.purchaseRate;
+      const sellingPerUnit = row.sellingPrice;
+      const stockToAdd     = row.stockQty || 0;
+      const godownId       = store.godowns[0]?.id || 'g1';
+      const now            = Date.now();
 
       let productId = row.existingProductId;
+      let existingProduct = store.products.find(p => p.id === productId);
 
-      if (row.isExisting && productId) {
-        // Update existing product
+      if (row.isExisting && productId && existingProduct) {
+        // Update pricing on existing product
+        const existingSlabs = (existingProduct.slabs || []) as any[];
+        const existingStock = existingProduct.stockBoxes || 0;
+
+        // Generate new slab numbers for Kadapa
+        let newSlabs: any[] = [];
+        if (isKadapa && stockToAdd > 0 && sqft > 0) {
+          const PREFIX: Record<string,string> = { 'Single Polish':'SP','Double Polish':'DP','Big Single Polish':'DSP','Big Double Polish':'DDP' };
+          const pfx = PREFIX[(existingProduct as any).kadapaType||row.finishType||''] || 'SP';
+          const wIn = Math.round((row.widthFt||sqft) * 12);
+          const base = `${pfx}-${row.heightFt||sqft}ft-${wIn}in`;
+          const maxExisting = existingSlabs.filter((s:any)=>(s.slabNo||'').startsWith(base))
+            .reduce((m:number,s:any)=>Math.max(m,parseInt((s.slabNo||'').split('-').pop()||'0')||0),0);
+          newSlabs = Array.from({length:stockToAdd},(_,i)=>({
+            id:`slab-imp-${now}-${i}`, slabNo:`${base}-${maxExisting+i+1}`,
+            heightFt:row.heightFt, widthFt:row.widthFt, sqft,
+            isSold:false, finish:row.finishType,
+            landedCostPerSqft:landedPerUnit, sellingPricePerSqft:sellingPerUnit,
+          }));
+        }
+
         store.updateProduct(productId, {
           purchasePrice: landedPerUnit, sellingPrice: sellingPerUnit,
           costPerSqft: row.purchaseRate, sellingPricePerSqft: row.sellingPrice,
-          status: row.status as any, updatedAt: Date.now(),
+          stockBoxes: isSlabCat ? existingStock + stockToAdd : existingStock + stockToAdd,
+          slabs: isKadapa ? [...existingSlabs, ...newSlabs] : existingSlabs,
+          sqftPerBox: sqft || existingProduct.sqftPerBox,
+          status: row.status as any, updatedAt: now,
         });
+        // Record in stock ledger
+        if (stockToAdd > 0) {
+          store.adjustStock(productId, godownId, stockToAdd, 0, 'Purchase',
+            `Vendor Import — ${stockToAdd} ${isSlabCat?'slabs':'boxes'}`, new Date().toLocaleDateString());
+        }
         updated++;
       } else {
-        // Create new product
-        const now = Date.now();
+        // Create new product with correct stock
         productId = `prod-vendor-import-${now}-${Math.random().toString(36).substr(2,5)}`;
+
+        // Generate initial slabs for Kadapa
+        let initSlabs: any[] = [];
+        if (isKadapa && stockToAdd > 0 && sqft > 0) {
+          const PREFIX: Record<string,string> = { 'Single Polish':'SP','Double Polish':'DP','Big Single Polish':'DSP','Big Double Polish':'DDP' };
+          const pfx = PREFIX[row.finishType||''] || 'SP';
+          const wIn = Math.round((row.widthFt||0) * 12);
+          const base = `${pfx}-${row.heightFt||0}ft-${wIn}in`;
+          initSlabs = Array.from({length:stockToAdd},(_,i)=>({
+            id:`slab-imp-${now}-${i}`, slabNo:`${base}-${i+1}`,
+            heightFt:row.heightFt, widthFt:row.widthFt, sqft,
+            isSold:false, finish:row.finishType,
+            landedCostPerSqft:landedPerUnit, sellingPricePerSqft:sellingPerUnit,
+          }));
+        }
+
         const newProd = {
           id: productId, name: row.name, category: row.category as any, brand: row.brand,
-          size: row.size, unitType: isSlabCat ? 'Slab' : 'Box' as any, tilesPerBox: 1,
-          sqftPerBox: row.sqftPerBox || sqft || 1, tilesPerBox: row.tilesPerBox || 1, purchasePrice: landedPerUnit, sellingPrice: sellingPerUnit,
+          size: row.size, unitType: isSlabCat ? 'Slab' : 'Box' as any,
+          tilesPerBox: row.tilesPerBox || 1,
+          sqftPerBox: sqft || row.sqftPerBox || 1,
+          purchasePrice: landedPerUnit, sellingPrice: sellingPerUnit,
           costPerSqft: row.purchaseRate, sellingPricePerSqft: row.sellingPrice,
           totalCostPerUnit: row.purchaseRate, transportCost: 0, otherCharges: 0,
           kadapaType: row.finishType as any, grade: 'Premium' as any,
           status: row.status as any, showInGallery: true, isTile: true,
-          stockBoxes: isSlabCat ? 0 : row.stockQty,
+          stockBoxes: stockToAdd,   // ← SET ACTUAL STOCK (was hardcoded to 0!)
           stockLoose: 0, reorderLevel: 5,
-          slabs: [], damageHistory: [], purchaseHistory: [], adjustmentLog: [],
-          locationStock: store.godowns.map((g, i) => ({ godownId: g.id, boxes: i===0 && !isSlabCat ? row.stockQty : 0, loose: 0 })),
-          images: [],
-          updatedAt: now,
+          slabs: initSlabs,
+          damageHistory: [], purchaseHistory: [],
+          adjustmentLog: stockToAdd > 0 ? [{
+            date: new Date().toLocaleDateString(), actionType: 'Purchase',
+            boxChange: stockToAdd, looseChange: 0, godownId,
+            note: `Initial import — ${stockToAdd} ${isSlabCat?'slabs':'boxes'}`,
+            resultBoxes: stockToAdd,
+          }] : [],
+          locationStock: store.godowns.map((g, i) => ({
+            godownId: g.id, boxes: i===0 ? stockToAdd : 0, loose: 0
+          })),
+          images: [], updatedAt: now,
         };
         store.addProduct(newProd as any);
         created++;
