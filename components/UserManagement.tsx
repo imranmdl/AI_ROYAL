@@ -175,25 +175,27 @@ const UserManagement: React.FC = () => {
   };
 
   const togglePerm = useCallback((u: User, key: keyof UserPermissions) => {
-    const updated = { ...u, permissions: { ...u.permissions, [key]: !u.permissions[key] } };
-    store.updateUser(updated);
+    const newPerms = { ...u.permissions, [key]: !u.permissions?.[key] };
+    const updated = { ...u, permissions: newPerms };
+    store.updateUser(u.id, { permissions: newPerms });
     setSelectedUser(updated);
     setSaved(false); setSaving(true);
     setTimeout(() => { setSaving(false); setSaved(true); }, 300);
     setTimeout(() => setSaved(false), 2000);
   }, []);
 
-  const saveNewUser = () => {
+  const saveNewUser = async () => {
     if (!formUser.name || !formUser.email || !formUser.password) { alert('Name, email and password required'); return; }
     const now = Date.now();
-    store.addUser({
+    await store.createUser({
       id: `user-${now}`, name: formUser.name.trim(), email: formUser.email.trim(),
-      password: formUser.password, role: formUser.role, status: 'Active',
+      password: formUser.password, role: formUser.role, status: 'Active' as any,
       permissions: formUser.permissions, createdAt: now, updatedAt: now,
       phone: '', address: '', designation: '',
     } as any);
     setShowCreate(false);
     setFormUser({ name:'', email:'', password:'', role: UserRole.SALESPERSON, permissions: FULL_PERMS(ROLE_PRESETS.salesperson) });
+    setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
 
   const roleBadge = (role: UserRole) => {
@@ -267,16 +269,16 @@ const UserManagement: React.FC = () => {
                 <div className="flex flex-wrap gap-2">
                   <div className="text-[9px] text-slate-400 font-black uppercase mb-1 w-full">Quick Preset</div>
                   {(['admin','manager','salesperson','storekeeper','viewer'] as const).map(r => (
-                    <button key={r} onClick={()=>{ const u2={...selectedUser,permissions:FULL_PERMS(ROLE_PRESETS[r])}; store.updateUser(u2); setSelectedUser(u2); }}
+                    <button key={r} onClick={()=>{ const p=FULL_PERMS(ROLE_PRESETS[r]); store.updateUser(selectedUser.id,{permissions:p}); setSelectedUser({...selectedUser,permissions:p}); }}
                       className="px-3 py-1.5 text-[8px] font-black uppercase rounded-xl bg-slate-50 border border-slate-200 hover:border-slate-400 transition-all capitalize">
                       {r}
                     </button>
                   ))}
-                  <button onClick={()=>{ const u2={...selectedUser,permissions:FULL_PERMS(ALL_ON as any)}; store.updateUser(u2); setSelectedUser(u2); }}
+                  <button onClick={()=>{ const p=FULL_PERMS(ALL_ON as any); store.updateUser(selectedUser.id,{permissions:p}); setSelectedUser({...selectedUser,permissions:p}); }}
                     className="px-3 py-1.5 text-[8px] font-black uppercase rounded-xl bg-emerald-50 border border-emerald-200 hover:border-emerald-400 text-emerald-700 transition-all">
                     All On
                   </button>
-                  <button onClick={()=>{ const u2={...selectedUser,permissions:FULL_PERMS(ALL_OFF as any)}; store.updateUser(u2); setSelectedUser(u2); }}
+                  <button onClick={()=>{ const p=FULL_PERMS(ALL_OFF as any); store.updateUser(selectedUser.id,{permissions:p}); setSelectedUser({...selectedUser,permissions:p}); }}
                     className="px-3 py-1.5 text-[8px] font-black uppercase rounded-xl bg-rose-50 border border-rose-200 hover:border-rose-400 text-rose-700 transition-all">
                     All Off
                   </button>
@@ -300,8 +302,8 @@ const UserManagement: React.FC = () => {
                         const allOn = enabledInGroup === group.perms.length;
                         const newP = {...selectedUser.permissions};
                         group.perms.forEach(p => { newP[p.key] = !allOn; });
-                        const u2 = {...selectedUser,permissions:newP};
-                        store.updateUser(u2); setSelectedUser(u2);
+                        store.updateUser(selectedUser.id,{permissions:newP});
+                        setSelectedUser({...selectedUser,permissions:newP});
                       }} className="text-[8px] font-black px-2 py-0.5 rounded-full bg-white border border-slate-200 hover:border-slate-400 text-slate-500">
                         {enabledInGroup === group.perms.length ? 'All Off' : 'All On'}
                       </button>
