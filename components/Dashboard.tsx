@@ -105,10 +105,15 @@ const Dashboard: React.FC = () => {
   }, [store.sales, isExecutive, currentUser]);
 
   const supplyChainMetrics = useMemo(() => {
-    const pendingOrders = store.vendorOrders.filter(o => o.status === 'Ordered' || o.status === 'Partial').length;
-    const totalPayable = store.vendorOrders.reduce((sum, o) => sum + o.balanceAmount, 0);
-    const lowStockItems = store.products.filter(p => p.stockBoxes <= p.reorderLevel).length;
-    return { pendingOrders, totalPayable, lowStockItems };
+    const orders = store.vendorOrders || [];
+    const pendingOrders  = orders.filter(o => o.status === 'Ordered' || o.status === 'In Transit' || o.status === 'Partially Received').length;
+    const totalPayable   = orders.reduce((s, o) => s + (o.balanceAmount || 0), 0);
+    const totalPurchased = orders.reduce((s, o) => s + (o.totalActualAmount || o.totalBilledAmount || 0), 0);
+    const totalPaid      = orders.reduce((s, o) => s + (o.paidAmount || 0), 0);
+    const lowStockItems  = store.products.filter(p => (p.stockBoxes||0) <= (p.reorderLevel||5)).length;
+    const orderCount     = orders.length;
+    const itemCount      = orders.reduce((s, o) => s + ((o.items||[]).length), 0);
+    return { pendingOrders, totalPayable, totalPurchased, totalPaid, lowStockItems, orderCount, itemCount };
   }, [store.vendorOrders, store.products]);
 
   const formatCurrency = (val: number) => {
@@ -224,9 +229,28 @@ const Dashboard: React.FC = () => {
         {store.settings.dashboardVisibility.showStockValuation && (
           <Widget title="Stock Valuation" value={formatCurrency(totalStockValue)} sub="Asset at Landed Cost" icon="fa-warehouse" color="bg-slate-900" />
         )}
-        <Widget title="Pending Orders" value={supplyChainMetrics.pendingOrders.toString()} sub="Vendor Supply Chain" icon="fa-truck-loading" color="bg-amber-600" />
-        <Widget title="Low Stock" value={supplyChainMetrics.lowStockItems.toString()} sub="Inventory Alerts" icon="fa-exclamation-triangle" color="bg-rose-500" />
-        <Widget title="Gross Margin %" value={`${financialMetrics.marginPercent.toFixed(1)}%`} sub="Profitability Ratio" icon="fa-chart-line" color="bg-indigo-600" />
+
+        {/* Vendor Purchase Value — total spent on all purchase orders */}
+        <Widget
+          title="Vendor Purchase Total"
+          value={formatCurrency(supplyChainMetrics.totalPurchased)}
+          sub={`${supplyChainMetrics.orderCount} orders · ${supplyChainMetrics.itemCount} items`}
+          icon="fa-truck-loading"
+          color="bg-purple-700"
+        />
+
+        {/* Pending Payable — what's still owed to vendors */}
+        <Widget
+          title="Vendor Due Amount"
+          value={formatCurrency(supplyChainMetrics.totalPayable)}
+          sub={`Paid: ${formatCurrency(supplyChainMetrics.totalPaid)}`}
+          icon="fa-file-invoice"
+          color={supplyChainMetrics.totalPayable > 0 ? "bg-amber-600" : "bg-emerald-600"}
+        />
+
+        <Widget title="Pending Orders"    value={supplyChainMetrics.pendingOrders.toString()} sub="Vendor Supply Chain" icon="fa-clock" color="bg-orange-600" />
+        <Widget title="Low Stock"         value={supplyChainMetrics.lowStockItems.toString()} sub="Inventory Alerts" icon="fa-exclamation-triangle" color="bg-rose-500" />
+        <Widget title="Gross Margin %"    value={`${financialMetrics.marginPercent.toFixed(1)}%`} sub="Profitability Ratio" icon="fa-chart-line" color="bg-indigo-600" />
         {store.settings.dashboardVisibility.showNetProfit && (
           <Widget title="Net Profit (Est)" value={formatCurrency(financialMetrics.netProfit)} sub={`After Staff Comm. ₹${Math.round(financialMetrics.totalCommission).toLocaleString('en-IN')} + Referral ₹${Math.round(financialMetrics.totalReferralCommission||0).toLocaleString('en-IN')} + OpEx`} icon="fa-vault" color="bg-emerald-600" />
         )}
