@@ -37,36 +37,56 @@ const calcTransport = (t: VendorTransport): VendorTransport => {
   return { ...t, freightCost: freight, totalTransportCost: total };
 };
 
-const SLAB_CATS = ['Kadapa','Granite','Marble'];
+const SLAB_CATS   = ['Kadapa','Granite','Marble'];
+// Granite/Marble: each slab has a different size — user enters totalSqft directly
+// Kadapa: standard size per product — use sqftPerSlab multiplier
+const VAR_SLAB_CATS = ['Granite','Marble'];
 
-/** Derive sqft per slab from product or item data */
+/** For Kadapa: derive fixed sqft per slab from product. For Granite/Marble: returns 1 (totalSqft used instead). */
 const slabSqft = (item: VendorOrderItem): number => {
-  const cat = (item as any).category || (item as any).productCategory || '';
-  if (!SLAB_CATS.includes(cat)) return 1;  // non-slab: qty is the unit, no sqft multiplier
-  // 1. Explicit sqftPerSlab stored on item
+  const cat = (item as any).category || '';
+  if (!SLAB_CATS.includes(cat)) return 1;           // tiles/adhesive: qty is the unit
+  if (VAR_SLAB_CATS.includes(cat)) return 1;         // Granite/Marble: use totalSqft field directly
+  // Kadapa: fixed size per product
   if ((item as any).sqftPerSlab > 0) return (item as any).sqftPerSlab;
-  // 2. From linked product (passed via item.productData)
-  const sqftPerBox = (item as any).sqftPerBox || (item as any).productSqftPerBox || 0;
-  if (sqftPerBox > 0) return sqftPerBox;
-  // 3. Parse from product name: "DP_KDP_3.5x1.25" → 3.5 × 1.25 = 4.375
-  const name = (item as any).productName || '';
-  const match = name.match(/(\d+\.?\d*)x(\d+\.?\d*)/i);
-  if (match) return Math.round(parseFloat(match[1]) * parseFloat(match[2]) * 1000) / 1000;
+  if ((item as any).sqftPerBox  > 0) return (item as any).sqftPerBox;
+  const m = ((item as any).productName || '').match(/(\d+\.?\d*)x(\d+\.?\d*)/i);
+  if (m) return Math.round(parseFloat(m[1]) * parseFloat(m[2]) * 1000) / 1000;
   return 1;
 };
 
 const calcItem = (item: VendorOrderItem, transportPerUnit: number, laborPerUnit: number): VendorOrderItem => {
-  const sqft     = slabSqft(item);
-  // Amount = qty × sqftPerSlab × ratePerSqft  (for slab categories)
-  // Amount = qty × rate                        (for tile/box categories)
-  const billed   = (item.billedQty||0) * (item.billedRate||0) * sqft;
-  const actual   = (item.actualQty||0) * (item.actualRate||0) * sqft;
+  const cat       = (item as any).category || '';
+  const isVarSlab = VAR_SLAB_CATS.includes(cat);  // Granite / Marble
+
+  let billed: number, actual: number;
+  if (isVarSlab) {
+    // Granite/Marble: amount = totalSqft × ratePerSqft
+    // billedTotalSqft / actualTotalSqft are stored directly on item
+    const bSqft = (item as any).billedTotalSqft || 0;
+    const aSqft = (item as any).actualTotalSqft || 0;
+    billed = bSqft * (item.billedRate||0);
+    actual = aSqft * (item.actualRate||0);
+  } else {
+    const sqft = slabSqft(item);
+    billed = (item.billedQty||0) * (item.billedRate||0) * sqft;
+    actual = (item.actualQty||0) * (item.actualRate||0) * sqft;
+  }
+
   const good     = Math.max(0, (item.receivedQty||0) - (item.damagedQty||0));
   const denom    = good > 0 ? good : (item.actualQty||0);
   const transAmt = transportPerUnit * (item.actualQty||0);
   const laborAmt = laborPerUnit * (item.actualQty||0);
-  const landed   = denom > 0 ? (actual + transAmt + laborAmt) / (denom * sqft) : 0;  // landed per sqft
-  const margin   = item.sellingPrice > 0 ? ((item.sellingPrice - landed) / item.sellingPrice) * 100 : 0;
+
+  let landed: number;
+  if (isVarSlab) {
+    const aSqft = (item as any).actualTotalSqft || 0;
+    landed = aSqft > 0 ? (actual + transAmt + laborAmt) / aSqft : 0;  // ₹ per sqft
+  } else {
+    const sqft = slabSqft(item);
+    landed = denom > 0 ? (actual + transAmt + laborAmt) / (denom * sqft) : 0;
+  }
+  const margin = item.sellingPrice > 0 ? ((item.sellingPrice - landed) / item.sellingPrice) * 100 : 0;
   return { ...item, billedAmount: billed, actualAmount: actual, goodQty: good,
     transportShare: transAmt, laborShare: laborAmt,
     landedCostPerUnit: landed, marginPct: margin };
@@ -879,24 +899,40 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
                           </td>
                           {/* Billing */}
                           <td className="px-2 py-2">
-                            <input type="number" className="w-16 px-2 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-400 text-xs text-center font-bold outline-none focus:border-amber-400"
-                              value={item.billedQty||''} onChange={e=>updateItem(idx,'billedQty',+e.target.value)} />
+                            {isVarSlabItem ? (
+                              <div className="text-center">
+                                <input type="number" className="w-16 px-2 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-400 text-xs text-center font-bold outline-none focus:border-amber-400"
+                                  value={(item as any).billedTotalSqft||''} onChange={e=>updateItem(idx,'billedTotalSqft' as any,+e.target.value)} placeholder="SqFt"/>
+                                <div className="text-[7px] text-amber-400/60 mt-0.5">{item.billedQty||0} slabs</div>
+                              </div>
+                            ) : (
+                              <input type="number" className="w-16 px-2 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-400 text-xs text-center font-bold outline-none focus:border-amber-400"
+                                value={item.billedQty||''} onChange={e=>updateItem(idx,'billedQty',+e.target.value)} placeholder={isSlabItem?'Slabs':'Qty'}/>
+                            )}
                           </td>
                           <td className="px-2 py-2">
                             <input type="number" className="w-20 px-2 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-400 text-xs text-center font-bold outline-none focus:border-amber-400"
-                              value={item.billedRate||''} onChange={e=>updateItem(idx,'billedRate',+e.target.value)} />
+                              value={item.billedRate||''} onChange={e=>updateItem(idx,'billedRate',+e.target.value)} placeholder="₹/SqFt"/>
                           </td>
-                          <td className="px-2 py-2 text-amber-400 font-bold text-xs text-center">{fmt((item.billedQty||0)*(item.billedRate||0))}</td>
+                          <td className="px-2 py-2 text-amber-400 font-bold text-xs text-center">{fmt(ci.billedAmount)}</td>
                           {/* Actual */}
                           <td className="px-2 py-2">
-                            <input type="number" className="w-16 px-2 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-400 text-xs text-center font-bold outline-none focus:border-blue-400"
-                              value={item.actualQty||''} onChange={e=>updateItem(idx,'actualQty',+e.target.value)} />
+                            {isVarSlabItem ? (
+                              <div className="text-center">
+                                <input type="number" className="w-16 px-2 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-400 text-xs text-center font-bold outline-none focus:border-blue-400"
+                                  value={(item as any).actualTotalSqft||''} onChange={e=>updateItem(idx,'actualTotalSqft' as any,+e.target.value)} placeholder="SqFt"/>
+                                <div className="text-[7px] text-blue-400/60 mt-0.5">{item.actualQty||0} slabs</div>
+                              </div>
+                            ) : (
+                              <input type="number" className="w-16 px-2 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-400 text-xs text-center font-bold outline-none focus:border-blue-400"
+                                value={item.actualQty||''} onChange={e=>updateItem(idx,'actualQty',+e.target.value)} placeholder={isSlabItem?'Slabs':'Qty'}/>
+                            )}
                           </td>
                           <td className="px-2 py-2">
                             <input type="number" className="w-20 px-2 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-400 text-xs text-center font-bold outline-none focus:border-blue-400"
-                              value={item.actualRate||''} onChange={e=>updateItem(idx,'actualRate',+e.target.value)} />
+                              value={item.actualRate||''} onChange={e=>updateItem(idx,'actualRate',+e.target.value)} placeholder="₹/SqFt"/>
                           </td>
-                          <td className="px-2 py-2 text-blue-400 font-bold text-xs text-center">{fmt((item.actualQty||0)*(item.actualRate||0))}</td>
+                          <td className="px-2 py-2 text-blue-400 font-bold text-xs text-center">{fmt(ci.actualAmount)}</td>
                           {/* Selling */}
                           <td className="px-2 py-2">
                             <input type="number" className="w-20 px-2 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-emerald-400 text-xs text-center font-bold outline-none focus:border-emerald-400"
