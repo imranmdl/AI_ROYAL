@@ -895,7 +895,8 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
                     {items.map((item,idx)=>{
                       const ci = calcItem(item, tPerUnit, lPerUnit);
                       const margin = ci.marginPct||0;
-                      const isSlabItem = ['Kadapa','Granite','Marble'].includes(item.category || '');
+                      const isSlabItem    = ['Kadapa','Granite','Marble'].includes(item.category || '');
+                      const isVarSlabItem = ['Granite','Marble'].includes(item.category || '');
                       const prod = products.find(p => p.id === item.productId);
                       return (
                         <tr key={item.id||idx} className="hover:bg-white/[0.02]">
