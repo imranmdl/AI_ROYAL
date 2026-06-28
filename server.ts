@@ -4264,6 +4264,54 @@ app.post('/api/sync', async (req: Request, res: Response) => {
     }
   });
 
+  /**
+   * GET /api/admin/tenant-product-audit — Show product counts per tenant_id in DB
+   * Helps diagnose mismatched tenant_ids after imports
+   */
+  app.get('/api/admin/tenant-product-audit', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Forbidden' });
+    if (!pool || !dbHealthy) return res.status(503).json({ error:'DB offline' });
+    try {
+      // Product counts per tenant_id
+      const [prodCounts]: any = await pool.query(
+        'SELECT tenant_id, COUNT(*) as count FROM products GROUP BY tenant_id ORDER BY count DESC'
+      );
+      // All tenants
+      const [tenants]: any = await pool.query('SELECT id, name, slug FROM tenants ORDER BY name').catch(()=>[[]] );
+      // Users per tenant
+      const [userCounts]: any = await pool.query(
+        'SELECT tenant_id, COUNT(*) as count FROM users GROUP BY tenant_id'
+      ).catch(()=>[[]] );
+      res.json({ productCountsByTenantId: prodCounts, tenants, userCountsByTenantId: userCounts });
+    } catch(e:any) { res.status(500).json({ error: e.message }); }
+  });
+
+  /**
+   * POST /api/admin/fix-tenant-ids — Re-assign products/sales/orders from wrong tenant_id to correct one
+   * Use when products were imported with slug instead of UUID
+   * Body: { fromTenantId: 'royal-tiles-mudhol-d740', toTenantId: 'royal-tiles-mudhol-e9d177ec' }
+   */
+  app.post('/api/admin/fix-tenant-ids', async (req: Request, res: Response) => {
+    if (req.query.key !== SUPER_ADMIN_KEY) return res.status(403).json({ error:'Forbidden' });
+    if (!pool || !dbHealthy) return res.status(503).json({ error:'DB offline' });
+    const { fromTenantId, toTenantId, dryRun = true } = req.body;
+    if (!fromTenantId || !toTenantId) return res.status(400).json({ error:'fromTenantId and toTenantId required' });
+    const TABLES = ['products','sales','purchases','vendor_orders','gallery_leads','referral_agents','referral_commissions','system_persistence'];
+    const results: Record<string,number> = {};
+    try {
+      for (const table of TABLES) {
+        const [countRows]: any = await pool.query(`SELECT COUNT(*) as n FROM ${table} WHERE tenant_id=?`, [fromTenantId]).catch(()=>[[{n:0}]]);
+        const count = countRows[0]?.n || 0;
+        if (!dryRun && count > 0) {
+          await pool.query(`UPDATE ${table} SET tenant_id=? WHERE tenant_id=?`, [toTenantId, fromTenantId]);
+        }
+        results[table] = count;
+      }
+      syncResponseCache = null;
+      res.json({ dryRun, fromTenantId, toTenantId, rowsAffected: results, total: Object.values(results).reduce((s,n)=>s+n,0) });
+    } catch(e:any) { res.status(500).json({ error: e.message }); }
+  });
+
   /** POST /api/tenant/login — returns JWT with tenantId */
   app.post('/api/tenant/login', async (req: Request, res: Response) => {
     const { email, password, tenantSlug } = req.body;
