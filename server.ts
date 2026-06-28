@@ -113,8 +113,30 @@ const tenantMiddleware = async (req: Request, res: Response, next: NextFunction)
     return res.status(401).json({ error: 'Invalid or expired session. Please log in again.' });
   }
 
-  req.tenantId = payload.tenantId;
-  req.tenant   = tenantCache.get(payload.tenantId);
+  // Ensure req.tenantId is always the UUID (not the slug)
+  // The JWT might contain the slug if an old token was issued before UUID migration
+  let resolvedTenantId = payload.tenantId;
+  if (pool && dbHealthy && resolvedTenantId && resolvedTenantId !== 'default') {
+    const cached = tenantCache.get(resolvedTenantId);
+    if (cached?.id && cached.id !== resolvedTenantId) {
+      resolvedTenantId = cached.id; // use UUID from cache
+    } else if (!cached) {
+      // Not in cache — check if this looks like a slug
+      try {
+        const [rows]: any = await pool.query(
+          'SELECT id, slug FROM tenants WHERE id=? OR slug=?', [resolvedTenantId, resolvedTenantId]
+        );
+        if (rows.length > 0) {
+          resolvedTenantId = rows[0].id; // always use UUID
+          tenantCache.set(payload.tenantId, rows[0]);
+          tenantCache.set(resolvedTenantId, rows[0]);
+        }
+      } catch {}
+    }
+  }
+
+  req.tenantId = resolvedTenantId;
+  req.tenant   = tenantCache.get(resolvedTenantId);
   next();
 };
 
@@ -444,6 +466,55 @@ async function initDatabase(config: DbConfig = activeDbConfig) {
       console.log('✅ [DB] Database schema and indexes verified.');
     } catch (e) {
       console.error('⚠️ [DB] Error adding indexes/columns:', e);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PERMANENT MIGRATION: Fix tenant_id slug→UUID mismatches
+    // If products/sales/orders were imported using the URL slug as tenant_id
+    // instead of the internal UUID, they won't appear for logged-in users
+    // (whose JWT contains the UUID). This migration runs on every startup
+    // and is safe to re-run (it skips tenants that are already correct).
+    // ════════════════════════════════════════════════════════════════════════
+    try {
+      const [tenantRows]: any = await connection.query(
+        'SELECT id, slug FROM tenants WHERE slug IS NOT NULL AND slug != "" AND slug != id'
+      ).catch(() => [[]]);
+
+      const TABLES_TO_FIX = [
+        'products', 'sales', 'purchases', 'vendor_orders',
+        'gallery_leads', 'referral_agents', 'referral_commissions', 'system_persistence'
+      ];
+
+      let totalFixed = 0;
+      for (const tenant of (tenantRows as any[])) {
+        const uuid = tenant.id;   // correct UUID  e.g. royal-tiles-mudhol-e9d177ec
+        const slug = tenant.slug; // URL slug      e.g. royal-tiles-mudhol-d740
+        if (!uuid || !slug || uuid === slug) continue;
+
+        for (const table of TABLES_TO_FIX) {
+          try {
+            const [countRes]: any = await connection.query(
+              `SELECT COUNT(*) as n FROM ${table} WHERE tenant_id=?`, [slug]
+            );
+            const count = countRes[0]?.n || 0;
+            if (count > 0) {
+              await connection.query(
+                `UPDATE ${table} SET tenant_id=? WHERE tenant_id=?`, [uuid, slug]
+              );
+              console.log(`✅ [MIGRATE] ${table}: moved ${count} rows from slug "${slug}" → UUID "${uuid}"`);
+              totalFixed += count;
+            }
+          } catch {}
+        }
+      }
+      if (totalFixed > 0) {
+        console.log(`✅ [MIGRATE] Fixed ${totalFixed} rows with wrong tenant_id. Inventory should now load correctly.`);
+        syncResponseCache = null;
+      } else {
+        console.log('✅ [MIGRATE] All tenant_ids are correct — no mismatches found.');
+      }
+    } catch (migrateErr: any) {
+      console.error('⚠️ [MIGRATE] tenant_id migration error:', migrateErr.message);
     }
 
     await connection.query(`
@@ -2996,14 +3067,24 @@ app.post('/api/sync', async (req: Request, res: Response) => {
         return res.status(400).json({ error: 'No rows provided' });
       }
 
-      // ── Tenant safety: named-tenant import MUST have a resolved tenantId ──
-      // If req.tenantId is missing or 'default' but the request carries a JWT,
-      // the JWT failed to decode → reject rather than silently import to 'default'.
-      const csvTenantId = req.tenantId || 'default';
+      // ── Tenant safety: always resolve slug→UUID before saving ──────────────
       if (!req.tenantId && req.headers.authorization) {
-        // JWT was present but didn't decode — don't import to 'default' silently
-        console.warn('[CSV IMPORT] JWT present but tenantId missing — rejecting to prevent cross-tenant contamination');
+        console.warn('[CSV IMPORT] JWT present but tenantId missing — rejecting');
         return res.status(401).json({ error: 'Could not resolve tenant from JWT. Please log out and log in again.' });
+      }
+      let csvTenantId = req.tenantId || 'default';
+      // Resolve slug→UUID: if the JWT tenantId looks like a slug (matches a tenant slug),
+      // use the actual UUID to prevent mismatch with products already in DB
+      if (pool && dbHealthy && csvTenantId && csvTenantId !== 'default') {
+        try {
+          const [tr]: any = await pool.query(
+            'SELECT id FROM tenants WHERE id=? OR slug=?', [csvTenantId, csvTenantId]
+          );
+          if (tr.length > 0 && tr[0].id !== csvTenantId) {
+            console.log(`[CSV IMPORT] Resolved tenant ${csvTenantId} → ${tr[0].id}`);
+            csvTenantId = tr[0].id;
+          }
+        } catch {}
       }
       console.log(`[CSV IMPORT] tenant=${csvTenantId} rows=${rows.length}`);
 
