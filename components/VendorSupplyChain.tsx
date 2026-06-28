@@ -835,7 +835,12 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
               onClose={()=>setShowSlabInward(false)}
               onDone={(product, slabCount, sqftPerSlab, costPerSqft, sellingPerSqft) => {
                 // Add as a line item in this vendor order
-                const actualAmount = slabCount * costPerSqft * sqftPerSlab;
+                const isVarSlab = ['Granite','Marble'].includes(product.category || '');
+                const totalSqft  = Math.round(slabCount * sqftPerSlab * 1000) / 1000;
+                const actualAmount = totalSqft * costPerSqft;
+                const marginPct = sellingPerSqft > costPerSqft
+                  ? Math.round(((sellingPerSqft - costPerSqft) / sellingPerSqft) * 10000) / 100
+                  : 0;
                 setItems(prev => [...prev, {
                   id: itemUid(),
                   productId: product.id, productName: product.name,
@@ -847,10 +852,12 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
                   transportShare: 0, laborShare: 0,
                   landedCostPerUnit: costPerSqft,
                   sellingPrice: sellingPerSqft,
-                  marginPct: sellingPerSqft > costPerSqft
-                    ? Math.round(((sellingPerSqft - costPerSqft) / sellingPerSqft) * 10000) / 100
-                    : 0,
-                }]);
+                  sqftPerSlab,
+                  // Granite/Marble: store totalSqft so calcItem uses it for amount
+                  billedTotalSqft: isVarSlab ? totalSqft : undefined,
+                  actualTotalSqft: isVarSlab ? totalSqft : undefined,
+                  marginPct,
+                } as any]);
                 setShowSlabInward(false);
               }}
             />
