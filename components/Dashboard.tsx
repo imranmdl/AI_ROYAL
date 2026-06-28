@@ -58,13 +58,17 @@ const Dashboard: React.FC = () => {
       if (s.commissionStatus === 'Paid') paidCommission += commission;
       else accruedCommission += commission;
 
+      const SLAB_CATS_DASH = ['Kadapa','Granite','Marble'];
       s.items.forEach(item => {
         const product = store.products.find(p => p.id === item.productId);
         if (product) {
-          const landedCost = item.costRate || product.totalCostPerUnit;
+          const isSlabCat = SLAB_CATS_DASH.includes(product.category || '');
+          const landedCostRate = item.costRate || product.totalCostPerUnit || 0;
+          // For slab categories: landedCostRate is per-sqft; multiply by sqftPerSlab
+          const sqftMult = isSlabCat ? (product.sqftPerBox || 1) : 1;
           const piecesPerBox = product.tilesPerBox || 1;
-          const unitsAsBoxes = item.qtyBoxes + (item.qtyLoose / piecesPerBox);
-          totalCogs += (unitsAsBoxes * landedCost);
+          const unitsAsBoxes = item.qtyBoxes + ((item.qtyLoose || 0) / piecesPerBox);
+          totalCogs += (unitsAsBoxes * landedCostRate * sqftMult);
         }
       });
     });

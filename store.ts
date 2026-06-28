@@ -1872,7 +1872,18 @@ class DataStore {
     damagedItems.forEach(d => this.reportDamage(d.productId, d.type === 'Box' ? d.qtyDamaged : 0, d.type === 'Piece' ? d.qtyDamaged : 0, godownId, id));
   }
 
-  getTotalInventoryValue() { return this.products.reduce((s, p) => s + ((p.stockBoxes + (p.stockLoose / (p.tilesPerBox || 1))) * p.totalCostPerUnit), 0); }
+  getTotalInventoryValue() {
+    const SLAB_CATS = ['Kadapa','Granite','Marble'];
+    return this.products.reduce((s, p) => {
+      const isSlabCat = SLAB_CATS.includes(p.category || '');
+      // For slab categories: costPerSqft × sqftPerSlab × stockSlabs
+      // For tiles/boxes: costPerUnit × stockBoxes
+      const costPerUnit = p.totalCostPerUnit || p.purchasePrice || 0;
+      const sqftMultiplier = isSlabCat ? (p.sqftPerBox || 1) : 1;
+      const qty = p.stockBoxes + ((p.stockLoose || 0) / (p.tilesPerBox || 1));
+      return s + (qty * costPerUnit * sqftMultiplier);
+    }, 0);
+  }
 }
 
 export const store = new DataStore();
