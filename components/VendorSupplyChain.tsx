@@ -764,14 +764,21 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
               onClose={()=>setShowVendorImport(false)}
               onConfirm={(importedItems) => {
                 // Add all confirmed items to this vendor order
-                importedItems.forEach(it => {
-                  const actualAmount = it.qty * it.purchaseRate;
+                importedItems.forEach((it:any) => {
+                  const isSlabCat = ['Kadapa','Granite','Marble'].includes(it.category||'');
+                  const sqftPerSlab = it.sqftPerBox || (() => {
+                    const m = (it.productName||'').match(/(\d+\.?\d*)x(\d+\.?\d*)/i);
+                    return m ? Math.round(parseFloat(m[1])*parseFloat(m[2])*1000)/1000 : 1;
+                  })();
+                  // For tiles: billedAmount = qty × rate × sqftPerBox (if rate is per-sqft)
+                  // For tiles with per-box rate: amount = qty × rate
+                  const rateMultiplier = isSlabCat ? sqftPerSlab : 1;
+                  const actualAmount = it.qty * it.purchaseRate * rateMultiplier;
                   setItems(prev => {
-                    // Don't add duplicate product
                     if (prev.some(x => x.productId === it.productId)) return prev;
                     return [...prev, {
                       id: itemUid(), productId: it.productId, productName: it.productName,
-                      category: it.category || '', unit: 'Box',
+                      category: it.category || '', unit: isSlabCat ? 'Slab' : 'Box',
                       orderedQty: it.qty,
                       billedQty: it.qty, billedRate: it.purchaseRate, billedAmount: actualAmount,
                       actualQty: it.qty, actualRate: it.purchaseRate, actualAmount,
@@ -779,10 +786,11 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
                       transportShare: 0, laborShare: 0,
                       landedCostPerUnit: it.purchaseRate,
                       sellingPrice: it.sellingPrice,
+                      sqftPerSlab: isSlabCat ? sqftPerSlab : (it.sqftPerBox||1),
                       marginPct: it.sellingPrice > it.purchaseRate
                         ? Math.round(((it.sellingPrice-it.purchaseRate)/it.sellingPrice)*10000)/100
                         : 0,
-                    }];
+                    } as any];
                   });
                 });
                 setShowVendorImport(false);

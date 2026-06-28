@@ -28,7 +28,9 @@ interface ParsedRow {
   widthFt:       number;
   purchaseRate:  number;
   sellingPrice:  number;
-  stockSlabs:    number;
+  stockQty:      number;   // boxes for tiles, slabs for Kadapa, units for adhesive
+  sqftPerBox:    number;
+  tilesPerBox:   number;
   vendorName:    string;
   orderNo:       string;
   status:        string;
@@ -92,16 +94,44 @@ const VendorImportModal: React.FC<Props> = ({ onClose, vendorName, orderNo, onCo
       for (let i=1; i<lines.length; i++) {
         if (!lines[i].trim()) continue;
         const row = parseCsvLine(lines[i]);
-        const name     = getCol(row,'product_name','name','product');
-        const category = getCol(row,'category','cat');
-        const brand    = getCol(row,'brand');
-        const size     = getCol(row,'size');
+        const name       = getCol(row,'product_name','name','product','product_name');
+        const category   = getCol(row,'category','cat');
+        const brand      = getCol(row,'brand');
+        const size       = getCol(row,'size');
         const finishType = getCol(row,'finish_type','finish');
-        const heightFt = parseFloat(getCol(row,'height_(ft)','height_ft','height') || '0');
-        const widthFt  = parseFloat(getCol(row,'width_(ft)','width_ft','width') || '0');
-        const purchaseRate = parseFloat(getCol(row,'purchase_rate_per_sqft','purchase_rate','rate') || '0');
-        const sellingPrice = parseFloat(getCol(row,'selling_price_per_sqft','selling_price','selling') || '0');
-        const stockSlabs   = parseInt(getCol(row,'stock_slabs','stock','qty') || '0') || 0;
+        const heightFt   = parseFloat(getCol(row,'height_(ft)','height_ft','height') || '0');
+        const widthFt    = parseFloat(getCol(row,'width_(ft)','width_ft','width') || '0');
+        // Support all exported column name variants:
+        //   Tile CSV: "Purchase Price",  Kadapa CSV: "Purchase Rate Per Sqft"
+        const purchaseRate = parseFloat(
+          getCol(row,
+            'purchase_price',          // Wall/Floor Tile, Adhesive, etc.
+            'purchase_rate_per_sqft',  // Kadapa/Granite/Marble
+            'purchase_rate',
+            'purchase',
+            'rate'
+          ) || '0');
+        // Tile CSV: "Selling Price",  Kadapa CSV: "Selling Price Per Sqft"
+        const sellingPrice = parseFloat(
+          getCol(row,
+            'selling_price',           // Wall/Floor Tile export
+            'selling_price_per_sqft',  // Kadapa/Granite
+            'selling_pri',
+            'selling'
+          ) || '0');
+        // Tile CSV: "Stock Boxes",  Kadapa CSV: "Stock Slabs",  Adhesive: "Stock"
+        const stockQty = parseInt(
+          getCol(row,
+            'stock_boxes',   // Wall/Floor Tile
+            'stock_slabs',   // Kadapa/Granite
+            'stock',         // Adhesive/Grout/Tools
+            'qty',
+            'quantity'
+          ) || '0') || 0;
+        // Extra fields
+        const tilesPerBox = parseInt(getCol(row,'tiles_per_box','tiles_per') || '0') || 0;
+        const sqftPerBox  = parseFloat(getCol(row,'sqft_per_box','sqft_per') || '0');
+        const reorderLevel = parseInt(getCol(row,'reorder_level','reorder') || '0') || 0;
         const vendorN  = getCol(row,'vendor_name','vendor');
         const oNo      = getCol(row,'order_id','order_no','order');
         const status   = getCol(row,'status') || 'Active';
@@ -122,7 +152,8 @@ const VendorImportModal: React.FC<Props> = ({ onClose, vendorName, orderNo, onCo
         parsed.push({
           name: finalName, category, brand, size: size || (heightFt&&widthFt?`${heightFt}x${widthFt}`:''),
           finishType, heightFt, widthFt, purchaseRate, sellingPrice,
-          stockSlabs, vendorName: vendorN || vendorName, orderNo: oNo || orderNo, status,
+          stockQty, sqftPerBox, tilesPerBox,
+          vendorName: vendorN || vendorName, orderNo: oNo || orderNo, status,
           hasError, errorMsg: hasError ? 'Product name missing' : '',
           isExisting: !!existing, existingProductId: existing?.id || '',
         });
@@ -182,15 +213,15 @@ const VendorImportModal: React.FC<Props> = ({ onClose, vendorName, orderNo, onCo
         const newProd = {
           id: productId, name: row.name, category: row.category as any, brand: row.brand,
           size: row.size, unitType: isSlabCat ? 'Slab' : 'Box' as any, tilesPerBox: 1,
-          sqftPerBox: sqft || 1, purchasePrice: landedPerUnit, sellingPrice: sellingPerUnit,
+          sqftPerBox: row.sqftPerBox || sqft || 1, tilesPerBox: row.tilesPerBox || 1, purchasePrice: landedPerUnit, sellingPrice: sellingPerUnit,
           costPerSqft: row.purchaseRate, sellingPricePerSqft: row.sellingPrice,
           totalCostPerUnit: row.purchaseRate, transportCost: 0, otherCharges: 0,
           kadapaType: row.finishType as any, grade: 'Premium' as any,
           status: row.status as any, showInGallery: true, isTile: true,
-          stockBoxes: isSlabCat ? 0 : row.stockSlabs,
+          stockBoxes: isSlabCat ? 0 : row.stockQty,
           stockLoose: 0, reorderLevel: 5,
           slabs: [], damageHistory: [], purchaseHistory: [], adjustmentLog: [],
-          locationStock: store.godowns.map((g, i) => ({ godownId: g.id, boxes: i===0 && !isSlabCat ? row.stockSlabs : 0, loose: 0 })),
+          locationStock: store.godowns.map((g, i) => ({ godownId: g.id, boxes: i===0 && !isSlabCat ? row.stockQty : 0, loose: 0 })),
           images: [],
           updatedAt: now,
         };
@@ -200,7 +231,8 @@ const VendorImportModal: React.FC<Props> = ({ onClose, vendorName, orderNo, onCo
 
       items.push({
         productId, productName: row.name, category: row.category,
-        qty: row.stockSlabs || 1, purchaseRate: row.purchaseRate, sellingPrice: row.sellingPrice,
+        qty: row.stockQty || 1, purchaseRate: row.purchaseRate, sellingPrice: row.sellingPrice,
+        sqftPerBox: row.sqftPerBox, tilesPerBox: row.tilesPerBox,
       });
     }
 
