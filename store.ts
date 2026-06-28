@@ -257,7 +257,10 @@ class DataStore {
     const useDelta = this.lastUpdated > 0 && this.products.length > 0;
     this.refreshFromServer(!useDelta).then(() => { this.isInitialSyncDone = true; this.notify(); });
     // Sync every 20s (was 60s) — keeps dashboard/reports fresh
-    setInterval(() => this.refreshFromServer(), 20_000);
+    // Poll every 45s for named tenants (DB-fresh), 20s for default tenant
+    const currentSlug = typeof window !== 'undefined' ? (new URLSearchParams(window.location.search).get('tenant') || 'default') : 'default';
+    const pollMs = currentSlug !== 'default' ? 45_000 : 20_000;
+    setInterval(() => this.refreshFromServer(), pollMs);
     setInterval(() => this.checkDbHealth(), 10_000);
 
     // Force full sync when tab becomes visible again (mobile app resume)

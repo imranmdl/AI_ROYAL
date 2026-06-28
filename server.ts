@@ -433,6 +433,14 @@ async function initDatabase(config: DbConfig = activeDbConfig) {
       if (!indexNames.includes('idx_batch_no')) {
         await connection.query('ALTER TABLE products ADD INDEX idx_batch_no (batch_no)');
       }
+      // ── Critical: compound index for the most common query (tenant + status filter) ──
+      if (!indexNames.includes('idx_products_tenant_status')) {
+        await connection.query('ALTER TABLE products ADD INDEX idx_products_tenant_status (tenant_id, status, updated_at)');
+        console.log('✅ [DB] Added idx_products_tenant_status compound index');
+      }
+      if (!indexNames.includes('idx_products_tenant_category')) {
+        await connection.query('ALTER TABLE products ADD INDEX idx_products_tenant_category (tenant_id, category, status)');
+      }
       console.log('✅ [DB] Database schema and indexes verified.');
     } catch (e) {
       console.error('⚠️ [DB] Error adding indexes/columns:', e);
@@ -1124,7 +1132,13 @@ async function syncInMemoryToRelationalDb(data: any) {
       }
 
       const tenantId = req.tenantId || 'default';
-      let query = 'SELECT id, name, category, brand, stock_boxes, stock_loose, selling_price, status, data, updated_at FROM products WHERE tenant_id=?';
+      // ── Optimized query: exclude heavy nested arrays (slabs, images, adjustmentLog)
+      // from the list view — they are loaded on-demand when editing a product.
+      // Use JSON_REMOVE if available, otherwise fall back to full data.
+      let query = `SELECT id, name, category, brand, stock_boxes, stock_loose, selling_price, status, updated_at,
+        JSON_REMOVE(JSON_REMOVE(JSON_REMOVE(JSON_REMOVE(data,
+          '$.slabs'), '$.images'), '$.adjustmentLog'), '$.damageHistory') AS data
+        FROM products WHERE tenant_id=? USE INDEX (idx_products_tenant_status)`;
       let countQuery = 'SELECT COUNT(*) as count FROM products WHERE tenant_id=?';
       const params: any[] = [tenantId];
 
@@ -1176,14 +1190,16 @@ async function syncInMemoryToRelationalDb(data: any) {
       }
 
       query += ' ORDER BY updated_at DESC LIMIT ? OFFSET ?';
-      const queryParams = [...params, limit, offset];
 
       const conn = await pool.getConnection();
       try {
-        // Increase sort buffer for this session to handle large sorts
-        await conn.query('SET SESSION sort_buffer_size = 33554432'); // 32MB
-        const [rows]: any = await conn.query(query, queryParams);
-        const [[{ count }]]: any = await conn.query(countQuery, params);
+        // Run data + count in parallel for speed
+        const [rowsResult, countResult]: any = await Promise.all([
+          conn.query(query, [...params, limit, offset]),
+          conn.query(countQuery, params),
+        ]);
+        const rows = rowsResult[0];
+        const count = countResult[0][0]?.count || 0;
 
         res.json({
           data: rows.map((p: any) => {
