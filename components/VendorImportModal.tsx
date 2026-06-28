@@ -308,7 +308,7 @@ const VendorImportModal: React.FC<Props> = ({ onClose, vendorName, orderNo, onCo
                     <table className="w-full text-xs">
                       <thead className="bg-slate-50 border-b">
                         <tr>
-                          {['#','Product Name','Category','Size/Finish','Qty/Slabs','Purchase ₹','Selling ₹','Status','⚠'].map(h=>(
+                          {['#','Product Name','Category','Size','Sqft/Box','Qty/Boxes','Purchase ₹','Selling ₹','Vendor Name','Status','⚠'].map(h=>(
                             <th key={h} className="px-3 py-2.5 text-left text-[8px] font-black text-slate-400 uppercase whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
@@ -325,17 +325,23 @@ const VendorImportModal: React.FC<Props> = ({ onClose, vendorName, orderNo, onCo
                             <td className="px-2 py-1.5 min-w-[100px]">
                               <input className={inp} value={r.category} onChange={e=>updateRow(idx,'category',e.target.value)}/>
                             </td>
-                            <td className="px-2 py-1.5 min-w-[120px]">
+                            <td className="px-2 py-1.5 min-w-[100px]">
                               <input className={inp} value={r.size||r.finishType} onChange={e=>updateRow(idx,'size',e.target.value)} placeholder="size or finish"/>
                             </td>
-                            <td className="px-2 py-1.5 w-16">
-                              <input type="number" className={inp} value={r.stockSlabs||''} onChange={e=>updateRow(idx,'stockSlabs',+e.target.value)} placeholder="0"/>
+                            <td className="px-2 py-1.5 w-16 text-center text-[10px] font-bold text-slate-500">
+                              {r.sqftPerBox > 0 ? r.sqftPerBox : '—'}
+                            </td>
+                            <td className="px-2 py-1.5 w-20">
+                              <input type="number" className={inp + ' text-center font-black'} value={r.stockQty||''} onChange={e=>updateRow(idx,'stockQty',+e.target.value)} placeholder="0"/>
                             </td>
                             <td className="px-2 py-1.5 w-20">
                               <input type="number" className={inp} value={r.purchaseRate||''} onChange={e=>updateRow(idx,'purchaseRate',+e.target.value)} placeholder="0"/>
                             </td>
                             <td className="px-2 py-1.5 w-20">
                               <input type="number" className={inp + ' bg-emerald-50 border-emerald-200'} value={r.sellingPrice||''} onChange={e=>updateRow(idx,'sellingPrice',+e.target.value)} placeholder="0"/>
+                            </td>
+                            <td className="px-2 py-1.5 w-28 text-[10px] font-bold text-slate-600">
+                              {r.vendorName || <span className="text-amber-500">—</span>}
                             </td>
                             <td className="px-2 py-1.5 w-20">
                               <select className={inp} value={r.status} onChange={e=>updateRow(idx,'status',e.target.value)}>
@@ -360,6 +366,20 @@ const VendorImportModal: React.FC<Props> = ({ onClose, vendorName, orderNo, onCo
                     {errorRows.length} row(s) have errors (highlighted in red). Fix them or they will be skipped.
                   </div>
                 )}
+
+                {/* Data sanity check */}
+                {(() => {
+                  const missingRate = validRows.filter(r=>!r.purchaseRate).length;
+                  const missingQty  = validRows.filter(r=>!r.stockQty).length;
+                  if (missingRate === 0 && missingQty === 0) return null;
+                  return (
+                    <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-[10px] font-bold space-y-1">
+                      <div className="flex items-center gap-2 font-black"><i className="fas fa-exclamation-triangle text-amber-500"></i>Data check before confirming:</div>
+                      {missingRate > 0 && <div>• {missingRate} row(s) have Purchase Rate = 0 — verify column mapping</div>}
+                      {missingQty > 0 && <div>• {missingQty} row(s) have Qty/Boxes = 0 — they will be added with qty 1</div>}
+                    </div>
+                  );
+                })()}
 
                 {/* Confirm button */}
                 <button onClick={handleConfirm} disabled={validRows.length===0||saving}
