@@ -783,17 +783,24 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
               orderNo={order?.orderNo || ''}
               onClose={()=>setShowVendorImport(false)}
               onConfirm={(importedItems) => {
-                // Add all confirmed items to this vendor order
                 importedItems.forEach((it:any) => {
-                  const isSlabCat = ['Kadapa','Granite','Marble'].includes(it.category||'');
+                  const isSlabCat   = ['Kadapa','Granite','Marble'].includes(it.category||'');
+                  const isVarSlab   = ['Granite','Marble'].includes(it.category||'');
                   const sqftPerSlab = it.sqftPerBox || (() => {
                     const m = (it.productName||'').match(/(\d+\.?\d*)x(\d+\.?\d*)/i);
                     return m ? Math.round(parseFloat(m[1])*parseFloat(m[2])*1000)/1000 : 1;
                   })();
-                  // For tiles: billedAmount = qty × rate × sqftPerBox (if rate is per-sqft)
-                  // For tiles with per-box rate: amount = qty × rate
-                  const rateMultiplier = isSlabCat ? sqftPerSlab : 1;
-                  const actualAmount = it.qty * it.purchaseRate * rateMultiplier;
+                  // Amount calculation:
+                  //   Granite/Marble: totalSqft × rate
+                  //   Kadapa:         qty × sqftPerSlab × rate
+                  //   Tiles/other:    qty × rate
+                  const tSqft = it.totalSqft || 0;
+                  const actualAmount = isVarSlab
+                    ? tSqft * it.purchaseRate
+                    : isSlabCat
+                      ? it.qty * sqftPerSlab * it.purchaseRate
+                      : it.qty * it.purchaseRate;
+
                   setItems(prev => {
                     if (prev.some(x => x.productId === it.productId)) return prev;
                     return [...prev, {
@@ -806,7 +813,10 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
                       transportShare: 0, laborShare: 0,
                       landedCostPerUnit: it.purchaseRate,
                       sellingPrice: it.sellingPrice,
-                      sqftPerSlab: isSlabCat ? sqftPerSlab : (it.sqftPerBox||1),
+                      sqftPerSlab: isSlabCat && !isVarSlab ? sqftPerSlab : 1,
+                      // Granite/Marble: store totalSqft for correct amount recalc
+                      billedTotalSqft: isVarSlab ? tSqft : undefined,
+                      actualTotalSqft: isVarSlab ? tSqft : undefined,
                       marginPct: it.sellingPrice > it.purchaseRate
                         ? Math.round(((it.sellingPrice-it.purchaseRate)/it.sellingPrice)*10000)/100
                         : 0,

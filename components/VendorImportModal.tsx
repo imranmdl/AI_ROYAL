@@ -31,6 +31,7 @@ interface ParsedRow {
   stockQty:      number;   // boxes for tiles, slabs for Kadapa, units for adhesive
   sqftPerBox:    number;
   tilesPerBox:   number;
+  totalSqft:     number;   // Granite/Marble: total sqft of all slabs in this batch
   vendorName:    string;
   orderNo:       string;
   status:        string;
@@ -132,6 +133,8 @@ const VendorImportModal: React.FC<Props> = ({ onClose, vendorName, orderNo, onCo
         const tilesPerBox = parseInt(getCol(row,'tiles_per_box','tiles_per') || '0') || 0;
         const sqftPerBox  = parseFloat(getCol(row,'sqft_per_box','sqft_per') || '0');
         const reorderLevel = parseInt(getCol(row,'reorder_level','reorder') || '0') || 0;
+        // Granite/Marble: Total SqFt column (sum of all slab heights × widths in this batch)
+        const totalSqft   = parseFloat(getCol(row,'total_sqft','total_sqft','sqft_total','total_sq_ft') || '0');
         const vendorN  = getCol(row,'vendor_name','vendor');
         const oNo      = getCol(row,'order_id','order_no','order');
         const status   = getCol(row,'status') || 'Active';
@@ -152,7 +155,7 @@ const VendorImportModal: React.FC<Props> = ({ onClose, vendorName, orderNo, onCo
         parsed.push({
           name: finalName, category, brand, size: size || (heightFt&&widthFt?`${heightFt}x${widthFt}`:''),
           finishType, heightFt, widthFt, purchaseRate, sellingPrice,
-          stockQty, sqftPerBox, tilesPerBox,
+          stockQty, sqftPerBox, tilesPerBox, totalSqft,
           vendorName: vendorN || vendorName, orderNo: oNo || orderNo, status,
           hasError, errorMsg: hasError ? 'Product name missing' : '',
           isExisting: !!existing, existingProductId: existing?.id || '',
@@ -233,6 +236,8 @@ const VendorImportModal: React.FC<Props> = ({ onClose, vendorName, orderNo, onCo
         productId, productName: row.name, category: row.category,
         qty: row.stockQty || 1, purchaseRate: row.purchaseRate, sellingPrice: row.sellingPrice,
         sqftPerBox: row.sqftPerBox, tilesPerBox: row.tilesPerBox,
+        // Granite/Marble: totalSqft from CSV, amount = totalSqft × rate
+        totalSqft: row.totalSqft,
       });
     }
 
