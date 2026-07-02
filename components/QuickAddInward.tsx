@@ -58,6 +58,7 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
   const [newShadeNo,  setNewShadeNo]  = useState(predefinedShades[0] || '');
   const [newBatchNo,  setNewBatchNo]  = useState(predefinedBatches[0] || '');
   const [tilesPerBox, setTilesPerBox] = useState<number>(1);   // how many tiles in one box
+  const [sqftPerBox,  setSqftPerBox]  = useState<number>(0);   // coverage sqft per box
 
   // ── Admin access control ────────────────────────────────────────────────
   const itemCreationSource = store.settings.itemCreationSource || 'both';
@@ -105,7 +106,7 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
           id, name: newName.trim(), category: newCategory, brand: newBrand, size: newSize,
           unitType: newUnit, isTile: true,
           tilesPerBox: tilesPerBox || 1,   // user-entered tiles per box
-          sqftPerBox: 0,
+          sqftPerBox: sqftPerBox || 0,      // coverage area per box
           purchasePrice: purchaseRate, sellingPrice: sellingPrice || purchaseRate,
           // Start with 0 — saveVendorOrder.adjustStock will add qty to avoid double-count
           stockBoxes: 0, stockLoose: 0, reorderLevel: 10, status: 'Active',
@@ -350,28 +351,51 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
               <div><label className={label}>Quantity ({mode==='new'?newUnit:selectedProduct?.unitType||'Box'})</label>
                 <input type="number" min="1" step="1" className={inp} value={qty||''} onChange={e=>setQty(Math.max(0, Math.floor(+e.target.value)))} placeholder="100" />
               </div>
-              {/* Tiles Per Box — only for tile/box unit types */}
+              {/* Tiles Per Box + Sqft Per Box — only for tile/box unit types */}
               {(mode === 'new' ? ['Box','Bag','Piece'].includes(newUnit) : !['Kadapa','Granite','Marble'].includes(selectedProduct?.category||'')) && (
-                <div>
-                  <label className={label}>
-                    Tiles / Pieces Per Box
-                    <span className="text-[8px] font-normal text-slate-400 ml-1">(helps convert sqft ↔ boxes when estimating)</span>
-                  </label>
-                  <input type="number" min="1" step="1" className={inp}
-                    value={mode==='existing' ? (selectedProduct?.tilesPerBox||1) : (tilesPerBox||'')}
-                    onChange={e => {
-                      const v = Math.max(1, Math.floor(+e.target.value));
-                      setTilesPerBox(v);
-                      if (mode === 'existing' && selectedProduct) {
-                        store.updateProduct(selectedProduct.id, { tilesPerBox: v });
-                      }
-                    }}
-                    placeholder="e.g. 5 for 300×600, 4 for 600×600" />
-                  {qty > 0 && tilesPerBox > 1 && (
-                    <div className="text-[9px] text-emerald-600 font-bold mt-1">
-                      {qty} boxes × {tilesPerBox} tiles = {qty * tilesPerBox} tiles total
-                    </div>
-                  )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={label}>
+                      Tiles Per Box
+                      <span className="text-[8px] font-normal text-slate-400 ml-1">(pcs in 1 box)</span>
+                    </label>
+                    <input type="number" min="1" step="1" className={inp}
+                      value={mode==='existing' ? (selectedProduct?.tilesPerBox||1) : (tilesPerBox||'')}
+                      onChange={e => {
+                        const v = Math.max(1, Math.floor(+e.target.value));
+                        setTilesPerBox(v);
+                        if (mode === 'existing' && selectedProduct) {
+                          store.updateProduct(selectedProduct.id, { tilesPerBox: v });
+                        }
+                      }}
+                      placeholder="e.g. 5" />
+                    {qty > 0 && tilesPerBox > 1 && (
+                      <div className="text-[9px] text-emerald-600 font-bold mt-1">
+                        {qty} × {tilesPerBox} = {qty * tilesPerBox} tiles total
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <label className={label}>
+                      SqFt Per Box
+                      <span className="text-[8px] font-normal text-slate-400 ml-1">(coverage per box)</span>
+                    </label>
+                    <input type="number" min="0" step="0.01" className={inp}
+                      value={mode==='existing' ? (selectedProduct?.sqftPerBox||0) : (sqftPerBox||'')}
+                      onChange={e => {
+                        const v = Math.max(0, +e.target.value);
+                        setSqftPerBox(v);
+                        if (mode === 'existing' && selectedProduct) {
+                          store.updateProduct(selectedProduct.id, { sqftPerBox: v });
+                        }
+                      }}
+                      placeholder="e.g. 16" />
+                    {qty > 0 && sqftPerBox > 0 && (
+                      <div className="text-[9px] text-blue-600 font-bold mt-1">
+                        {qty} × {sqftPerBox} = {Math.round(qty * sqftPerBox * 100)/100} SqFt total
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
               <div><label className={label}>Purchase Rate (₹/unit)</label>
