@@ -7,6 +7,32 @@ import { store } from './store';
 // ── One-time purge of legacy 'royal_jwt' key that caused cross-tenant contamination ──
 store.purgeLegacyJwt?.();
 
+// ── Auto-reload on chunk load failure (Railway redeploy invalidates hashed JS chunks) ──
+// When the server has new JS bundles but the browser tries to load old cached ones,
+// we get "Failed to fetch dynamically imported module" → black screen.
+// Catch this globally and force a hard reload to pick up the new bundle.
+window.addEventListener('error', (e) => {
+  const msg = e?.message || '';
+  if (msg.includes('Failed to fetch dynamically imported module') ||
+      msg.includes('Importing a module script failed') ||
+      msg.includes('Expected a JavaScript')) {
+    console.warn('[RoyalERP] JS chunk stale after deploy — reloading...');
+    // Delay slightly to avoid reload loops
+    setTimeout(() => { window.location.reload(); }, 500);
+  }
+});
+
+// Also catch unhandledrejection (dynamic import returns a rejected promise)
+window.addEventListener('unhandledrejection', (e) => {
+  const msg = String(e?.reason?.message || e?.reason || '');
+  if (msg.includes('Failed to fetch dynamically imported module') ||
+      msg.includes('Importing a module script failed')) {
+    console.warn('[RoyalERP] Module chunk load failed — reloading...');
+    e.preventDefault();
+    setTimeout(() => { window.location.reload(); }, 500);
+  }
+});
+
 /**
  * RESILIENT NETWORK BRIDGE RESET
  * Safely purges stale Service Workers and Caches that cause 404s.
