@@ -541,15 +541,15 @@ const Quotations: React.FC<{
       }
     });
 
-    const netSelling = taxableAmount;                    // what customer pays (after discount)
-    const comm       = globalCommType === 'Fixed' ? globalComm : (netSelling * globalComm) / 100;  // staff incentive
-    const refComm    = referralAgentId && refCommValue > 0
-      ? (refCommType === 'Fixed' ? refCommValue : (netSelling * refCommValue) / 100)
-      : 0;                                               // referral agent
-    const totalComms       = comm + refComm;
-    const netAfterDeductions = netSelling - totalComms; // business revenue after all deductions
-    const profit   = netAfterDeductions - totalCogs;    // PROFIT = net after deductions − COGS
-    const margin   = netSelling > 0 ? (profit / netSelling) * 100 : 0;  // margin % on net selling
+    const netSelling = taxableAmount;
+    const comm    = globalCommType === 'Fixed' ? globalComm : (netSelling * globalComm) / 100;
+    const refComm = referralAgentId && refCommValue > 0
+      ? (refCommType === 'Fixed' ? refCommValue : (netSelling * refCommValue) / 100) : 0;
+    const totalComms         = comm + refComm;
+    const netAfterDeductions = netSelling - totalComms;
+    const profit   = netAfterDeductions - totalCogs;
+    // Margin % = Profit / COGS × 100  (Markup % — retail standard: what % above cost you earned)
+    const margin   = totalCogs > 0 ? (profit / totalCogs) * 100 : 0;
     return { profit, margin, totalCogs: Math.round(totalCogs), comm, refComm, totalComms, netSelling, netAfterDeductions };
   }, [items, taxableAmount, globalComm, globalCommType, refCommValue, refCommType, referralAgentId]);
 
@@ -1410,7 +1410,7 @@ const Quotations: React.FC<{
                         <div className="text-2xl sm:text-3xl font-black italic tracking-tighter">
                            {liveProfitability.margin.toFixed(1)}%
                         </div>
-                        <div className="text-[8px] font-bold text-slate-500 uppercase">Net Margin</div>
+                        <div className="text-[8px] font-bold text-slate-500 uppercase">Markup % on Cost</div>
                         {(liveProfitability as any).totalCogs > 0 && (
                           <div className="text-[8px] font-bold text-slate-600 mt-1">
                             COGS: ₹{(liveProfitability as any).totalCogs.toLocaleString('en-IN')}

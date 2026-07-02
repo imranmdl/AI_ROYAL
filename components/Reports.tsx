@@ -142,9 +142,9 @@ function calcItemPL(item: any, product: any, sale?: any) {
 
   // ── Step 6: PROFIT = Net After Deductions − COGS ───────────────────────
   const profit    = r2(netAfterDeductions - totalLanded);
-  // Margin % uses NET SELLING as the base (not COGS, not gross)
-  // = Profit / NetSelling × 100  (industry standard gross margin %)
-  const profitPct = netSelling > 0 ? r2((profit / netSelling) * 100) : 0;
+  // Markup % = Profit / COGS × 100  (retail standard: return on cost)
+  // e.g. COGS=1836, Profit=218 → 218/1836 = 11.87%
+  const profitPct = totalLanded > 0 ? r2((profit / totalLanded) * 100) : 0;
 
   const correctRefundPerUnit = qty > 0 ? r2(netSelling / qty) : 0;
 
@@ -241,8 +241,9 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
     const netSelling   = r2(totalNetSelling - returnVal);   // after discount, after returns
     const totalComms   = r2(totalStaffComm + totalRefComm); // staff + referral commissions
     const netAfterComm = r2(netSelling - totalComms);       // business revenue after all deductions
-    const profit       = r2(netAfterComm - totalLanded);    // PROFIT = net after all − COGS
-    const profitPct    = netSelling > 0 ? r2((profit / netSelling) * 100) : 0; // margin on net selling
+    const profit       = r2(netAfterComm - totalLanded);
+    // Markup % = Profit / COGS (retail standard: 218/1836 = 11.87%)
+    const profitPct    = totalLanded > 0 ? r2((profit / totalLanded) * 100) : 0;
     return {
       sale,
       totalLanded: r2(totalLanded),
