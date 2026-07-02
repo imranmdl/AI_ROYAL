@@ -45,61 +45,62 @@ function profitText(p: number) {
 const SLAB_CATS = ['Granite', 'Marble', 'Kadapa'];
 
 /**
- * calcItemPL — computes per-item profit/loss with CORRECT realised price.
+ * calcItemPL — computes per-item profit/loss with CORRECT formula.
  *
- * Logic:
- *   grossSelling   = item.amount + item-level discount (list price before any reduction)
- *   invoiceReduction = invoice discount + referral commission (both reduce what seller receives)
- *   reductionRatio = invoiceReduction / invoiceSubTotal   (proportional share)
- *   itemReduction  = grossSelling × reductionRatio        (this item's share of both costs)
- *   realisedSelling = grossSelling − itemReduction         (actual cash received for this item)
- *   realProfit      = realisedSelling − totalLanded
- *
- * This also doubles as the CORRECT REFUND AMOUNT for returns (realisedSelling).
- *
- * @param sale  Optional invoice sale object — required for discount+commission ratio
+ * Formula (from spec):
+ *   Gross Selling         = item amount + item discount (list price)
+ *   − Invoice Discount    = customer-facing price reduction
+ *   = Net Selling (₹2700) → what customer pays
+ *   − Staff Commission    = incentive paid to salesperson
+ *   − Referral Commission = paid to external referral agent
+ *   = Net After Deductions (₹2500) → actual revenue for the business
+ *   − COGS (landed cost)  = purchase + transport + other
+ *   = PROFIT (₹700)
+ *   Margin % = Profit / Net Selling × 100 (base = what customer pays, not COGS)
  */
 function calcItemPL(item: any, product: any, sale?: any) {
   const isSlab = SLAB_CATS.includes(item.productCategory || product?.category || '');
 
-  // ── Gross selling (list/MRP before any invoice deductions) ─────────────
+  // ── Step 1: Gross selling (list price before any deductions) ──────────
   const itemDiscountAmt = r2(item.discountAmount || 0);
   const grossSelling    = r2((item.amount || 0) + itemDiscountAmt);
 
-  // ── Invoice-level reduction ratio ─────────────────────────────────────
-  // Both discount AND referral commission reduce the seller's realised revenue.
-  // We apportion these proportionally to each item based on its share of the subTotal.
-  let discountAmt     = itemDiscountAmt;   // item-level discount
-  let commissionAmt   = 0;                 // referral commission apportioned to this item
-  let reductionRatio  = 0;                 // total reduction / invoice subTotal
+  // ── Step 2: Invoice-level deductions (apportioned per item) ──────────
+  let discountAmt     = itemDiscountAmt;
+  let staffCommAmt    = 0;   // Incentive Protocol — paid to salesperson
+  let referralCommAmt = 0;   // Referral Agent — paid to external person
 
   if (sale) {
-    const invoiceSubTotal = sale.subTotal || 1;  // sum of all item amounts before invoice discount
-    const itemFraction    = grossSelling / invoiceSubTotal;
+    const invoiceSubTotal = sale.subTotal || 1;
+    const itemFraction    = grossSelling / Math.max(invoiceSubTotal, 1);
 
-    // Invoice-level discount (Fixed or %)
+    // Invoice-level discount
     const invoiceDiscount = sale.discountType === 'Percentage'
       ? r2(invoiceSubTotal * (sale.discountValue || 0) / 100)
       : r2(sale.discountValue || 0);
+    discountAmt = r2(invoiceDiscount * itemFraction + itemDiscountAmt);
 
-    // Referral commission (already computed at billing and stored on sale)
-    const referralComm = r2((sale as any).referralCommissionAmount || 0);
+    // Staff commission (Incentive Protocol) — from sale.commissionValue
+    const totalStaffComm = r2(
+      sale.commissionType === 'Percentage'
+        ? ((sale.subTotal || 0) - invoiceDiscount) * (sale.commissionValue || 0) / 100
+        : (sale.commissionValue || sale.commissionAmount || 0)
+    );
+    staffCommAmt = r2(totalStaffComm * itemFraction);
 
-    // Total invoice reduction = discount + referral commission
-    const totalInvoiceReduction = invoiceDiscount + referralComm;
-    reductionRatio = invoiceSubTotal > 0 ? totalInvoiceReduction / invoiceSubTotal : 0;
-
-    // This item's proportional share of the invoice discount + commission
-    discountAmt   = r2(invoiceDiscount * itemFraction + itemDiscountAmt);
-    commissionAmt = r2(referralComm   * itemFraction);
+    // Referral agent commission
+    const totalRefComm = r2(sale.referralCommissionAmount || 0);
+    referralCommAmt = r2(totalRefComm * itemFraction);
   }
 
-  // Realised selling = what was actually received for this item
-  const totalReduction   = discountAmt + commissionAmt;
-  const realisedSelling  = r2(grossSelling - totalReduction);
-  const reductionPct     = grossSelling > 0 ? r2((totalReduction / grossSelling) * 100) : 0;
+  // ── Step 3: Net selling = what customer pays after discount ────────────
+  const netSelling = r2(grossSelling - discountAmt);
 
-  // ── Landed cost ─────────────────────────────────────────────────────────
+  // ── Step 4: Net after all deductions = business actual revenue ─────────
+  const totalCommDeductions = r2(staffCommAmt + referralCommAmt);
+  const netAfterDeductions  = r2(netSelling - totalCommDeductions);
+
+  // ── Step 5: Landed cost (COGS) ─────────────────────────────────────────
   let totalLanded: number;
   let landedPerUnit: number;
   let qty: number;
@@ -139,22 +140,24 @@ function calcItemPL(item: any, product: any, sale?: any) {
     totalLanded = r2(landedPerUnit * qtyEff);
   }
 
-  // ── Real profit = realised (after discount + comm) minus landed cost ────
-  const profit    = r2(realisedSelling - totalLanded);
-  const profitPct = totalLanded > 0 ? r2((profit / totalLanded) * 100) : 0;
+  // ── Step 6: PROFIT = Net After Deductions − COGS ───────────────────────
+  const profit    = r2(netAfterDeductions - totalLanded);
+  // Margin % uses NET SELLING as the base (not COGS, not gross)
+  // = Profit / NetSelling × 100  (industry standard gross margin %)
+  const profitPct = netSelling > 0 ? r2((profit / netSelling) * 100) : 0;
 
-  // ── Correct refund amount for returns (what customer actually paid) ────
-  const correctRefundPerUnit = qty > 0 ? r2(realisedSelling / qty) : 0;
+  const correctRefundPerUnit = qty > 0 ? r2(netSelling / qty) : 0;
 
   return {
     qty, isSlab,
     landedPerUnit, totalLanded,
-    grossSelling, discountAmt, commissionAmt,
-    reductionRatio, reductionPct, totalReduction,
-    realisedSelling,          // ← this is the CORRECT realised selling price
-    netSelling: realisedSelling,  // kept for backward compat
+    grossSelling, discountAmt, staffCommAmt, referralCommAmt,
+    totalCommDeductions,
+    netSelling,           // what customer pays (after discount)
+    netAfterDeductions,   // business revenue (after discount + all commissions)
+    realisedSelling: netAfterDeductions,  // backward compat
     profit, profitPct,
-    correctRefundPerUnit,     // use this for return refund calculations
+    correctRefundPerUnit,
     purchaseRate, transportCost, otherCharges,
   };
 }
@@ -222,21 +225,39 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
 
   // ── Invoice-wise P&L ───────────────────────────────────────────────────
   const invoicewiseRows = useMemo(() => filteredSales.map(sale => {
-    let totalLanded = 0, totalNet = 0, totalDiscount = 0;
+    let totalLanded = 0, totalNetSelling = 0, totalDiscount = 0, totalStaffComm = 0, totalRefComm = 0;
     const itemDetails: any[] = [];
     sale.items.forEach((item: any) => {
       const prod = store.products.find(p => p.id === item.productId);
       const pl = calcItemPL(item, prod, sale);
-      totalLanded += pl.totalLanded; totalNet += pl.netSelling; totalDiscount += pl.discountAmt;
+      totalLanded     += pl.totalLanded;
+      totalNetSelling += pl.netSelling;
+      totalDiscount   += pl.discountAmt;
+      totalStaffComm  += pl.staffCommAmt;
+      totalRefComm    += pl.referralCommAmt;
       itemDetails.push({ ...pl, item, prod });
     });
     const returnVal = r2(store.returns.filter(r => r.saleId === sale.id).reduce((s, r) => s + (r.totalRefundAmount || 0), 0));
-    const netRevenue = r2(totalNet - returnVal);
-    // Subtract referral commission cost from this invoice's profit
-    const referralComm = (sale as any).referralCommissionAmount || 0;
-    const profit = r2(netRevenue - totalLanded - referralComm);
-    const profitPct = totalLanded > 0 ? r2((profit / totalLanded) * 100) : 0;
-    return { sale, totalLanded: r2(totalLanded), totalNet: netRevenue, totalDiscount: r2(totalDiscount), returnVal, referralComm, profit, profitPct, itemDetails };
+    const netSelling   = r2(totalNetSelling - returnVal);   // after discount, after returns
+    const totalComms   = r2(totalStaffComm + totalRefComm); // staff + referral commissions
+    const netAfterComm = r2(netSelling - totalComms);       // business revenue after all deductions
+    const profit       = r2(netAfterComm - totalLanded);    // PROFIT = net after all − COGS
+    const profitPct    = netSelling > 0 ? r2((profit / netSelling) * 100) : 0; // margin on net selling
+    return {
+      sale,
+      totalLanded: r2(totalLanded),
+      totalNet: netSelling,           // what customer paid (after discount)
+      totalNetSelling: netSelling,
+      totalDiscount: r2(totalDiscount),
+      totalStaffComm: r2(totalStaffComm),
+      referralComm: r2(totalRefComm),
+      totalComms,
+      netAfterComm,
+      returnVal,
+      profit,
+      profitPct,
+      itemDetails
+    };
   }).sort((a, b) => new Date(b.sale.date).getTime() - new Date(a.sale.date).getTime()), [filteredSales]);
 
   // ── Quotation P&L ──────────────────────────────────────────────────────
@@ -723,11 +744,14 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
           <Tbl>
             <thead><tr>
               <Th c="" /><Th c="Invoice" /><Th c="Date" /><Th c="Customer" />
-              <Th c="Total Cost" right /><Th c="Net Revenue" right /><Th c="Returns" right /><Th c="Ref. Comm" right /><Th c="Profit ₹" right /><Th c="Profit %" right /><Th c="Balance" right />
+              <Th c="Gross" right /><Th c="Discount" right /><Th c="Net Selling" right />
+              <Th c="Staff Comm" right /><Th c="Ref. Comm" right />
+              <Th c="COGS" right /><Th c="Profit ₹" right /><Th c="Margin %" right /><Th c="Balance" right />
             </tr></thead>
             <tbody>
               {invoicewiseRows.map(r => {
                 const id = `inv-${r.sale.id}`;
+                const grossVal = r2((r.totalNet||0) + (r.totalDiscount||0));
                 return (
                   <React.Fragment key={id}>
                     <tr className="hover:bg-slate-50 cursor-pointer" onClick={() => toggleRow(id)}>
@@ -735,36 +759,58 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
                       <Td bold color="text-blue-700">{r.sale.invoiceNo}</Td>
                       <Td>{r.sale.date}</Td>
                       <Td>{r.sale.customerName}</Td>
-                      <Td right>{curr(r.totalLanded)}</Td>
+                      <Td right color="text-slate-600">{curr(grossVal)}</Td>
+                      <Td right color={r.totalDiscount > 0 ? 'text-rose-500' : 'text-slate-300'}>{r.totalDiscount > 0 ? `-${curr(r.totalDiscount)}` : '—'}</Td>
                       <Td right bold>{curr(r.totalNet)}</Td>
-                      <Td right color="text-rose-500">{r.returnVal > 0 ? `-${curr(r.returnVal)}` : '—'}</Td>
+                      <Td right color={r.totalStaffComm > 0 ? 'text-purple-600' : 'text-slate-300'}>{r.totalStaffComm > 0 ? `-${curr(r.totalStaffComm)}` : '—'}</Td>
                       <Td right color={r.referralComm > 0 ? 'text-amber-600' : 'text-slate-300'}>{r.referralComm > 0 ? `-${curr(r.referralComm)}` : '—'}</Td>
+                      <Td right>{curr(r.totalLanded)}</Td>
                       <Td right bold color={r.profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{curr(r.profit)}</Td>
                       <Td right><PBadge p={r.profitPct} /></Td>
                       <Td right color={r.sale.balance > 0 ? 'text-amber-600' : 'text-emerald-600'}>{curr(r.sale.balance)}</Td>
                     </tr>
                     {expanded.has(id) && (
-                      <tr><td colSpan={11} className="px-8 py-3 bg-slate-50/80 border-t border-slate-100">
-                        {r.referralComm > 0 && (
-                          <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-amber-50 border border-amber-100 rounded-xl text-amber-700 text-xs font-bold">
-                            <i className="fas fa-user-tag text-xs"></i>
-                            Referral Commission: <strong>{curr(r.referralComm)}</strong>
-                            {(r.sale as any).referralAgentName && <span className="text-amber-500">({(r.sale as any).referralAgentName})</span>}
-                            {(r.sale as any).referralCommissionType === 'Percentage' && <span className="text-amber-500">— {(r.sale as any).referralCommissionValue}% of sale</span>}
-                          </div>
-                        )}
+                      <tr><td colSpan={13} className="px-8 py-3 bg-slate-50/80 border-t border-slate-100">
+                        {/* Deduction summary */}
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {r.totalDiscount > 0 && (
+                            <span className="flex items-center gap-1 px-3 py-1.5 bg-rose-50 border border-rose-100 rounded-xl text-rose-700 text-xs font-bold">
+                              <i className="fas fa-tag text-[9px]"></i> Discount: -{curr(r.totalDiscount)}
+                            </span>
+                          )}
+                          {r.totalStaffComm > 0 && (
+                            <span className="flex items-center gap-1 px-3 py-1.5 bg-purple-50 border border-purple-100 rounded-xl text-purple-700 text-xs font-bold">
+                              <i className="fas fa-user-tie text-[9px]"></i> Staff Commission: -{curr(r.totalStaffComm)}
+                              {r.sale.commissionType === 'Percentage' && <span className="text-purple-400">({r.sale.commissionValue}%)</span>}
+                            </span>
+                          )}
+                          {r.referralComm > 0 && (
+                            <span className="flex items-center gap-1 px-3 py-1.5 bg-amber-50 border border-amber-100 rounded-xl text-amber-700 text-xs font-bold">
+                              <i className="fas fa-user-tag text-[9px]"></i> Referral ({(r.sale as any).referralAgentName||'Agent'}): -{curr(r.referralComm)}
+                              {(r.sale as any).referralCommissionType === 'Percentage' && <span className="text-amber-500">({(r.sale as any).referralCommissionValue}%)</span>}
+                            </span>
+                          )}
+                          <span className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-700 text-xs font-bold">
+                            <i className="fas fa-calculator text-[9px]"></i>
+                            Net Selling {curr(r.totalNet)} − COGS {curr(r.totalLanded)} − Comms {curr(r.totalComms||0)} = <strong>Profit {curr(r.profit)}</strong>
+                          </span>
+                        </div>
                         <div className="text-[8px] font-black text-slate-500 uppercase mb-2">Item Breakdown</div>
                         <div className="space-y-1.5">
                           {r.itemDetails.map((d: any, j: number) => (
                             <div key={j} className="flex items-center justify-between bg-white rounded-xl px-3 py-2 border border-slate-100">
                               <div className="font-bold text-slate-700 text-xs flex-1 truncate">{d.item.productName}</div>
                               <div className="flex items-center gap-3 text-right text-xs flex-shrink-0">
-                                <span className="text-slate-400">Cost: <span className="font-black text-slate-700">{curr(d.totalLanded)}</span></span>
-                                <span className="text-slate-400">Sell: <span className="font-black text-slate-700">{curr(d.netSelling)}</span></span>
+                                <span className="text-slate-400">COGS: <span className="font-black text-slate-700">{curr(d.totalLanded)}</span></span>
+                                <span className="text-slate-400">Net Sell: <span className="font-black text-slate-700">{curr(d.netSelling)}</span></span>
+                                {d.staffCommAmt > 0 && <span className="text-purple-500 text-[9px]">Comm: -{curr(d.staffCommAmt)}</span>}
+                                {d.referralCommAmt > 0 && <span className="text-amber-500 text-[9px]">Ref: -{curr(d.referralCommAmt)}</span>}
                                 <span className={`font-black px-2 py-0.5 rounded-full ${profitBg(d.profitPct)}`}>{curr(d.profit)} ({pct(d.profitPct)})</span>
                               </div>
                             </div>
                           ))}
+                        </div>
+                      </td></tr>
                         </div>
                       </td></tr>
                     )}

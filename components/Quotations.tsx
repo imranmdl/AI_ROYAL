@@ -541,12 +541,16 @@ const Quotations: React.FC<{
       }
     });
 
-    const netSales   = taxableAmount;
-    const comm       = globalCommType === 'Fixed' ? globalComm : (netSales * globalComm) / 100;
-    const refComm    = refCommType === 'Fixed' ? refCommValue : (netSales * refCommValue) / 100;
-    const profit     = netSales - totalCogs - comm - refComm;
-    const margin     = netSales > 0 ? (profit / netSales) * 100 : 0;
-    return { profit, margin, totalCogs: Math.round(totalCogs), comm, refComm };
+    const netSelling = taxableAmount;                    // what customer pays (after discount)
+    const comm       = globalCommType === 'Fixed' ? globalComm : (netSelling * globalComm) / 100;  // staff incentive
+    const refComm    = referralAgentId && refCommValue > 0
+      ? (refCommType === 'Fixed' ? refCommValue : (netSelling * refCommValue) / 100)
+      : 0;                                               // referral agent
+    const totalComms       = comm + refComm;
+    const netAfterDeductions = netSelling - totalComms; // business revenue after all deductions
+    const profit   = netAfterDeductions - totalCogs;    // PROFIT = net after deductions − COGS
+    const margin   = netSelling > 0 ? (profit / netSelling) * 100 : 0;  // margin % on net selling
+    return { profit, margin, totalCogs: Math.round(totalCogs), comm, refComm, totalComms, netSelling, netAfterDeductions };
   }, [items, taxableAmount, globalComm, globalCommType, refCommValue, refCommType, referralAgentId]);
 
   const saveQuotation = (status: Quotation['status'] = 'Active') => {
