@@ -1857,7 +1857,20 @@ class DataStore {
     });
   }
 
-  addReturn(r: Return) { this.returns.push(r); r.items.forEach(it => { const sale = this.sales.find(s => s.id === r.saleId); const godownId = sale?.items.find(i => i.productId === it.productId)?.sourceGodownId || 'g1'; this.adjustStock(it.productId, godownId, it.qtyBoxes, it.qtyLoose, 'Return', `Return from Inv: ${r.invoiceNo}`); }); this.save(); }
+  addReturn(r: Return) {
+    this.returns.push(r);
+    r.items.forEach(it => {
+      const sale = this.sales.find(s => s.id === r.saleId);
+      const godownId = sale?.items.find(i => i.productId === it.productId)?.sourceGodownId || 'g1';
+      // Stock ledger: re-instate returned stock with full traceability
+      this.adjustStock(
+        it.productId, godownId, it.qtyBoxes, it.qtyLoose, 'Return',
+        `Return — Inv#${r.invoiceNo} | Customer: ${r.customerName || sale?.customerName || 'Unknown'} | Reason: ${r.reason || 'Returned goods'}`,
+        r.date || new Date().toLocaleDateString()
+      );
+    });
+    this.save();
+  }
 
   generateMonthlyStatement(userId: string, month: string) { const user = this.users.find(u => u.id === userId); if (!user) return; if (!this.payrollRecords) this.payrollRecords = []; const record: PayrollRecord = { id: `PAY-${userId}-${month}`, userId, userName: user.name, month, baseSalary: user.baseSalary, incentivesAccrued: 0, bonus: 0, travelExpenses: 0, otherExpenses: 0, advancesDeducted: 0, netPayable: user.baseSalary, paidAmount: 0, balanceDue: user.baseSalary, status: 'Pending' }; const idx = this.payrollRecords.findIndex(r => r.userId === userId && r.month === month); if (idx >= 0) this.payrollRecords[idx] = record; else this.payrollRecords.push(record); this.save(); }
   recordPayrollPayment(recordId: string, amount: number, _remarks: string) { this.payrollRecords = this.payrollRecords.map(r => r.id === recordId ? { ...r, paidAmount: r.paidAmount + amount, balanceDue: r.balanceDue - amount, status: 'Paid' } : r); this.save(); }
