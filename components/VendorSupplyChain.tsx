@@ -772,7 +772,28 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
               source="vendor"
               onClose={()=>setShowQuickAdd(false)}
               defaultVendorName={vendorName}
-              onDone={(p)=>{ addItem(p); }}
+              onDone={(p, inwQty) => {
+                // inwQty = the quantity just inwarded from QuickAddInward
+                const inwardedQty = (inwQty as any) || 0;
+                const rate = p.purchasePrice || p.totalCostPerUnit || 0;
+                const sellRate = p.sellingPrice || 0;
+                const amount = inwardedQty * rate;
+                setItems(prev => {
+                  if (prev.some(x => x.productId === p.id)) return prev;
+                  return [...prev, {
+                    id: itemUid(), productId: p.id, productName: p.name,
+                    category: p.category || '', unit: p.unitType || 'Box',
+                    orderedQty: inwardedQty,
+                    billedQty: inwardedQty, billedRate: rate, billedAmount: amount,
+                    actualQty: inwardedQty, actualRate: rate, actualAmount: amount,
+                    receivedQty: inwardedQty, damagedQty: 0, goodQty: inwardedQty,
+                    transportShare: 0, laborShare: 0,
+                    landedCostPerUnit: rate,
+                    sellingPrice: sellRate,
+                    marginPct: sellRate > rate ? Math.round(((sellRate-rate)/sellRate)*10000)/100 : 0,
+                  } as any];
+                });
+              }}
             />
           )}
 

@@ -16,7 +16,7 @@ interface QuickAddInwardProps {
   /** Optional: prefill vendor name when opened from Vendor Supply Chain */
   defaultVendorName?: string;
   /** Called after successful submit with the created/updated product */
-  onDone?: (product: Product) => void;
+  onDone?: (product: Product, qty?: number) => void;
   /** Which page opened this modal — used to enforce admin item-creation restrictions */
   source?: 'inventory' | 'vendor';
 }
@@ -104,11 +104,18 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
           id, name: newName.trim(), category: newCategory, brand: newBrand, size: newSize,
           unitType: newUnit, isTile: true, tilesPerBox: 4, sqftPerBox: 0,
           purchasePrice: purchaseRate, sellingPrice: sellingPrice || purchaseRate,
-          stockBoxes: 0, stockLoose: 0, reorderLevel: 10, status: 'Active',
+          // Fix Bug 1: set initial stock = qty being inwarded
+          stockBoxes: qty, stockLoose: 0, reorderLevel: 10, status: 'Active',
           showInGallery: true, grade: newGrade as any, shadeNo: newShadeNo, batchNo: newBatchNo,
-          images: [], slabs: [], adjustmentLog: [], damageHistory: [], purchaseHistory: [],
-          locationStock: store.godowns.map(g=>({ godownId:g.id, boxes:0, loose:0 })),
+          images: [], slabs: [], adjustmentLog: [{
+            date: new Date().toLocaleDateString(), actionType: 'Purchase',
+            boxChange: qty, looseChange: 0, godownId: store.godowns[0]?.id || 'g1',
+            note: `Quick Inward: ${(vendorName||'').trim() || 'Quick Entry'}`, resultBoxes: qty,
+          }], damageHistory: [], purchaseHistory: [],
+          locationStock: store.godowns.map((g,i) => ({ godownId: g.id, boxes: i===0 ? qty : 0, loose: 0 })),
           costPerSqft: 0, sellingPricePerSqft: 0, transportCost: 0,
+          // Fix Bug 3: totalCostPerUnit must be set so margin % calculates immediately
+          totalCostPerUnit: purchaseRate,
           transportCostType: 'Percentage', transportBasis: 'Per Unit', otherCharges: 0,
         } as unknown as Product;
         store.addProduct(product);
@@ -146,7 +153,7 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
         await store.updateProduct(product.id, { sellingPrice });
       }
 
-      onDone?.(product);
+      onDone?.(product, qty);
       onClose();
     } catch (e:any) {
       setError(e.message || 'Something went wrong');
