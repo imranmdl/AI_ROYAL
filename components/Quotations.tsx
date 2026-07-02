@@ -1322,10 +1322,9 @@ const Quotations: React.FC<{
                 onApply={(sqft, boxes, pieces) => setBuilder(prev => ({ ...prev, reqSqft: sqft, qtyBoxes: boxes, qtyPieces: pieces }))}
               />
               <div>
-                {isSlabProduct() && builder.selectedSlabIds.length > 0 && (() => {
-                  // Show vendor sqft vs selling sqft comparison for granite slabs
-                  const slabs = selectedProduct?.slabs?.filter(s => builder.selectedSlabIds.includes(s.id)) || [];
-                  const vendorTotal = parseFloat(slabs.reduce((a, s) => a + (s.sqft || 0), 0).toFixed(2));
+                {isSlabProduct() && builder.selectedSlabIds.length > 0 && (()=>{
+                  const _slabs = selectedProduct?.slabs?.filter((s:any) => builder.selectedSlabIds.includes(s.id)) || [];
+                  const vendorTotal = parseFloat(_slabs.reduce((a:number, s:any) => a + (s.sqft || 0), 0).toFixed(2));
                   return (
                     <div className="bg-indigo-900/30 border border-indigo-700/30 rounded-2xl p-4 mb-3 space-y-3">
                       <div className="text-[9px] font-black text-indigo-300 uppercase tracking-widest">Slab SqFt — Vendor vs Selling</div>
@@ -1367,7 +1366,7 @@ const Quotations: React.FC<{
                   );
                 })()}
                 <label className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase block mb-2 px-2">
-                  Total Coverage (Sqft) — Selling Size
+                  {isSlabProduct() && builder.selectedSlabIds.length > 0 ? 'Selling SqFt (auto-filled · editable)' : 'Total Coverage (Sqft) — Selling Size'}
                   {isSlabProduct() && (
                     <span className="ml-2 text-amber-400 normal-case font-bold text-[8px]">(auto-filled from above · editable)</span>
                   )}
@@ -1381,7 +1380,7 @@ const Quotations: React.FC<{
                       : 'bg-white/5 text-white focus:ring-2 focus:ring-amber-500'
                   }`}
                   placeholder={isSlabProduct() ? "Enter total sqft…" : "0"}
-                  value={builder.reqSqft || ''}
+                  value={builder.reqSqft > 0 ? builder.reqSqft : ''}
                   onChange={e => syncFromSqft(parseFloat(e.target.value || '0'))}
                 />
                 {isSlabProduct() && builder.reqSqft > 0 && builder.rate > 0 && (

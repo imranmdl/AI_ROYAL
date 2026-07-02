@@ -652,6 +652,43 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
                                </div>
                              </div>
                            )}
+
+                           {/* Vendor vs Selling SqFt for Granite/Marble — variable slab sizes */}
+                           {selectedSlabIds.length > 0 && (selectedProduct.category === 'Granite' || selectedProduct.category === 'Marble') && (() => {
+                             const vendorTotal = parseFloat(selectedProduct.slabs.filter((s:any)=>selectedSlabIds.includes(s.id)).reduce((a:number,s:any)=>a+(s.sqft||0),0).toFixed(2));
+                             return (
+                               <div className="bg-amber-900/20 border border-amber-700/30 rounded-2xl p-4 space-y-3">
+                                 <div className="text-[9px] font-black text-amber-400 uppercase tracking-widest">Vendor SqFt vs Your Actual Measurement</div>
+                                 <div className="grid grid-cols-2 gap-3">
+                                   <div>
+                                     <div className="text-[8px] font-black text-slate-400 uppercase mb-1">Vendor SqFt (inventory)</div>
+                                     <div className="px-4 py-3 bg-white/5 rounded-xl font-black text-slate-300 text-lg">{vendorTotal}</div>
+                                     <div className="text-[8px] text-slate-500 mt-1">{selectedSlabIds.length} slab{selectedSlabIds.length>1?'s':''} as per vendor</div>
+                                   </div>
+                                   <div>
+                                     <div className="text-[8px] font-black text-amber-400 uppercase mb-1">Your Actual SqFt</div>
+                                     <input type="number" step="0.01"
+                                       className="w-full px-4 py-3 bg-amber-900/30 border-2 border-amber-600/50 rounded-xl font-black text-amber-300 text-lg outline-none focus:border-amber-500 transition-all"
+                                       placeholder={`${vendorTotal}`}
+                                       value={sellingSlabSqft || ''}
+                                       onChange={e => {
+                                         const v = parseFloat(e.target.value || '0');
+                                         setSellingSlabSqft(v || vendorTotal);
+                                         setSqft(v || vendorTotal);
+                                       }} />
+                                     <div className="text-[8px] text-amber-500 mt-1">Used for billing — overrides vendor sqft</div>
+                                   </div>
+                                 </div>
+                                 {sellingSlabSqft > 0 && Math.abs(sellingSlabSqft - vendorTotal) > 0.01 && (
+                                   <div className={`text-[9px] font-bold rounded-xl px-3 py-2 ${sellingSlabSqft > vendorTotal ? 'bg-amber-900/30 text-amber-400' : 'bg-rose-900/30 text-rose-400'}`}>
+                                     {sellingSlabSqft > vendorTotal
+                                       ? `+${(sellingSlabSqft-vendorTotal).toFixed(2)} SqFt over vendor — extra revenue`
+                                       : `-${(vendorTotal-sellingSlabSqft).toFixed(2)} SqFt vs vendor — check deductions`}
+                                   </div>
+                                 )}
+                               </div>
+                             );
+                           })()}
                          </div>
                       ) : (
                          <>
