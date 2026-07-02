@@ -1244,6 +1244,87 @@ const Quotations: React.FC<{
                 <label className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase block mb-2 px-2">Project Area</label>
                 <input type="text" placeholder="Usage (e.g. Hall)..." className="w-full px-5 py-4 bg-white/5 text-white border-0 rounded-2xl font-bold text-sm" value={builder.purpose} onChange={e => setBuilder({...builder, purpose: e.target.value})} />
               </div>
+
+              {/* ── Room Dimension Calculator ────────────────────────────────────────── */}
+              {(() => {
+                const [showCalc, setShowCalc] = React.useState(false);
+                const [dimUnit, setDimUnit]   = React.useState<'ft'|'inch'>('ft');
+                const [dimH,    setDimH]      = React.useState('');
+                const [dimW,    setDimW]      = React.useState('');
+                const toFt   = (v: string) => dimUnit === 'inch' ? parseFloat(v||'0')/12 : parseFloat(v||'0');
+                const calcSqft = () => { const h = toFt(dimH), w = toFt(dimW); return h > 0 && w > 0 ? Math.round(h*w*100)/100 : 0; };
+                const computedSqft = calcSqft();
+                return (
+                  <div className="space-y-2">
+                    <button onClick={()=>setShowCalc(p=>!p)}
+                      className="flex items-center gap-2 text-[9px] font-black text-slate-400 hover:text-amber-400 transition-all px-2">
+                      <i className={`fas fa-ruler-combined text-[10px] ${showCalc?'text-amber-400':'text-slate-500'}`}></i>
+                      {showCalc ? 'Hide Room Calculator' : 'Use Room Calculator (H × W)'}
+                      <i className={`fas fa-chevron-${showCalc?'up':'down'} text-[8px]`}></i>
+                    </button>
+                    {showCalc && (
+                      <div className="bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Room Dimensions</div>
+                          <div className="flex gap-1">
+                            {(['ft','inch'] as const).map(u => (
+                              <button key={u} onClick={()=>{ setDimUnit(u); setDimH(''); setDimW(''); }}
+                                className={`px-3 py-1 rounded-xl text-[8px] font-black transition-all ${dimUnit===u?'bg-amber-500 text-white':'bg-white/10 text-slate-400 hover:text-white'}`}>
+                                {u === 'ft' ? 'Feet' : 'Inches'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1.5">
+                              Height ({dimUnit === 'ft' ? 'ft' : 'inches'})
+                            </div>
+                            <input type="number" step="0.1" placeholder={dimUnit==='ft'?'e.g. 12':'e.g. 144'}
+                              className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white font-black text-lg outline-none focus:border-amber-400 transition-all"
+                              value={dimH} onChange={e=>setDimH(e.target.value)} />
+                          </div>
+                          <div>
+                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1.5">
+                              Width ({dimUnit === 'ft' ? 'ft' : 'inches'})
+                            </div>
+                            <input type="number" step="0.1" placeholder={dimUnit==='ft'?'e.g. 10':'e.g. 120'}
+                              className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white font-black text-lg outline-none focus:border-amber-400 transition-all"
+                              value={dimW} onChange={e=>setDimW(e.target.value)} />
+                          </div>
+                        </div>
+                        {/* Live result */}
+                        {computedSqft > 0 && (
+                          <div className="flex items-center justify-between px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+                            <div>
+                              <div className="text-[8px] font-black text-amber-400 uppercase">Calculated Area</div>
+                              <div className="text-2xl font-black italic text-amber-300">{computedSqft} SqFt</div>
+                              {dimUnit === 'inch' && (
+                                <div className="text-[8px] text-slate-500 mt-0.5">
+                                  ({dimH}" × {dimW}") = ({(parseFloat(dimH||'0')/12).toFixed(2)}ft × {(parseFloat(dimW||'0')/12).toFixed(2)}ft)
+                                </div>
+                              )}
+                            </div>
+                            <button onClick={()=>{
+                              if (computedSqft > 0) {
+                                const boxes = selectedProduct ? Math.ceil(computedSqft / (selectedProduct.sqftPerBox || 1)) : 0;
+                                const pieces = selectedProduct ? Math.round(((computedSqft / (selectedProduct.sqftPerBox || 1)) - boxes + 1) * (selectedProduct.tilesPerBox || 1)) : 0;
+                                setBuilder(prev => ({ ...prev, reqSqft: computedSqft, qtyBoxes: Math.max(0,boxes), qtyPieces: Math.max(0,pieces) }));
+                              }
+                            }}
+                              className="px-5 py-3 bg-amber-500 hover:bg-amber-400 text-white rounded-xl font-black text-xs uppercase transition-all flex items-center gap-2">
+                              <i className="fas fa-arrow-right"></i> Apply
+                            </button>
+                          </div>
+                        )}
+                        <div className="text-[8px] text-slate-500">
+                          Enter room dimensions → click Apply to fill SqFt coverage below
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               <div>
                 {isSlabProduct() && builder.selectedSlabIds.length > 0 && (() => {
                   // Show vendor sqft vs selling sqft comparison for granite slabs
