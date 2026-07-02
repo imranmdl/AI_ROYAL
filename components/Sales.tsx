@@ -226,8 +226,19 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
       setCustomer(initialQuotation.customerName);
       setMobile(initialQuotation.customerMobile);
       setAddress(initialQuotation.customerAddress);
-      setCommissionValue(initialQuotation.globalCommission);
-      setCommissionType(initialQuotation.globalCommissionType);
+      // ── Commission ───────────────────────────────────────────────────────
+      setCommissionValue(initialQuotation.globalCommission || 0);
+      setCommissionType(initialQuotation.globalCommissionType || 'Percentage');
+      // ── Referral agent — auto-populated from quotation ───────────────────
+      if ((initialQuotation as any).referralAgentId) {
+        setReferralAgentId((initialQuotation as any).referralAgentId);
+        setRefCommValue((initialQuotation as any).referralCommissionValue || 0);
+        setRefCommType((initialQuotation as any).referralCommissionType || 'Percentage');
+      }
+      // ── Discount — Direct Commercial Offset from quotation ────────────────
+      setDiscountValue(initialQuotation.discountValue || 0);
+      setDiscountType(initialQuotation.discountType || 'Percentage');
+      // ── Other fields ─────────────────────────────────────────────────────
       setGstPercent(initialQuotation.gstPercent || 18);
       setIsGstIncluded(initialQuotation.isGstIncluded);
       setSelectedOfferId(initialQuotation.appliedOfferId || '');
@@ -242,7 +253,8 @@ const Sales: React.FC<SalesProps> = ({ initialQuotation, onInvoiceCreated }) => 
         costRate: it.costRate,
         priceBasis: it.priceBasis, 
         sqft: it.reqSqft, 
-        amount: it.amount, 
+        amount: it.amount,
+        discountAmount: it.discountAmount,   // ← item-level discount preserved
         sourceGodownId: 'g1',
         selectedSlabIds: it.selectedSlabIds
       })));

@@ -27,6 +27,12 @@ const Quotations: React.FC<{
   // Commercial Overlays
   const [discountValue, setDiscountValue] = useState(0);
   const [discountType, setDiscountType] = useState<'Fixed' | 'Percentage'>('Percentage');
+  // ── Incentive + Referral (mirrors Billing & POS) ─────────────────────────
+  const [commissionValue, setCommissionValue] = useState(0);
+  const [commissionType,  setCommissionType]  = useState<'Fixed'|'Percentage'>('Percentage');
+  const [referralAgentId, setReferralAgentId] = useState('');
+  const [refCommValue,    setRefCommValue]    = useState(0);
+  const [refCommType,     setRefCommType]     = useState<'Fixed'|'Percentage'>('Percentage');
   const [globalComm, setGlobalComm] = useState(0);
   const [globalCommType, setGlobalCommType] = useState<'Fixed' | 'Percentage'>('Fixed');
   
@@ -564,6 +570,11 @@ const Quotations: React.FC<{
       globalCommissionType: globalCommType,
       salesPersonId: store.currentUser?.id || 'unknown',
       appliedOfferId: selectedOfferId || undefined,
+      // Referral agent — persisted so billing can pick it up automatically
+      referralAgentId: referralAgentId || undefined,
+      referralAgentName: referralAgentId ? (store.referralAgents||[]).find(a=>a.id===referralAgentId)?.name : undefined,
+      referralCommissionValue: refCommValue || undefined,
+      referralCommissionType: refCommType || undefined,
       remarks,
       status
     };
@@ -596,6 +607,12 @@ const Quotations: React.FC<{
     setGstPercent(q.gstPercent);
     setDiscountValue(q.discountValue);
     setDiscountType(q.discountType);
+    // Restore commission and referral agent from saved quotation
+    setCommissionValue((q as any).globalCommission || 0);
+    setCommissionType((q as any).globalCommissionType || 'Percentage');
+    setReferralAgentId((q as any).referralAgentId || '');
+    setRefCommValue((q as any).referralCommissionValue || 0);
+    setRefCommType((q as any).referralCommissionType || 'Percentage');
     setGlobalComm(q.globalCommission);
     setGlobalCommType(q.globalCommissionType);
     setSelectedOfferId(q.appliedOfferId || '');
@@ -1555,6 +1572,32 @@ const Quotations: React.FC<{
                              <div className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Payout</div>
                              <div className="font-black text-purple-400 text-[10px]">₹{(globalCommType === 'Fixed' ? globalComm : (taxableAmount * globalComm) / 100).toLocaleString()}</div>
                           </div>
+                       </div>
+
+                       {/* Referral Agent — mirrors Billing & POS */}
+                       <div className="bg-white/5 p-4 rounded-2xl border border-white/10 space-y-2">
+                         <div className="text-[8px] font-black text-amber-400 uppercase tracking-widest">Referral Agent (optional)</div>
+                         <select className="w-full bg-white/10 border border-white/20 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none focus:border-amber-400 appearance-none" style={{colorScheme:'dark'}}
+                           value={referralAgentId} onChange={e=>setReferralAgentId(e.target.value)}>
+                           <option value="">No referral agent</option>
+                           {(store.referralAgents||[]).map(a=>(
+                             <option key={a.id} value={a.id} style={{background:'#1e293b'}}>{a.name} ({a.type})</option>
+                           ))}
+                         </select>
+                         {referralAgentId && (
+                           <div className="flex gap-2 items-center">
+                             <span className="text-[8px] text-slate-400 font-black">Commission:</span>
+                             <input type="number" className="w-14 bg-transparent border-b border-white/20 outline-none text-xs font-black text-amber-400"
+                               value={refCommValue} onChange={e=>setRefCommValue(+e.target.value)} placeholder="0"/>
+                             <select className="bg-transparent text-[8px] font-black outline-none" value={refCommType} onChange={e=>setRefCommType(e.target.value as any)} style={{colorScheme:'dark'}}>
+                               <option value="Percentage" style={{background:'#1e293b'}}>%</option>
+                               <option value="Fixed" style={{background:'#1e293b'}}>₹</option>
+                             </select>
+                             <span className="text-amber-400 font-black text-[10px] ml-auto">
+                               ₹{(refCommType==='Fixed'?refCommValue:(taxableAmount*refCommValue)/100).toLocaleString()}
+                             </span>
+                           </div>
+                         )}
                        </div>
                     </div>
 
