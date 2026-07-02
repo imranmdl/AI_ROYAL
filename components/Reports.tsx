@@ -812,8 +812,6 @@ const Reports: React.FC<ReportsProps> = ({ defaultTab }) => {
                           ))}
                         </div>
                       </td></tr>
-                        </div>
-                      </td></tr>
                     )}
                   </React.Fragment>
                 );
