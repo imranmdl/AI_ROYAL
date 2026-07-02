@@ -1394,42 +1394,77 @@ const Quotations: React.FC<{
 
               <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {(selectedProduct?.category === 'Granite' || selectedProduct?.category === 'Marble' || selectedProduct?.category === 'Kadapa') && selectedProduct.slabs && selectedProduct.slabs.length > 0 ? (
-                    <div className="col-span-1 sm:col-span-2 bg-white/5 p-5 rounded-3xl border border-white/10 space-y-4">
+                    <div className="col-span-1 sm:col-span-2 bg-white/5 p-5 rounded-3xl border border-white/10 space-y-3">
+                        {/* Header */}
                         <div className="flex justify-between items-center">
-                            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Select Slabs (Slide No. & Size)</label>
-                            <div className="text-[10px] font-black text-amber-500 italic">{builder.selectedSlabIds.length} Slabs Selected</div>
+                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Select Slabs</label>
+                          <div className="flex items-center gap-3">
+                            <span className="text-[9px] text-slate-400 font-bold">
+                              {selectedProduct.slabs.filter((s:any)=>!s.isSold).length} avail
+                            </span>
+                            {builder.selectedSlabIds.length > 0 && (
+                              <button onClick={()=>setBuilder({...builder,selectedSlabIds:[]})} className="text-[8px] font-black text-rose-400 hover:text-rose-300">
+                                Clear all
+                              </button>
+                            )}
+                            <button onClick={()=>setBuilder({...builder,selectedSlabIds:selectedProduct.slabs!.filter((s:any)=>!s.isSold).map((s:any)=>s.id)})}
+                              className="text-[8px] font-black text-amber-400 hover:text-amber-300">
+                              Select all
+                            </button>
+                          </div>
                         </div>
-                        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 max-h-40 overflow-y-auto pr-2">
-                            {selectedProduct.slabs.filter(s => !s.isSold).map(slab => (
-                                <button 
-                                    key={slab.id} 
-                                    onClick={() => {
-                                        if (builder.selectedSlabIds.includes(slab.id)) {
-                                            setBuilder({ ...builder, selectedSlabIds: builder.selectedSlabIds.filter(id => id !== slab.id) });
-                                        } else {
-                                            setBuilder({ ...builder, selectedSlabIds: [...builder.selectedSlabIds, slab.id] });
-                                        }
+                        {/* Table */}
+                        <div className="max-h-52 overflow-y-auto rounded-2xl border border-white/10">
+                          <table className="w-full text-xs">
+                            <thead className="bg-white/10 sticky top-0">
+                              <tr>
+                                <th className="px-3 py-2 text-left text-[8px] font-black text-slate-400 uppercase w-6">✓</th>
+                                <th className="px-3 py-2 text-left text-[8px] font-black text-slate-400 uppercase">Slab No.</th>
+                                <th className="px-3 py-2 text-center text-[8px] font-black text-slate-400 uppercase">Size</th>
+                                <th className="px-3 py-2 text-center text-[8px] font-black text-slate-400 uppercase">SqFt</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-white/10">
+                              {selectedProduct.slabs.filter((s:any)=>!s.isSold).map((slab:any)=>{
+                                const isSel = builder.selectedSlabIds.includes(slab.id);
+                                const parts = (slab.slabNo||'').split('-');
+                                const serial = parts[parts.length-1];
+                                const prefix = parts.slice(0,-1).join('-');
+                                const hFt = slab.heightFt||slab.lengthFt||0;
+                                const wIn = slab.lengthIn||slab.heightIn||0;
+                                const sizeLabel = hFt && wIn ? `${hFt}ft × ${wIn}"` : '';
+                                return (
+                                  <tr key={slab.id}
+                                    onClick={()=>{
+                                      if(isSel) setBuilder({...builder,selectedSlabIds:builder.selectedSlabIds.filter(id=>id!==slab.id)});
+                                      else setBuilder({...builder,selectedSlabIds:[...builder.selectedSlabIds,slab.id]});
                                     }}
-                                    className={`p-2 rounded-xl border text-[10px] font-black transition-all flex flex-col items-center justify-center gap-1 ${builder.selectedSlabIds.includes(slab.id) ? 'bg-amber-600 border-amber-400 text-white shadow-lg scale-95' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'}`}
-                                >
-                                    <span className="uppercase tracking-tighter">#{slab.slabNo}</span>
-                                    <span className="text-[8px] opacity-60">{slab.sqft} SF</span>
-                                </button>
-                            ))}
+                                    className={`cursor-pointer transition-all ${isSel?'bg-amber-600/30 hover:bg-amber-600/40':'hover:bg-white/5'}`}>
+                                    <td className="px-3 py-2">
+                                      <div className={`w-4 h-4 rounded border flex items-center justify-center ${isSel?'bg-amber-500 border-amber-400':'border-white/20'}`}>
+                                        {isSel && <i className="fas fa-check text-[8px] text-white"></i>}
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <div className="font-black text-white text-xs">#{serial}</div>
+                                      <div className="text-[8px] text-slate-500 font-bold truncate">{prefix}</div>
+                                    </td>
+                                    <td className="px-3 py-2 text-center text-[10px] font-bold text-slate-300 whitespace-nowrap">{sizeLabel}</td>
+                                    <td className="px-3 py-2 text-center font-black text-amber-400 text-xs">{(slab.sqft||0).toFixed(2)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
                         </div>
+                        {/* Total bar */}
                         {builder.selectedSlabIds.length > 0 && (
-                            <div className="pt-3 border-t border-white/10 flex justify-between items-center">
-                                <div className="text-[9px] font-black text-slate-500 uppercase">Vendor SqFt</div>
-                                <div className="text-lg font-black italic text-slate-400">
-                                    {selectedProduct.slabs.filter(s => builder.selectedSlabIds.includes(s.id)).reduce((acc, s) => acc + (s.sqft || 0), 0).toFixed(2)} SqFt
-                                </div>
-                                {builder.sellingSlabSqft > 0 && (
-                                  <div className="mt-1">
-                                    <div className="text-[9px] font-black text-amber-400 uppercase">Billing SqFt (Your Size)</div>
-                                    <div className="text-lg font-black text-amber-300">{builder.sellingSlabSqft.toFixed(2)} SqFt</div>
-                                  </div>
-                                )}
+                          <div className="flex justify-between items-center px-4 py-3 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+                            <div className="text-[9px] font-black text-amber-400 uppercase">{builder.selectedSlabIds.length} slabs selected</div>
+                            <div className="text-lg font-black italic text-amber-300">
+                              {selectedProduct.slabs.filter((s:any)=>builder.selectedSlabIds.includes(s.id)).reduce((a:number,s:any)=>a+(s.sqft||0),0).toFixed(2)} SqFt
                             </div>
+                          </div>
                         )}
                     </div>
                 ) : (
