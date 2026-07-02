@@ -57,6 +57,7 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
   const [newGrade,    setNewGrade]    = useState(predefinedGrades[0] || 'Premium');
   const [newShadeNo,  setNewShadeNo]  = useState(predefinedShades[0] || '');
   const [newBatchNo,  setNewBatchNo]  = useState(predefinedBatches[0] || '');
+  const [tilesPerBox, setTilesPerBox] = useState<number>(1);   // how many tiles in one box
 
   // ── Admin access control ────────────────────────────────────────────────
   const itemCreationSource = store.settings.itemCreationSource || 'both';
@@ -102,22 +103,20 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
         const id = `prod-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
         product = {
           id, name: newName.trim(), category: newCategory, brand: newBrand, size: newSize,
-          unitType: newUnit, isTile: true, tilesPerBox: 4, sqftPerBox: 0,
+          unitType: newUnit, isTile: true,
+          tilesPerBox: tilesPerBox || 1,   // user-entered tiles per box
+          sqftPerBox: 0,
           purchasePrice: purchaseRate, sellingPrice: sellingPrice || purchaseRate,
-          // Fix Bug 1: set initial stock = qty being inwarded
-          stockBoxes: qty, stockLoose: 0, reorderLevel: 10, status: 'Active',
+          // Start with 0 — saveVendorOrder.adjustStock will add qty to avoid double-count
+          stockBoxes: 0, stockLoose: 0, reorderLevel: 10, status: 'Active',
           showInGallery: true, grade: newGrade as any, shadeNo: newShadeNo, batchNo: newBatchNo,
-          images: [], slabs: [], adjustmentLog: [{
-            date: new Date().toLocaleDateString(), actionType: 'Purchase',
-            boxChange: qty, looseChange: 0, godownId: store.godowns[0]?.id || 'g1',
-            note: `Quick Inward: ${(vendorName||'').trim() || 'Quick Entry'}`, resultBoxes: qty,
-          }], damageHistory: [], purchaseHistory: [],
-          locationStock: store.godowns.map((g,i) => ({ godownId: g.id, boxes: i===0 ? qty : 0, loose: 0 })),
+          images: [], slabs: [], adjustmentLog: [], damageHistory: [], purchaseHistory: [],
+          locationStock: store.godowns.map(g => ({ godownId: g.id, boxes: 0, loose: 0 })),
           costPerSqft: 0, sellingPricePerSqft: 0, transportCost: 0,
-          // Fix Bug 3: totalCostPerUnit must be set so margin % calculates immediately
-          totalCostPerUnit: purchaseRate,
+          totalCostPerUnit: purchaseRate,  // so margin calculates immediately in Quotation
           transportCostType: 'Percentage', transportBasis: 'Per Unit', otherCharges: 0,
         } as unknown as Product;
+        // addProduct saves to DB — saveVendorOrder below will call adjustStock to add stock
         store.addProduct(product);
       }
 
@@ -351,6 +350,30 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
               <div><label className={label}>Quantity ({mode==='new'?newUnit:selectedProduct?.unitType||'Box'})</label>
                 <input type="number" min="1" step="1" className={inp} value={qty||''} onChange={e=>setQty(Math.max(0, Math.floor(+e.target.value)))} placeholder="100" />
               </div>
+              {/* Tiles Per Box — only for tile/box unit types */}
+              {(mode === 'new' ? ['Box','Bag','Piece'].includes(newUnit) : !['Kadapa','Granite','Marble'].includes(selectedProduct?.category||'')) && (
+                <div>
+                  <label className={label}>
+                    Tiles / Pieces Per Box
+                    <span className="text-[8px] font-normal text-slate-400 ml-1">(helps convert sqft ↔ boxes when estimating)</span>
+                  </label>
+                  <input type="number" min="1" step="1" className={inp}
+                    value={mode==='existing' ? (selectedProduct?.tilesPerBox||1) : (tilesPerBox||'')}
+                    onChange={e => {
+                      const v = Math.max(1, Math.floor(+e.target.value));
+                      setTilesPerBox(v);
+                      if (mode === 'existing' && selectedProduct) {
+                        store.updateProduct(selectedProduct.id, { tilesPerBox: v });
+                      }
+                    }}
+                    placeholder="e.g. 5 for 300×600, 4 for 600×600" />
+                  {qty > 0 && tilesPerBox > 1 && (
+                    <div className="text-[9px] text-emerald-600 font-bold mt-1">
+                      {qty} boxes × {tilesPerBox} tiles = {qty * tilesPerBox} tiles total
+                    </div>
+                  )}
+                </div>
+              )}
               <div><label className={label}>Purchase Rate (₹/unit)</label>
                 <input type="number" className={inp} value={purchaseRate||''} onChange={e=>setPurchaseRate(+e.target.value)} placeholder="0" />
               </div>
