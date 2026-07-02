@@ -772,10 +772,17 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
     const { actionType, godownId, qtyBoxes, qtyLoose, notes, vendorOrderId } = adjustForm;
     if (qtyBoxes === 0 && qtyLoose === 0) return;
 
+    // Build an enriched note that includes vendor order reference for stock ledger
+    const linkedOrder = vendorOrderId ? (store.vendorOrders||[]).find(o=>o.id===vendorOrderId) : null;
+    const enrichedNote = [
+      notes,
+      linkedOrder ? `Vendor Order #${linkedOrder.orderNo} — ${linkedOrder.vendorName}` : ''
+    ].filter(Boolean).join(' | ');
+
     if (actionType === 'Damage') {
-      // reportDamage calls adjustStock(-qty) which updates store.products internally
       store.reportDamage(showAdjustStock.id, qtyBoxes, qtyLoose, godownId, vendorOrderId || undefined);
-      // Read updated value directly from store (not serverProducts which may be stale)
+      // Also record in stock ledger with vendor order reference
+      store.adjustStock(showAdjustStock.id, godownId, 0, 0, 'Damage', enrichedNote || 'Damage reported');
       const updated = store.products.find(p => p.id === showAdjustStock.id);
       if (updated) {
         setServerProducts(prev => prev.map(p =>
@@ -783,8 +790,7 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
         ));
       }
     } else {
-      // adjustStock(+/-qty) updates store.products internally
-      store.adjustStock(showAdjustStock.id, godownId, qtyBoxes, qtyLoose, actionType, notes);
+      store.adjustStock(showAdjustStock.id, godownId, qtyBoxes, qtyLoose, actionType, enrichedNote || notes);
       const updated = store.products.find(p => p.id === showAdjustStock.id);
       if (updated) {
         setServerProducts(prev => prev.map(p =>
@@ -993,7 +999,16 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                           setShowAddStock(true);
                         }}
                         onHistory={() => setShowItemHistory(p)}
-                        onAdjust={() => setShowAdjustStock(p)}
+                        onAdjust={() => {
+                          const p2 = p;
+                          // Auto-find the vendor order that supplied this product
+                          const linkedOrders = (store.vendorOrders||[])
+                            .filter(o => (o.items||[]).some(i => i.productId === p2.id))
+                            .sort((a,b) => (b.orderDate||'').localeCompare(a.orderDate||'')); // most recent first
+                          const autoOrderId = linkedOrders.length === 1 ? linkedOrders[0].id : '';
+                          setAdjustForm({ actionType: 'Correction', godownId: 'g1', qtyBoxes: 0, qtyLoose: 0, notes: '', vendorOrderId: autoOrderId });
+                          setShowAdjustStock(p2);
+                        }}
                         onQR={() => setShowQR(p)}
                         onGallery={() => { store.updateProduct(p.id, { showInGallery: !p.showInGallery }); setServerProducts(prev => prev.map(prod => prod.id === p.id ? { ...prod, showInGallery: !prod.showInGallery } : prod)); }}
                         onStatus={() => { store.toggleProductStatus(p.id); setServerProducts(prev => prev.map(prod => prod.id === p.id ? { ...prod, status: prod.status === 'Active' ? 'Suspended' : 'Active' } : prod)); }}
@@ -1946,23 +1961,37 @@ const Inventory: React.FC<InventoryProps> = ({ currentRole, setActiveTab }) => {
                     </div>
                     {adjustForm.actionType === 'Damage' && (
                        <div className="col-span-2 space-y-2">
-                          <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Link to Vendor Order (Optional)</label>
+                          <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest flex items-center gap-2">
+                            Link to Vendor Order
+                            {adjustForm.vendorOrderId && (
+                              <span className="text-[8px] font-black bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">
+                                <i className="fas fa-magic text-[7px] mr-1"></i>Auto-linked
+                              </span>
+                            )}
+                          </label>
                           <select 
-                             className="w-full px-5 py-4 bg-slate-100 rounded-2xl font-black outline-none appearance-none border-2 border-transparent focus:border-rose-500 transition-all" 
+                             className={`w-full px-5 py-4 rounded-2xl font-black outline-none appearance-none border-2 transition-all ${adjustForm.vendorOrderId ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-slate-100 border-transparent focus:border-rose-500'}`}
                              value={adjustForm.vendorOrderId} 
                              onChange={e => setAdjustForm({...adjustForm, vendorOrderId: e.target.value})}
                           >
                              <option value="">No Link (Independent Damage)</option>
-                             {store.vendorOrders
-                                .filter(o => o.status === 'Received' && o.items.some(i => i.productId === showAdjustStock?.id))
+                             {(store.vendorOrders||[])
+                                .filter(o => (o.items||[]).some(i => i.productId === showAdjustStock?.id))
+                                .sort((a,b) => (b.orderDate||'').localeCompare(a.orderDate||''))
                                 .map(o => (
                                    <option key={`link-order-${o.id}`} value={o.id}>
-                                      Order #{o.orderNo} - {o.vendorName} ({o.orderDate})
+                                      #{o.orderNo} — {o.vendorName} — {o.orderDate} ({o.status})
                                    </option>
                                 ))
                              }
                           </select>
-                          <p className="text-[9px] font-bold text-slate-400 ml-2 italic">Linking will update the damage report in the selected vendor order for audit consistency.</p>
+                          {adjustForm.vendorOrderId ? (
+                            <p className="text-[9px] font-bold text-emerald-600 ml-2">
+                              <i className="fas fa-check-circle mr-1"></i>Damage will be recorded in this vendor order for supplier accountability tracking.
+                            </p>
+                          ) : (
+                            <p className="text-[9px] font-bold text-slate-400 ml-2 italic">Linking to a vendor order tracks supplier quality and enables vendor damage reports.</p>
+                          )}
                        </div>
                     )}
                  </div>
