@@ -646,6 +646,47 @@ async function initDatabase(config: DbConfig = activeDbConfig) {
       )
     `);
 
+    // ── Dedicated tables to replace system_persistence blob ──────────────────
+    // These give returns/quotations/expenses/customers their own indexed rows,
+    // surviving deployments and working identically to sales/products tables.
+    const dedicatedTables = [
+      `CREATE TABLE IF NOT EXISTS returns_refunds (
+        id VARCHAR(100) PRIMARY KEY,
+        tenant_id VARCHAR(100) NOT NULL DEFAULT 'default',
+        invoice_no VARCHAR(50), customer_name VARCHAR(255),
+        date VARCHAR(20), refund_amount DECIMAL(10,2) DEFAULT 0,
+        data JSON, updated_at BIGINT,
+        INDEX idx_returns_tenant (tenant_id), INDEX idx_returns_date (date)
+      )`,
+      `CREATE TABLE IF NOT EXISTS quotations (
+        id VARCHAR(100) PRIMARY KEY,
+        tenant_id VARCHAR(100) NOT NULL DEFAULT 'default',
+        quotation_no VARCHAR(50), customer_name VARCHAR(255),
+        date VARCHAR(20), total_amount DECIMAL(10,2) DEFAULT 0, status VARCHAR(30) DEFAULT 'Active',
+        data JSON, updated_at BIGINT,
+        INDEX idx_quotations_tenant (tenant_id), INDEX idx_quotations_date (date)
+      )`,
+      `CREATE TABLE IF NOT EXISTS expenses (
+        id VARCHAR(100) PRIMARY KEY,
+        tenant_id VARCHAR(100) NOT NULL DEFAULT 'default',
+        category VARCHAR(100), date VARCHAR(20), amount DECIMAL(10,2) DEFAULT 0,
+        data JSON, updated_at BIGINT,
+        INDEX idx_expenses_tenant (tenant_id), INDEX idx_expenses_date (date)
+      )`,
+      `CREATE TABLE IF NOT EXISTS customers (
+        id VARCHAR(100) PRIMARY KEY,
+        tenant_id VARCHAR(100) NOT NULL DEFAULT 'default',
+        name VARCHAR(255), mobile VARCHAR(30),
+        data JSON, updated_at BIGINT,
+        INDEX idx_customers_tenant (tenant_id)
+      )`,
+    ];
+    for (const sql of dedicatedTables) {
+      try { await connection.query(sql); } catch (e: any) {
+        if (!e.message?.includes('already exists')) console.warn('[DB] Table create:', e.message);
+      }
+    }
+
     // Ensure updated_at exists in all tables (for existing databases)
     const tables = ['products', 'sales', 'purchases', 'vendor_orders', 'system_persistence', 'loading_charges', 'gallery_leads', 'users'];
     for (const table of tables) {
@@ -2046,6 +2087,27 @@ app.get('/api/sync/version', async (req: Request, res: Response) => {
       base.users       = userRows.map((u: any)  => ({ ...parseData(u.data),  id:u.id, name:u.name, email:u.email, role:u.role, status:u.status }));
       base.galleryLeads  = glRows.map((r: any)  => parseData(r.data)).filter(Boolean);
       base.loadingCharges= lcRows.map((r: any)  => parseData(r.data)).filter(Boolean);
+
+      // ── Dedicated tables: returns, quotations, expenses, customers ──────────
+      // These replace the system_persistence blob for these collections so data
+      // survives deployments and is queryable per tenant.
+      let retRows: any[] = [], quoRows: any[] = [], expRows: any[] = [], cusRows: any[] = [];
+      try { [retRows] = await pool.query('SELECT data FROM returns_refunds WHERE tenant_id=? ORDER BY date DESC', [tenantId]) as any; } catch {}
+      try { [quoRows] = await pool.query('SELECT data FROM quotations WHERE tenant_id=? ORDER BY date DESC', [tenantId]) as any; } catch {}
+      try { [expRows] = await pool.query('SELECT data FROM expenses WHERE tenant_id=? ORDER BY date DESC', [tenantId]) as any; } catch {}
+      try { [cusRows] = await pool.query('SELECT data FROM customers WHERE tenant_id=?', [tenantId]) as any; } catch {}
+
+      // Merge with any data already in system_persistence blob (migration: pick whichever has more)
+      const dbReturns  = retRows.map((r:any) => parseData(r.data)).filter(Boolean);
+      const dbQuotes   = quoRows.map((r:any) => parseData(r.data)).filter(Boolean);
+      const dbExpenses = expRows.map((r:any) => parseData(r.data)).filter(Boolean);
+      const dbCustomers= cusRows.map((r:any) => parseData(r.data)).filter(Boolean);
+
+      base.returns   = dbReturns.length   > (base.returns   ||[]).length ? dbReturns   : (base.returns   ||[]);
+      base.quotations= dbQuotes.length    > (base.quotations||[]).length ? dbQuotes    : (base.quotations||[]);
+      base.expenses  = dbExpenses.length  > (base.expenses  ||[]).length ? dbExpenses  : (base.expenses  ||[]);
+      base.customers = dbCustomers.length > (base.customers ||[]).length ? dbCustomers : (base.customers ||[]);
+
       base._tenant     = tenantId;
       data             = base;
 
@@ -2268,6 +2330,59 @@ app.post('/api/sync', async (req: Request, res: Response) => {
       // Purchases — update cache only for default
       if (isDefault) {
         if (data.purchases && isDefault) data.purchases.forEach((p: any) => updateCache('purchases', p));
+      }
+
+      // ── Dedicated tables: returns, quotations, expenses, customers ─────────
+      if (pool && dbHealthy) {
+        const now2 = Date.now();
+
+        // Returns & Refunds
+        for (const r of (data.returns || [])) {
+          try {
+            await pool.query(
+              `INSERT INTO returns_refunds (id,tenant_id,invoice_no,customer_name,date,refund_amount,data,updated_at)
+               VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE
+               customer_name=VALUES(customer_name),date=VALUES(date),refund_amount=VALUES(refund_amount),data=VALUES(data),updated_at=VALUES(updated_at)`,
+              [r.id, tenantId, r.invoiceNo||'', r.customerName||'', r.date||'', r.refundAmount||r.totalRefund||0, JSON.stringify(r), now2]
+            );
+          } catch {}
+        }
+
+        // Quotations
+        for (const q of (data.quotations || [])) {
+          try {
+            await pool.query(
+              `INSERT INTO quotations (id,tenant_id,quotation_no,customer_name,date,total_amount,status,data,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE
+               customer_name=VALUES(customer_name),total_amount=VALUES(total_amount),status=VALUES(status),data=VALUES(data),updated_at=VALUES(updated_at)`,
+              [q.id, tenantId, q.quotationNo||'', q.customerName||'', q.date||'', q.totalAmount||0, q.status||'Active', JSON.stringify(q), now2]
+            );
+          } catch {}
+        }
+
+        // Expenses
+        for (const e of (data.expenses || [])) {
+          try {
+            await pool.query(
+              `INSERT INTO expenses (id,tenant_id,category,date,amount,data,updated_at)
+               VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE
+               category=VALUES(category),amount=VALUES(amount),data=VALUES(data),updated_at=VALUES(updated_at)`,
+              [e.id, tenantId, e.category||'', e.date||'', e.amount||0, JSON.stringify(e), now2]
+            );
+          } catch {}
+        }
+
+        // Customers
+        for (const cu of (data.customers || [])) {
+          try {
+            await pool.query(
+              `INSERT INTO customers (id,tenant_id,name,mobile,data,updated_at)
+               VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE
+               name=VALUES(name),mobile=VALUES(mobile),data=VALUES(data),updated_at=VALUES(updated_at)`,
+              [cu.id, tenantId, cu.name||'', cu.mobile||cu.phone||'', JSON.stringify(cu), now2]
+            );
+          } catch {}
+        }
       }
     }
 
