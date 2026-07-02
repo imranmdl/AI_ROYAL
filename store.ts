@@ -383,6 +383,9 @@ class DataStore {
     finally { this.notify(); }
   }
 
+  private _retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private _retryCount = 0;
+
   public async refreshFromServer(force = false) {
     if (this.isSyncing && !force) return;
     try {
@@ -393,8 +396,6 @@ class DataStore {
       const currentUrlTenant = typeof window !== 'undefined'
         ? new URLSearchParams(window.location.search).get('tenant') || ''
         : '';
-      // Only send JWT when actually on a tenant URL or running inside the mobile app
-      // Never send JWT on the default base URL — would filter to wrong tenant
       const jwt = (currentUrlTenant || isCapacitorApp)
         ? (typeof localStorage !== 'undefined' ? this.getJwt() : '')
         : '';
@@ -404,16 +405,30 @@ class DataStore {
         { cache: 'no-store', headers });
       if (r.ok) {
         const data = await r.json();
-        if (data.changed === false) { this.isOnline = true; return; }
+        if (data.changed === false) { this.isOnline = true; this._retryCount = 0; return; }
         this.applyData(data); this.lastUpdated = data.lastUpdated || Date.now();
-        this.isOnline = true; this.scheduleLsSave();
-      } else { throw new Error(`Sync failed: ${r.statusText}`); }
-    } catch (e: any) { console.error('[STORE] Sync error:', e.message); this.syncError = e.message; this.isOnline = false; }
+        this.isOnline = true; this._retryCount = 0; this.scheduleLsSave();
+      } else { throw new Error(`Sync failed: ${r.status} ${r.statusText}`); }
+    } catch (e: any) {
+      console.error('[STORE] Sync error:', e.message);
+      this.syncError = e.message;
+      this.isOnline = false;
+      // IMPORTANT: do NOT clear existing data on sync failure
+      // Users see last-known-good data until connection is restored
+      // Schedule exponential backoff retry (5s → 10s → 20s → max 60s)
+      if (this._retryTimer) clearTimeout(this._retryTimer);
+      const delay = Math.min(5000 * Math.pow(2, this._retryCount), 60000);
+      this._retryCount++;
+      console.log(`[STORE] Retrying sync in ${delay/1000}s (attempt ${this._retryCount})`);
+      this._retryTimer = setTimeout(() => this.refreshFromServer(true), delay);
+    }
     finally { this.isSyncing = false; this.notify(); }
   }
 
   private applyData(data: any) {
     if (!data) return;
+    // Safety guard: never replace a populated collection with an empty one.
+    // This prevents a glitch where a cached/fallback sync response wipes live data.
     if (data._metadata?.is_fallback && (this.products.length > 0 || this.sales.length > 0) && !data.products?.length && !data.sales?.length) {
       console.warn('[STORE] Ignoring empty fallback.'); return;
     }
@@ -430,7 +445,22 @@ class DataStore {
         });
         (this as any)[col] = next;
       });
-    } else { cols.forEach(col => { if (data[col] !== undefined) (this as any)[col] = data[col]; }); }
+    } else {
+      cols.forEach(col => {
+        // Only replace if the incoming data is a non-empty array OR
+        // the current collection is empty (first load)
+        const incoming = data[col];
+        const current  = (this as any)[col];
+        if (incoming === undefined) return;
+        if (Array.isArray(incoming) && incoming.length === 0 && Array.isArray(current) && current.length > 0) {
+          // Server sent empty array but we already have data — keep existing
+          // (can happen during Railway cold start / DB reconnect)
+          console.warn(`[STORE] applyData: ignoring empty ${col} (keeping ${current.length} existing items)`);
+          return;
+        }
+        (this as any)[col] = incoming;
+      });
+    }
     if (data.settings) { const { backendUrl, ...rest } = data.settings; this.settings = { ...this.settings, ...rest }; }
   }
 

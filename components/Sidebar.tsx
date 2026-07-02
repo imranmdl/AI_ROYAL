@@ -96,10 +96,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeTab, setActiveTab,
              <button 
                onClick={() => store.refreshFromServer(true)}
                disabled={isSyncing}
-               className={`w-full px-4 py-1.5 rounded-xl border flex items-center gap-3 transition-all hover:scale-[1.02] ${isSyncing ? 'bg-amber-500/20 border-amber-500/40 animate-pulse' : 'bg-slate-500/10 border-slate-500/20'}`}>
-                <i className={`fas fa-sync-alt text-[10px] ${isSyncing ? 'text-amber-500 animate-spin' : 'text-slate-500'}`}></i>
-                <span className={`text-[8px] font-black uppercase tracking-widest ${isSyncing ? 'text-amber-500' : 'text-slate-500'}`}>
-                   {isSyncing ? 'Syncing Delta...' : `Last Sync: ${new Date(lastUpdated).toLocaleTimeString()}`}
+               className={`w-full px-4 py-1.5 rounded-xl border flex items-center gap-3 transition-all hover:scale-[1.02] ${isSyncing ? 'bg-amber-500/20 border-amber-500/40 animate-pulse' : isOnline ? 'bg-slate-500/10 border-slate-500/20' : 'bg-rose-500/10 border-rose-500/30'}`}>
+                <i className={`fas fa-sync-alt text-[10px] ${isSyncing ? 'text-amber-500 animate-spin' : isOnline ? 'text-slate-500' : 'text-rose-400'}`}></i>
+                <span className={`text-[8px] font-black uppercase tracking-widest ${isSyncing ? 'text-amber-500' : isOnline ? 'text-slate-500' : 'text-rose-400'}`}>
+                   {isSyncing ? 'Syncing…' : isOnline ? `Last Sync: ${new Date(lastUpdated).toLocaleTimeString()}` : 'Offline — Tap to Retry'}
                 </span>
              </button>
            </div>
