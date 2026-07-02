@@ -149,14 +149,14 @@ const UnitConfig: React.FC<Props> = ({ category, value, onChange }) => {
                 <label className={lbl}>Pieces per {unitLabel}</label>
                 <input type="number" className={inp}
                   placeholder="e.g. 4"
-                  value={value.tilesPerBox || ''}
+                  value={value.tilesPerBox > 0 ? value.tilesPerBox : ''}
                   onChange={e => onChange({ ...value, tilesPerBox: parseInt(e.target.value || '0') })} />
               </div>
               <div>
                 <label className={lbl}>SqFt per {unitLabel}</label>
                 <input type="number" step="0.01" className={inp}
                   placeholder="e.g. 16"
-                  value={value.sqftPerBox || ''}
+                  value={value.sqftPerBox > 0 ? value.sqftPerBox : ''}
                   onChange={e => onChange({ ...value, sqftPerBox: parseFloat(e.target.value || '0') })} />
               </div>
             </>
