@@ -541,12 +541,13 @@ const Quotations: React.FC<{
       }
     });
 
-    const netSales = taxableAmount;
-    const comm     = globalCommType === 'Fixed' ? globalComm : (netSales * globalComm) / 100;
-    const profit   = netSales - totalCogs - comm;
-    const margin   = netSales > 0 ? (profit / netSales) * 100 : 0;
-    return { profit, margin, totalCogs: Math.round(totalCogs) };
-  }, [items, taxableAmount, globalComm, globalCommType]);
+    const netSales   = taxableAmount;
+    const comm       = globalCommType === 'Fixed' ? globalComm : (netSales * globalComm) / 100;
+    const refComm    = refCommType === 'Fixed' ? refCommValue : (netSales * refCommValue) / 100;
+    const profit     = netSales - totalCogs - comm - refComm;
+    const margin     = netSales > 0 ? (profit / netSales) * 100 : 0;
+    return { profit, margin, totalCogs: Math.round(totalCogs), comm, refComm };
+  }, [items, taxableAmount, globalComm, globalCommType, refCommValue, refCommType, referralAgentId]);
 
   const saveQuotation = (status: Quotation['status'] = 'Active') => {
     const q: Quotation = {
@@ -1411,6 +1412,16 @@ const Quotations: React.FC<{
                             COGS: ₹{(liveProfitability as any).totalCogs.toLocaleString('en-IN')}
                           </div>
                         )}
+                        {(liveProfitability as any).comm > 0 && (
+                          <div className="text-[8px] font-bold text-purple-500 mt-0.5">
+                            Comm: -₹{Math.round((liveProfitability as any).comm).toLocaleString('en-IN')}
+                          </div>
+                        )}
+                        {(liveProfitability as any).refComm > 0 && (
+                          <div className="text-[8px] font-bold text-rose-500 mt-0.5">
+                            Referral: -₹{Math.round((liveProfitability as any).refComm).toLocaleString('en-IN')}
+                          </div>
+                        )}
                      </div>
                      <div className="text-right">
                         <div className={`text-lg sm:text-xl font-black italic ${liveProfitability.profit < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
@@ -1618,8 +1629,24 @@ const Quotations: React.FC<{
                        {loadingCharges > 0 && (
                           <span className="text-[7px] sm:text-[8px] font-bold text-amber-600 uppercase tracking-tighter mt-0.5">Incl. Loading ₹{loadingCharges.toLocaleString()}</span>
                        )}
+                       {referralAgentId && refCommValue > 0 && (
+                         <span className="text-[7px] sm:text-[8px] font-bold text-rose-500 uppercase tracking-tighter mt-0.5">
+                           Referral: -₹{Math.round(refCommType==='Fixed'?refCommValue:(totalAmount*refCommValue)/100).toLocaleString()}
+                         </span>
+                       )}
                     </div>
-                    <span className="text-2xl sm:text-3xl font-black text-slate-900 italic tracking-tighter">₹{totalAmount.toLocaleString()}</span>
+                    <div className="flex flex-col items-end">
+                      <span className="text-2xl sm:text-3xl font-black text-slate-900 italic tracking-tighter">₹{totalAmount.toLocaleString()}</span>
+                      {referralAgentId && refCommValue > 0 && (() => {
+                        const refAmt = Math.round(refCommType==='Fixed'?refCommValue:(totalAmount*refCommValue)/100);
+                        const netAfterRef = totalAmount - refAmt;
+                        return (
+                          <span className="text-[10px] font-black text-rose-600 mt-0.5">
+                            Net after referral: ₹{netAfterRef.toLocaleString()}
+                          </span>
+                        );
+                      })()}
+                    </div>
                  </div>
               </div>
            </div>
