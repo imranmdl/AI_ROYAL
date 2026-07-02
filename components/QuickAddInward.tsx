@@ -24,7 +24,7 @@ interface QuickAddInwardProps {
 const inp = "w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl font-bold text-sm outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 transition-all";
 const label = "text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block mb-1.5";
 
-const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorName = '', onDone, source = 'inventory' }) => {
+const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorName = '', onDone, source = 'inventory', targetOrderId: preselectedOrderId = '' }) => {
   const products = store.products || [];
 
   // ── Step 1: product — pick existing or create new ──────────────────────────
@@ -71,7 +71,7 @@ const QuickAddInward: React.FC<QuickAddInwardProps> = ({ onClose, defaultVendorN
   const [sellingPrice,setSellingPrice]= useState<number>(0);
   const [invoiceNo,   setInvoiceNo]  = useState('');
   const [date,        setDate]       = useState(new Date().toISOString().slice(0,10));
-  const [targetOrderId, setTargetOrderId] = useState('');   // '' = create new / consolidate by date; else append to this existing order
+  const [targetOrderId, setTargetOrderId] = useState(preselectedOrderId);   // pre-filled when opened from inside a vendor order
 
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);

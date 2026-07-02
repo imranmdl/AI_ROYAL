@@ -772,6 +772,7 @@ const OrderForm: React.FC<FormProps> = ({ order, products, onSave, onCancel }) =
               source="vendor"
               onClose={()=>setShowQuickAdd(false)}
               defaultVendorName={vendorName}
+              targetOrderId={order?.id || ''}
               onDone={(p, inwQty) => {
                 // inwQty = the quantity just inwarded from QuickAddInward
                 const inwardedQty = (inwQty as any) || 0;

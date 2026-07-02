@@ -1101,8 +1101,9 @@ class DataStore {
     }
     if (!existing) {
       // Default: find an existing quick-entry order for this vendor + date that's still open
+      // Also match regular (non-quickEntry) orders for same vendor + date
       existing = this.vendorOrders.find((o: any) =>
-        o.isQuickEntry &&
+        (o.isQuickEntry || true) &&   // accept both quick and regular orders
         (o.vendorName || '').trim().toLowerCase() === vName.toLowerCase() &&
         o.orderDate === date &&
         o.status !== 'Closed' && o.status !== 'Cancelled'
